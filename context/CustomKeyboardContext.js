@@ -9,6 +9,7 @@ const defaultDescriptor = {
   setValue: () => {},
   getSelection: () => ({ start: 0, end: 0 }),
   setSelection: () => {},
+  keyboardType: 'default',
 };
 
 const CustomKeyboardContext = createContext({
@@ -17,20 +18,24 @@ const CustomKeyboardContext = createContext({
   insertText: () => {},
   deleteBackward: () => {},
   hasFocusedInput: false,
+  keyboardType: 'default',
 });
 
 export function CustomKeyboardProvider({ children }) {
   const focusedRef = useRef(null);
   const [hasFocusedInput, setHasFocusedInput] = useState(false);
+  const [keyboardType, setKeyboardType] = useState('default');
 
   const registerFocusedInput = useCallback((id, descriptor) => {
     focusedRef.current = { id, ...descriptor };
+    setKeyboardType(descriptor.keyboardType || 'default');
     setHasFocusedInput(true);
   }, []);
 
   const unregisterFocusedInput = useCallback((id) => {
     if (focusedRef.current?.id === id) {
       focusedRef.current = null;
+      setKeyboardType('default');
       setHasFocusedInput(false);
     }
   }, []);
@@ -72,8 +77,9 @@ export function CustomKeyboardProvider({ children }) {
       insertText,
       deleteBackward,
       hasFocusedInput,
+      keyboardType,
     }),
-    [hasFocusedInput, registerFocusedInput, unregisterFocusedInput, insertText, deleteBackward]
+    [hasFocusedInput, registerFocusedInput, unregisterFocusedInput, insertText, deleteBackward, keyboardType]
   );
 
   return (

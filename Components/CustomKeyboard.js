@@ -7,6 +7,7 @@ const KEY_HAPTIC_MS = 3;
 
 const LAYOUT_ALPHA = 'alpha';
 const LAYOUT_SYMBOLS = 'symbols';
+const LAYOUT_NUMERIC = 'numeric';
 
 // Caps states
 const CAPS_OFF   = 'off';   // lowercase
@@ -59,7 +60,7 @@ const Key = memo(function Key({ label, onPress, style, size = 'normal', labelSty
 });
 
 // ─── Backspace key ─────────────────────────────────────────────────────────────
-const BackspaceKey = memo(function BackspaceKey({ onBackspace, style }) {
+const BackspaceKey = memo(function BackspaceKey({ onBackspace, style, iconSize = 20 }) {
   const repeatTimerRef = useRef(null);
   const repeatIntervalRef = useRef(null);
   const onBackspaceRef = useRef(onBackspace);
@@ -97,7 +98,7 @@ const BackspaceKey = memo(function BackspaceKey({ onBackspace, style }) {
       android_disableSound
       android_ripple={null}
     >
-      <Icon name="backspace-outline" size={20} color="#fff" />
+      <Icon name="backspace-outline" size={iconSize} color="#fff" />
     </Pressable>
   );
 });
@@ -143,9 +144,17 @@ const KeyRow = memo(function KeyRow({ keys, onKeyPress }) {
 
 // ─── Main keyboard ─────────────────────────────────────────────────────────────
 function CustomKeyboard({ onKeyPressFeedback }) {
-  const { insertText, deleteBackward, hasFocusedInput } = useCustomKeyboard();
+  const { insertText, deleteBackward, hasFocusedInput, keyboardType } = useCustomKeyboard();
   const [layout, setLayout] = useState(LAYOUT_ALPHA);
   const [capsState, setCapsState] = useState(CAPS_OFF);
+
+  useEffect(() => {
+    if (keyboardType === 'numeric' || keyboardType === 'number-pad') {
+      setLayout(LAYOUT_NUMERIC);
+    } else if (layout === LAYOUT_NUMERIC) {
+      setLayout(LAYOUT_ALPHA);
+    }
+  }, [keyboardType]);
 
   // Cycle: OFF → ONCE → LOCK → OFF
   const handleShift = useCallback(() => {
@@ -249,12 +258,31 @@ function CustomKeyboard({ onKeyPressFeedback }) {
           </View>
         </>
       )}
+
+      {/* ========== NUMERIC LAYOUT ========== */}
+      {layout === LAYOUT_NUMERIC && (
+        <>
+          <KeyRow keys={['1', '2', '3']} onKeyPress={handleChar} />
+          <KeyRow keys={['4', '5', '6']} onKeyPress={handleChar} />
+          <KeyRow keys={['7', '8', '9']} onKeyPress={handleChar} />
+          <View style={styles.keyRow}>
+            <Key label="*" onPress={() => handleChar('*')} />
+            <Key label="0" onPress={() => handleChar('0')} />
+            <BackspaceKey 
+              onBackspace={handleBackspace} 
+              style={{ backgroundColor: '#3a3a3c', minWidth: 28 }} 
+              iconSize={18} 
+            />
+          </View>
+        </>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
+    width: '100%',
     backgroundColor: '#2c2c2e',
     paddingVertical: 8,
     paddingHorizontal: 6,

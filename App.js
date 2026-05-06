@@ -443,27 +443,30 @@ const App = () => {
                   onRequestClose={handleKioskPinClose}
                 >
                   <View style={styles.kioskPinOverlay}>
-                    <View style={styles.kioskPinBox}>
-                      <Text style={styles.kioskPinTitle}>Enter Developer Mode</Text>
-                      <Text style={styles.kioskPinSubtitle}>Enter PIN</Text>
-                      <KioskTextInput
-                        ref={kioskPinInputRef}
-                        style={[styles.kioskPinInput, kioskPinError ? styles.kioskPinInputError : null]}
-                        value={kioskPinValue}
-                        onChangeText={(t) => { setKioskPinValue(t.replace(/\D/g, '').slice(0, 4)); setKioskPinError(''); }}
-                        maxLength={4}
-                        placeholder="••••"
-                        placeholderTextColor="#666"
-                        secureTextEntry
-                      />
-                      {kioskPinError ? <Text style={styles.kioskPinErrorText}>{kioskPinError}</Text> : null}
-                      <View style={styles.kioskPinButtons}>
-                        <TouchableOpacity style={styles.kioskPinCancelBtn} onPress={handleKioskPinClose}>
-                          <Text style={styles.kioskPinCancelText}>Cancel</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.kioskPinUnlockBtn} onPress={handleKioskPinSubmit}>
-                          <Text style={styles.kioskPinUnlockText}>Unlock</Text>
-                        </TouchableOpacity>
+                    <View style={styles.kioskPinContent}>
+                      <View style={styles.kioskPinBox}>
+                        <Text style={styles.kioskPinTitle}>Enter Developer Mode</Text>
+                        <Text style={styles.kioskPinSubtitle}>Enter PIN</Text>
+                        <KioskTextInput
+                          ref={kioskPinInputRef}
+                          style={[styles.kioskPinInput, kioskPinError ? styles.kioskPinInputError : null]}
+                          value={kioskPinValue}
+                          onChangeText={(t) => { setKioskPinValue(t.replace(/\D/g, '').slice(0, 4)); setKioskPinError(''); }}
+                          maxLength={4}
+                          placeholder="••••"
+                          placeholderTextColor="#666"
+                          secureTextEntry
+                          keyboardType="numeric"
+                        />
+                        {kioskPinError ? <Text style={styles.kioskPinErrorText}>{kioskPinError}</Text> : null}
+                        <View style={styles.kioskPinButtons}>
+                          <TouchableOpacity style={styles.kioskPinCancelBtn} onPress={handleKioskPinClose}>
+                            <Text style={styles.kioskPinCancelText}>Cancel</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.kioskPinUnlockBtn} onPress={handleKioskPinSubmit}>
+                            <Text style={styles.kioskPinUnlockText}>Unlock</Text>
+                          </TouchableOpacity>
+                        </View>
                       </View>
                     </View>
                     {/* Custom keyboard must be inside Modal on Android (Modal is separate window). */}
@@ -495,6 +498,10 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'flex-end',
+  },
+  kioskPinContent: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
   },

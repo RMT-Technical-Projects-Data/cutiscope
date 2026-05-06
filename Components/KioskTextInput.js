@@ -54,6 +54,7 @@ const KioskTextInput = forwardRef(function KioskTextInput({
         setValue,
         getSelection,
         setSelection,
+        keyboardType: rest.keyboardType || 'default',
       });
       rest.onFocus?.(e);
     },

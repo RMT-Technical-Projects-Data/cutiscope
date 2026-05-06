@@ -287,6 +287,10 @@ class MainActivity : ReactActivity() {
                 Log.i("MainActivity", "Screen OFF - turning torch off at system level and notifying app")
                 turnOffTorchAtSystemLevel()
                 emitScreenOffEventToReactNative()
+                releaseWakeLock()
+            } else if (intent.action == Intent.ACTION_SCREEN_ON) {
+                Log.i("MainActivity", "Screen ON - acquiring wake lock")
+                acquireWakeLock()
             }
         }
     }
@@ -313,6 +317,7 @@ class MainActivity : ReactActivity() {
 
     private fun registerScreenOffReceiver() {
         val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+        filter.addAction(Intent.ACTION_SCREEN_ON)
         registerReceiver(screenOffReceiver, filter)
     }
 
