@@ -2302,6 +2302,14 @@ const CameraScreen = ({ navigation }) => {
       <View style={styles.container}>
         <CustomStatusBar />
 
+        {!isGuest && currentBox?.name ? (
+          <View style={styles.patientNameTopBar}>
+            <Text style={styles.patientNameText} numberOfLines={1}>
+              Patient: {currentBox.name}
+            </Text>
+          </View>
+        ) : null}
+
         {renderCamera()}
 
         <WifiSettingsModal
@@ -2638,6 +2646,24 @@ const CameraScreen = ({ navigation }) => {
 
 // End of CameraScreen
 const styles = StyleSheet.create({
+  patientNameTopBar: {
+    position: 'absolute',
+    top: '8%',
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 100,
+  },
+  patientNameText: {
+    color: '#ffaf20',
+    fontSize: 16,
+    fontFamily: 'ProductSans-Bold',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
   container: {
     justifyContent: 'flex-start',
     paddingTop: '12%',
