@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, Modal, FlatList, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, Modal, FlatList, TouchableOpacity, StyleSheet, NativeModules } from 'react-native';
 import timezones from '../Components/timezones.json';
 import { DateTime } from 'luxon';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -54,8 +54,15 @@ const TimezoneSelector = ({ visible, onClose }) => {
     try {
       await AsyncStorage.setItem('selectedTimezone', timezone);
       console.log("Set into AsyncStorage: " + timezone);
+
+      // Call NativeModule to set timezone at system level using root
+      const { SystemTimeModule } = NativeModules;
+      if (SystemTimeModule && SystemTimeModule.setTimezone) {
+        await SystemTimeModule.setTimezone(timezone);
+        console.log("System timezone updated successfully.");
+      }
     } catch (error) {
-      console.error('Failed to save timezone to AsyncStorage:', error);
+      console.error('Failed to save or set system timezone:', error);
     }
     setViewMode('categories');
     onClose();

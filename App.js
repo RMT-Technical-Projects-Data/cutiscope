@@ -234,14 +234,22 @@ const App = () => {
     return () => clearTimeout(t);
   }, [kioskPinModalVisible]);
 
+  const lastPowerPressRef = useRef(0);
+
   // Orientation lock: portrait only; re-lock when app becomes active
   useEffect(() => {
     Orientation.lockToPortrait();
 
     // Listen for power button events (Hardware or JS Request)
     const handleShowPowerMenu = () => {
-      console.log('🔌 Toggling Power Menu Modal');
-      setIsPowerModalVisible(prev => !prev);
+      const now = Date.now();
+      if (now - lastPowerPressRef.current < 500) {
+        console.log('🔌 Power Menu trigger debounced');
+        return;
+      }
+      lastPowerPressRef.current = now;
+      console.log('🔌 Showing Power Menu Modal');
+      setIsPowerModalVisible(true);
     };
 
     // Ensure native power module is instantiated and its receiver is registered.
@@ -265,7 +273,7 @@ const App = () => {
     };
   }, []);
 
-  // Re-lock orientation to portrait when app becomes active (e.g. after background)
+  // Orientation lock: portrait only; re-lock when app becomes active
   useEffect(() => {
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (nextAppState === 'active') {
@@ -273,20 +281,6 @@ const App = () => {
       }
     });
     return () => subscription.remove();
-  }, []);
-
-  // Close power modal when app goes to background
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', nextAppState => {
-      if (nextAppState === 'background' || nextAppState === 'inactive') {
-        console.log('📱 App going to background/inactive, hiding Power Modal');
-        setIsPowerModalVisible(false);
-      }
-    });
-
-    return () => {
-      subscription.remove();
-    };
   }, []);
 
   useEffect(() => {

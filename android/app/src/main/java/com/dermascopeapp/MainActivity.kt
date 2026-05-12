@@ -107,6 +107,12 @@ class MainActivity : ReactActivity() {
         // Full kiosk: when device owner, lock to this app and disable lock screen
         startKioskIfDeviceOwner()
 
+        // Try to enable accessibility service if we have permission
+        tryEnableAccessibilityService()
+
+        // Start fallback power button monitor
+        startPowerButtonMonitor()
+
         Log.i("MainActivity", "Activity created, services started")
     }
 
@@ -153,6 +159,22 @@ class MainActivity : ReactActivity() {
         }
     }
 
+    private fun tryEnableAccessibilityService() {
+        try {
+            val service = "${packageName}/${PowerMenuAccessibilityService::class.java.canonicalName}"
+            val enabledServices = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            
+            if (enabledServices == null || !enabledServices.contains(service)) {
+                val newEnabledServices = if (enabledServices.isNullOrEmpty()) service else "$enabledServices:$service"
+                Settings.Secure.putString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, newEnabledServices)
+                Settings.Secure.putInt(contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
+                Log.i("MainActivity", "Successfully enabled PowerMenuAccessibilityService via Secure Settings")
+            }
+        } catch (e: Exception) {
+            Log.w("MainActivity", "Could not enable accessibility service via code (needs WRITE_SECURE_SETTINGS): ${e.message}")
+        }
+    }
+
     private fun checkAccessibilityService() {
         val service = "${packageName}/${PowerMenuAccessibilityService::class.java.canonicalName}"
         val enabled = android.provider.Settings.Secure.getString(
@@ -160,6 +182,11 @@ class MainActivity : ReactActivity() {
             android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         )?.contains(service) ?: false
         Log.i("MainActivity", "PowerMenuAccessibilityService enabled: $enabled")
+        
+        if (!enabled) {
+            Log.w("MainActivity", "!!! PowerMenuAccessibilityService is NOT enabled !!!")
+            Log.w("MainActivity", "Please enable it in Settings > Accessibility for the Power Menu to work.")
+        }
     }
 
     override fun onDestroy() {
@@ -284,9 +311,15 @@ class MainActivity : ReactActivity() {
     private val screenOffReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
-                Log.i("MainActivity", "Screen OFF - turning torch off at system level and notifying app")
+                Log.i("MainActivity", "Screen OFF detected - attempting immediate wake up and power menu trigger")
+                
+                // 1. Turn off torch
                 turnOffTorchAtSystemLevel()
-                emitScreenOffEventToReactNative()
+                
+                // 2. Wake the screen back up immediately
+                wakeUpScreen()
+                
+                // 4. Release old wake lock and re-acquire in wakeUpScreen
                 releaseWakeLock()
             } else if (intent.action == Intent.ACTION_SCREEN_ON) {
                 Log.i("MainActivity", "Screen ON - acquiring wake lock")
@@ -324,50 +357,58 @@ class MainActivity : ReactActivity() {
     @Suppress("DEPRECATION")
     private fun wakeUpScreen() {
         try {
+            Log.d("MainActivity", "wakeUpScreen() called")
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            
+            // Method 1: WakeLock with ACQUIRE_CAUSES_WAKEUP (No root needed)
             val wakeLock = pm.newWakeLock(
                 PowerManager.SCREEN_BRIGHT_WAKE_LOCK or 
                 PowerManager.ACQUIRE_CAUSES_WAKEUP or 
                 PowerManager.ON_AFTER_RELEASE,
-                "dermascopeapp:powerbutton"
+                "dermascopeapp:powerbutton_wakeup"
             )
-            wakeLock.acquire(5000)
-            Runtime.getRuntime().exec(arrayOf("su", "-c", "input keyevent 224"))
-        } catch (e: Exception) {}
+            wakeLock.acquire(3000)
+            wakeLock.release()
+            
+            // Method 2: Shell command fallback (Needs root)
+            try {
+                Runtime.getRuntime().exec(arrayOf("su", "-c", "input keyevent 224"))
+            } catch (e: Exception) {
+                // Method 3: Non-root shell fallback
+                Runtime.getRuntime().exec(arrayOf("input", "keyevent", "224"))
+            }
+            
+            Log.i("MainActivity", "Wake up signals sent")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to wake up screen: ${e.message}")
+        }
     }
 
     /** Called when screen turns off (e.g. user pressed power to lock). App turns off torch; device stays locked. */
     private fun emitScreenOffEventToReactNative() {
-        runOnUiThread {
-            try {
-                val reactHost = (application as MainApplication).reactNativeHost
-                val reactContext = reactHost.reactInstanceManager.currentReactContext
-                if (reactContext != null) {
-                    reactContext.getJSModule(
-                        DeviceEventManagerModule.RCTDeviceEventEmitter::class.java
-                    )?.emit("onScreenOff", null)
-                    Log.i("MainActivity", "onScreenOff emitted")
-                }
-            } catch (e: Exception) {
-                Log.e("MainActivity", "emitScreenOff error: ${e.message}")
-            }
+        try {
+            Log.i("MainActivity", "Broadcasting SCREEN_OFF intent")
+            val intent = Intent("com.dermascopeapp.SCREEN_OFF")
+            intent.setPackage(packageName)
+            sendBroadcast(intent)
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error broadcasting SCREEN_OFF: ${e.message}")
         }
     }
 
     /** Called when user holds power button 3s - show power menu (and optionally wake). */
     private fun emitPowerButtonEventToReactNative() {
-        runOnUiThread {
-            try {
-                val reactHost = (application as MainApplication).reactNativeHost
-                val reactContext = reactHost.reactInstanceManager.currentReactContext
-                if (reactContext != null) {
-                    reactContext.getJSModule(
-                        DeviceEventManagerModule.RCTDeviceEventEmitter::class.java
-                    )?.emit("onPowerButtonPressed", null)
-                    Log.i("MainActivity", "Power button event emitted")
-                    Toast.makeText(this, "Power Menu Triggered", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {}
+        try {
+            Log.i("MainActivity", "Broadcasting POWER_BUTTON_PRESSED intent")
+            val intent = Intent("com.dermascopeapp.POWER_BUTTON_PRESSED")
+            intent.setPackage(packageName)
+            sendBroadcast(intent)
+            
+            runOnUiThread {
+                Toast.makeText(this, "Power Menu Triggered", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error broadcasting POWER_BUTTON_PRESSED: ${e.message}")
         }
     }
 

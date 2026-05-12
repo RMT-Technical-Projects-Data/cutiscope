@@ -42,6 +42,7 @@ import CustomStatusBar from '../Components/CustomStatusBar';
 import backIcon from '../assets/icon_back.png';
 import deleteIcon from '../assets/icon_delete.png';
 import uploadIcon from '../assets/icon_upload.png';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 const { width, height: screenHeight } = Dimensions.get('window');
 const HORIZONTAL_PADDING = 16;
@@ -1132,6 +1133,69 @@ const GalleryScreen = ({ route, navigation }) => {
     });
     setConfirmModalVisible(true);
   }, [selectedPhotos, fullScreenPhoto, deleteFileWithCleanup]);
+  
+  const getShareLabel = useCallback((photo) => {
+    if (!photo || !photo.name) return '';
+    let patientText = '';
+    let bodyPartText = '';
+    
+    const bpIndex = photo.name.indexOf('_BP-');
+    if (bpIndex !== -1) {
+      if (bpIndex > 9) {
+        patientText = photo.name.substring(10, bpIndex);
+      }
+      const matchBody = photo.name.match(/_BP-(.*?)_\d+_\d+\.jpg/);
+      if (matchBody) {
+        bodyPartText = matchBody[1].replace(/_/g, ' ');
+      }
+    } else {
+      const matchPatientNoBody = photo.name.match(/^Cutiscope_(.*?)_\d{8}_\d{6}\.jpg/);
+      if (matchPatientNoBody) {
+        patientText = matchPatientNoBody[1];
+      }
+    }
+
+    let label = '';
+    if (patientText) label += `Patient: ${patientText}`;
+    if (patientText && bodyPartText) label += ' | ';
+    if (bodyPartText) label += `Body Part: ${bodyPartText}`;
+    return label;
+  }, []);
+
+  const handleBluetoothShareSelected = useCallback(async () => {
+    if (selectedPhotos.length === 0) {
+      showInAppToast("No images selected!", { durationMs: 2000, position: 'bottom' });
+      return;
+    }
+
+    try {
+      const { SystemTimeModule } = NativeModules;
+      if (SystemTimeModule && SystemTimeModule.sendFilesViaBluetooth) {
+        const cleanPaths = selectedPhotos.map(path => path.replace('file://', ''));
+        
+        // Construct labels for each selected photo individually
+        const labels = selectedPhotos.map(path => {
+          const photo = activePhotos.find(p => p.path === path || p.absolutePath === path.replace('file://', ''));
+          return photo ? getShareLabel(photo) : '';
+        });
+        
+        await SystemTimeModule.sendFilesViaBluetooth(cleanPaths, labels);
+      } else if (SystemTimeModule && SystemTimeModule.sendFileViaBluetooth) {
+        // Fallback: send one by one if multiple share is not supported
+        for (const path of selectedPhotos) {
+          const cleanPath = path.replace('file://', '');
+          const photo = activePhotos.find(p => p.path === path || p.absolutePath === cleanPath);
+          const label = photo ? getShareLabel(photo) : '';
+          await SystemTimeModule.sendFileViaBluetooth(cleanPath, label);
+        }
+      }
+      setSelectedPhotos([]);
+      setIsSelectionMode(false);
+    } catch (e) {
+      console.warn('Bluetooth multi-share error:', e);
+      showInAppToast("Failed to share via Bluetooth", { durationMs: 2000, position: 'bottom' });
+    }
+  }, [selectedPhotos, activePhotos, getShareLabel]);
 
   // Core upload logic – uses image record when available so upload always goes to correct patient
   const uploadImageToAWS = useCallback(async (filePath, fileName) => {
@@ -1657,6 +1721,7 @@ const GalleryScreen = ({ route, navigation }) => {
           onDelete={handleDeleteCurrentImage}
           onUpload={handleUploadImage}
           isGuest={isGuest}
+          getShareLabel={getShareLabel}
         />
 
         {/* Bottom Action Bar - Photo selection */}
@@ -1664,22 +1729,31 @@ const GalleryScreen = ({ route, navigation }) => {
           <View style={styles.actionContainer}>
             {!isGuest && canUploadSelection && (
               <TouchableOpacity
-                style={styles.uploadButton}
+                style={styles.actionButton}
                 onPress={handleUploadSelectedImages}
               >
                 <Image source={uploadIcon} style={[styles.actionIcon, { tintColor: ACCENT_TEAL }]} />
-                <Text style={styles.btnText}>Upload Selected</Text>
+                <Text style={styles.btnText}>Upload</Text>
               </TouchableOpacity>
             )}
             {!isGuest && (
               <TouchableOpacity
-                style={styles.deleteButton}
+                style={styles.actionButton}
                 onPress={handleDeleteSelected}
               >
                 <Image source={deleteIcon} style={[styles.actionIcon, { tintColor: ACCENT_TEAL }]} />
-                <Text style={styles.btnText}>Delete Selected</Text>
+                <Text style={styles.btnText}>Delete</Text>
               </TouchableOpacity>
             )}
+            
+            {/* Bluetooth Share Selected Button */}
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={handleBluetoothShareSelected}
+            >
+              <MaterialCommunityIcons name="bluetooth" size={30} color={ACCENT_TEAL} style={{ marginBottom: 4 }} />
+              <Text style={styles.btnText}>Share</Text>
+            </TouchableOpacity>
           </View>
         )}
         {/* Bottom Action Bar - Album selection (delete album and all images inside) */}
@@ -1734,7 +1808,8 @@ const FullScreenGalleryModal = React.memo(({
   onClose,
   onDelete,
   onUpload,
-  isGuest
+  isGuest,
+  getShareLabel
 }) => {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [errorMsg, setErrorMsg] = useState(null);
@@ -1892,6 +1967,57 @@ const FullScreenGalleryModal = React.memo(({
           </Text>
         </View>
 
+        {(() => {
+          let patientText = '';
+          let bodyPartText = '';
+          
+          const bpIndex = currentPhoto.name.indexOf('_BP-');
+          if (bpIndex !== -1) {
+            if (bpIndex > 9) {
+              patientText = currentPhoto.name.substring(10, bpIndex);
+            }
+            const matchBody = currentPhoto.name.match(/_BP-(.*?)_\d+_\d+\.jpg/);
+            if (matchBody) {
+              bodyPartText = matchBody[1].replace(/_/g, ' ');
+            }
+          } else {
+            const matchPatientNoBody = currentPhoto.name.match(/^Cutiscope_(.*?)_\d{8}_\d{6}\.jpg/);
+            if (matchPatientNoBody) {
+              patientText = matchPatientNoBody[1];
+            }
+          }
+
+          if (patientText || bodyPartText) {
+            return (
+              <View style={{
+                position: 'absolute',
+                top: '25%',
+                width: '100%',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 100,
+                pointerEvents: 'none',
+              }}>
+                <Text style={{
+                  color: '#ffffff',
+                  fontSize: 16,
+                  fontFamily: 'ProductSans-Regular',
+                  backgroundColor: 'rgba(0,0,0,0.6)',
+                  paddingHorizontal: 16,
+                  paddingVertical: 6,
+                  borderRadius: 4,
+                  overflow: 'hidden',
+                }} numberOfLines={1}>
+                  {patientText ? <Text>Patient: <Text style={{fontFamily: 'ProductSans-Bold'}}>{patientText}</Text></Text> : null}
+                  {patientText && bodyPartText ? ' | ' : ''}
+                  {bodyPartText ? <Text>Body Part: <Text style={{fontFamily: 'ProductSans-Bold'}}>{bodyPartText}</Text></Text> : null}
+                </Text>
+              </View>
+            );
+          }
+          return null;
+        })()}
+
         {/* Sub-header (Filename only) - Small, above the image */}
         <View style={styles.fullscreenMetadataSubHeader}>
           <Text style={styles.fullScreenPhotoNameSmall} numberOfLines={1}>
@@ -1930,6 +2056,29 @@ const FullScreenGalleryModal = React.memo(({
                   </Text>
                 </TouchableOpacity>
               )}
+
+              {/* Bluetooth Share Button */}
+              <TouchableOpacity
+                style={styles.uploadButtonFull}
+                onPress={async () => {
+                  try {
+                    const { SystemTimeModule } = NativeModules;
+                    if (SystemTimeModule && SystemTimeModule.sendFileViaBluetooth) {
+                      const cleanPath = currentPhoto.path.replace('file://', '');
+                      const label = getShareLabel ? getShareLabel(currentPhoto) : '';
+                      await SystemTimeModule.sendFileViaBluetooth(cleanPath, label);
+                    }
+                  } catch (e) {
+                    console.warn('Bluetooth share error:', e);
+                    setErrorMsg('Failed to share via Bluetooth');
+                    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+                    errorTimerRef.current = setTimeout(() => setErrorMsg(null), 3500);
+                  }
+                }}
+              >
+                <MaterialCommunityIcons name="bluetooth" size={30} color={ACCENT_TEAL} style={{ marginBottom: 4 }} />
+                <Text style={styles.btnText}>Share</Text>
+              </TouchableOpacity>
 
               {/* Delete Button */}
               <TouchableOpacity
@@ -2362,17 +2511,14 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
   },
-  uploadButton: {
-    paddingHorizontal: 20,
+  actionButton: {
+    flex: 1,
     alignItems: 'center',
-  },
-  deleteButton: {
-    paddingHorizontal: 20,
-    alignItems: 'center',
+    justifyContent: 'center',
   },
   btnText: {
-    paddingVertical: 5,
-    fontSize: 16,
+    paddingVertical: 3,
+    fontSize: 14,
     fontWeight: '500',
     color: PRIMARY_TEXT,
   },

@@ -74,8 +74,23 @@ class SystemPowerModule(private val reactContext: ReactApplicationContext) : Rea
     @ReactMethod
     fun powerOff() {
         try {
-            Log.d("SystemPowerModule", "Executing power off command")
-            Runtime.getRuntime().exec(arrayOf("su", "-c", "reboot -p"))
+            Log.d("SystemPowerModule", "Attempting power off...")
+            
+            // Try Accessibility Service fallback (shows system dialog)
+            PowerMenuAccessibilityService.instance?.let {
+                Log.i("SystemPowerModule", "Showing system power dialog via Accessibility")
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                    it.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_POWER_DIALOG)
+                    return
+                }
+            }
+
+            try {
+                Runtime.getRuntime().exec(arrayOf("su", "-c", "reboot -p"))
+            } catch (e: Exception) {
+                Log.w("SystemPowerModule", "su powerOff failed, trying sh...")
+                Runtime.getRuntime().exec(arrayOf("sh", "-c", "reboot -p"))
+            }
         } catch (e: Exception) {
             Log.e("SystemPowerModule", "Failed to power off: ${e.message}")
         }
@@ -84,8 +99,37 @@ class SystemPowerModule(private val reactContext: ReactApplicationContext) : Rea
     @ReactMethod
     fun restart() {
         try {
-            Log.d("SystemPowerModule", "Executing restart command")
-            Runtime.getRuntime().exec(arrayOf("su", "-c", "reboot"))
+            Log.d("SystemPowerModule", "Attempting restart...")
+            val dpm = reactContext.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+            val adminComponent = ComponentName(reactContext, KioskDeviceAdminReceiver::class.java)
+            
+            if (dpm.isAdminActive(adminComponent)) {
+                try {
+                    Log.i("SystemPowerModule", "Trying DPM.reboot()")
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                        dpm.reboot(adminComponent)
+                        return
+                    }
+                } catch (e: Exception) {
+                    Log.e("SystemPowerModule", "DPM.reboot() failed: ${e.message}")
+                }
+            }
+            
+            // Try Accessibility Service fallback (shows system dialog)
+            PowerMenuAccessibilityService.instance?.let {
+                Log.i("SystemPowerModule", "Showing system power dialog via Accessibility")
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                    it.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_POWER_DIALOG)
+                    return
+                }
+            }
+
+            try {
+                Runtime.getRuntime().exec(arrayOf("su", "-c", "reboot"))
+            } catch (e: Exception) {
+                Log.w("SystemPowerModule", "su reboot failed, trying sh...")
+                Runtime.getRuntime().exec(arrayOf("sh", "-c", "reboot"))
+            }
         } catch (e: Exception) {
             Log.e("SystemPowerModule", "Failed to restart: ${e.message}")
         }
@@ -93,86 +137,36 @@ class SystemPowerModule(private val reactContext: ReactApplicationContext) : Rea
 
     @ReactMethod
     fun lockScreen() {
-        val stackTrace = Log.getStackTraceString(Throwable())
-        Log.e("SystemPowerModule", "lockScreen() called! Call stack:\n$stackTrace")
-
-        // Prevent multiple lock calls
-        if (isLocking) {
-            Log.d("SystemPowerModule", "Already locking, skipping")
-            return
-        }
-        
+        if (isLocking) return
         isLocking = true
         
         try {
-            Log.d("SystemPowerModule", "Executing lock screen")
+            Log.d("SystemPowerModule", "Attempting lock screen...")
+            val dpm = reactContext.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+            val adminComponent = ComponentName(reactContext, KioskDeviceAdminReceiver::class.java)
             
-            // Get the current activity
-            val currentActivity = reactContext.currentActivity
-            
-            if (currentActivity != null) {
-                // Method 1: Use DevicePolicyManager (does NOT minimize app)
-                val dpm = reactContext.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-                val adminComponent = ComponentName(reactContext, KioskDeviceAdminReceiver::class.java)
-                
-                if (dpm.isAdminActive(adminComponent)) {
-                    try {
-                        Log.d("SystemPowerModule", "Locking via DevicePolicyManager.lockNow()")
-                        dpm.lockNow()
-                        Log.i("SystemPowerModule", "Screen locked successfully")
-                        return
-                    } catch (e: SecurityException) {
-                        Log.e("SystemPowerModule", "DPM lock failed: ${e.message}")
-                    }
-                }
-                
-                // Method 2: Use KeyguardManager (does NOT minimize app)
-                val keyguardManager = reactContext.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
-                
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
-                    try {
-                        Log.d("SystemPowerModule", "Locking via KeyguardManager")
-                        keyguardManager.requestDismissKeyguard(currentActivity, object : KeyguardManager.KeyguardDismissCallback() {
-                            override fun onDismissError() {
-                                Log.e("SystemPowerModule", "Keyguard dismiss error")
-                            }
-                            override fun onDismissSucceeded() {
-                                Log.d("SystemPowerModule", "Keyguard dismiss succeeded")
-                            }
-                            override fun onDismissCancelled() {
-                                Log.d("SystemPowerModule", "Keyguard dismiss cancelled")
-                            }
-                        })
-                        // Actually lock the screen
-                        val powerManager = reactContext.getSystemService(Context.POWER_SERVICE) as PowerManager
-                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                            try {
-                                val method = powerManager.javaClass.getMethod("goToSleep", Long::class.javaPrimitiveType)
-                                method.invoke(powerManager, System.currentTimeMillis())
-                            } catch (e: Exception) {
-                                Log.e("SystemPowerModule", "Go to sleep failed: ${e.message}")
-                            }
-                        }
-                        return
-                    } catch (e: Exception) {
-                        Log.e("SystemPowerModule", "Keyguard lock failed: ${e.message}")
-                    }
-                }
-                
-                // Method 3: Just clear the activity and let system handle (DO NOT minimize)
-                Log.d("SystemPowerModule", "Using activity flag to lock")
-                currentActivity.moveTaskToBack(false)
-            } else {
-                Log.w("SystemPowerModule", "No current activity found")
+            if (dpm.isAdminActive(adminComponent)) {
+                Log.i("SystemPowerModule", "Locking via DPM.lockNow()")
+                dpm.lockNow()
+                return
             }
             
+            // Fallback: Accessibility Service (Android 9+)
+            PowerMenuAccessibilityService.instance?.let {
+                Log.i("SystemPowerModule", "Locking via Accessibility Service")
+                if (it.lockScreen()) return
+            }
+            
+            Log.w("SystemPowerModule", "Admin and Accessibility fallbacks failed. Falling back to moveTaskToBack")
+            val currentActivity = reactContext.currentActivity
+            currentActivity?.moveTaskToBack(true)
+            
         } catch (e: Exception) {
-            Log.e("SystemPowerModule", "Failed to lock screen: ${e.message}")
+            Log.e("SystemPowerModule", "Lock failed: ${e.message}")
         } finally {
-            // Reset locking flag after delay (reduced from 3000ms for responsiveness)
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                 isLocking = false
-            }, 500)
+            }, 1000)
         }
     }
 

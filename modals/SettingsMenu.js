@@ -2,6 +2,7 @@ import { View, Text, Modal, TouchableOpacity, StyleSheet, Image, Dimensions, Ale
 import React, { useState, useEffect } from 'react'
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import WifiSettingsModal from './WiFiSettingsModal';
+import BluetoothSettingsModal from './BluetoothSettingsModal';
 import { deleteGuestPhotos } from '../utils/guestPhotos';
 import DateTimePickerModal from './DateTimePickerModal';
 import ConfirmationModal from './ConfirmationModal';
@@ -16,6 +17,7 @@ import CustomKeyboard from '../Components/CustomKeyboard';
 const SettingsMenu = () => {
     const [isPressed, setIsPressed] = useState(null);
     const [wifiMenuVisible, setWifiMenuVisible] = useState(false);
+    const [bluetoothMenuVisible, setBluetoothMenuVisible] = useState(false);
     const [dateAndTimeMenuVisible, setDateAndTimeVisible] = useState(false);
     const [serialNumber, setSerialNumber] = useState('Loading...');
     const [userEmail, setUserEmail] = useState('');
@@ -81,6 +83,10 @@ const SettingsMenu = () => {
 
     const handlePressWifi = () => {
         setWifiMenuVisible(true);
+    };
+
+    const handlePressBluetooth = () => {
+        setBluetoothMenuVisible(true);
     };
 
     const handlePressDateandTime = () => {
@@ -213,6 +219,26 @@ const SettingsMenu = () => {
                                     </View>
                                 </TouchableOpacity>
 
+                                {/* Bluetooth Menu Item */}
+                                <TouchableOpacity
+                                    style={[styles.menuItem, isPressed === 'Bluetooth' && styles.menuItemPressed]}
+                                    onPress={handlePressBluetooth}
+                                    onPressIn={() => setIsPressed('Bluetooth')}
+                                    onPressOut={() => setIsPressed(null)}
+                                    activeOpacity={0.8}
+                                >
+                                    <View style={styles.iconContainer}>
+                                        <Image source={require('../assets/icon_settings.png')} style={styles.icon} />
+                                    </View>
+                                    <View style={styles.menuText}>
+                                        <Text style={styles.menuTitle}>Bluetooth</Text>
+                                        <Text style={styles.menuSubText}>Manage Bluetooth connection</Text>
+                                    </View>
+                                    <View style={styles.arrowContainer}>
+                                        <Text style={styles.arrow}>›</Text>
+                                    </View>
+                                </TouchableOpacity>
+
                                 {/* Date & Time Menu Item */}
                                 <TouchableOpacity
                                     style={[styles.menuItem, isPressed === 'Date&Time' && styles.menuItemPressed]}
@@ -298,6 +324,11 @@ const SettingsMenu = () => {
                         <WifiSettingsModal
                             visible={wifiMenuVisible}
                             onClose={() => setWifiMenuVisible(false)}
+                        />
+
+                        <BluetoothSettingsModal
+                            visible={bluetoothMenuVisible}
+                            onClose={() => setBluetoothMenuVisible(false)}
                         />
 
                         <DateTimePickerModal

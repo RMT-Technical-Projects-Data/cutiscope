@@ -31,36 +31,26 @@ class PowerMenuAccessibilityService : AccessibilityService() {
 
     override fun onKeyEvent(event: KeyEvent?): Boolean {
         Log.d("PowerMenuAccess", "Key event received: ${event?.keyCode} action: ${event?.action}")
-        if (event?.keyCode == KeyEvent.KEYCODE_POWER && event.action == KeyEvent.ACTION_DOWN) {
-            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-            val isScreenOn = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT_WATCH) {
-                powerManager.isInteractive
-            } else {
-                @Suppress("DEPRECATION")
-                powerManager.isScreenOn
-            }
-
-            if (isScreenOn) {
-                val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
-                val isLocked = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-                    keyguardManager.isDeviceLocked
-                } else {
-                    keyguardManager.isKeyguardLocked
+        
+        if (event?.keyCode == KeyEvent.KEYCODE_POWER) {
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                Log.d("PowerMenuAccess", "Power button DOWN detected - consuming to prevent sleep")
+                
+                // Broadcast to SystemPowerModule so it emits to JS
+                val intent = Intent("com.dermascopeapp.POWER_BUTTON_PRESSED")
+                intent.setPackage(packageName)
+                sendBroadcast(intent)
+                
+                // Also ensure MainActivity is in front
+                val activityIntent = Intent(this, MainActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 }
-
-                if (!isLocked) {
-                    Log.d("PowerMenuAccess", "Power button DOWN detected, screen ON, and device NOT locked")
-                    val intent = Intent(this, MainActivity::class.java).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                    }
-                    startActivity(intent)
-                    return true
-                } else {
-                    Log.d("PowerMenuAccess", "Device is locked, skipping")
-                }
-            } else {
-                @Suppress("DEPRECATION")
-                Log.d("PowerMenuAccess", "Power button DOWN detected but screen is OFF, skipping")
+                startActivity(activityIntent)
+                
+                return true // Consume DOWN to prevent screen off
+            } else if (event.action == KeyEvent.ACTION_UP) {
+                Log.d("PowerMenuAccess", "Power button UP detected - consuming")
+                return true // Consume UP as well
             }
         }
         return super.onKeyEvent(event)
