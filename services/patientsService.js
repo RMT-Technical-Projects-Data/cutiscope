@@ -67,12 +67,15 @@ export async function getPatients() {
  * Sends POST /api/patients with { name }. Backend assigns next id.
  * Optional { id } for backward compat; if omitted backend uses next available.
  */
-export async function createPatient({ id, name }) {
+export async function createPatient({ id, name, dob, gender, age }) {
   const token = await authService.getToken();
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
   const body = name != null && String(name).trim() ? { name: String(name).trim() } : {};
   if (id != null && String(id).trim()) body.id = String(id).trim();
+  if (dob != null) body.dob = String(dob).trim();
+  if (gender != null) body.gender = String(gender).trim();
+  if (age != null) body.age = String(age).trim();
 
   const response = await axios.post(
     PATIENTS_URL,

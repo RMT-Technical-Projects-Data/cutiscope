@@ -14,8 +14,10 @@ import {
   Pressable,
   Keyboard,
   ToastAndroid,
+  ScrollView,
 } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import KioskTextInput from '../Components/KioskTextInput';
 import CustomKeyboard from '../Components/CustomKeyboard';
 import backIcon from '../assets/icon_back.png';
@@ -32,6 +34,8 @@ const TAB_NEW_SET = 'New Patient';
 const TAB_EXISTING_BLANK = 'Existing Patient';
 const TAB_EXISTING_SET = 'Existing patients';
 
+const GENDER_OPTIONS = ['Male', 'Female', 'Other'];
+
 const PatientBoxModal = ({
   visible,
   onClose,
@@ -46,7 +50,14 @@ const PatientBoxModal = ({
   const [loadingNextId, setLoadingNextId] = useState(false);
   const [noInternet, setNoInternet] = useState(false);
   const [name, setName] = useState('');
+  const [dob, setDob] = useState('');
+  const [gender, setGender] = useState('');
+  const [age, setAge] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showGenderMenu, setShowGenderMenu] = useState(false);
+  const [dateObj, setDateObj] = useState(new Date(2000, 0, 1));
 
   const [existingList, setExistingList] = useState([]);
   const [loadingList, setLoadingList] = useState(false);
@@ -80,6 +91,9 @@ const PatientBoxModal = ({
       if (isBlank) {
         setActiveTab(TAB_NEW_BLANK);
         setName('');
+        setDob('');
+        setGender('');
+        setAge('');
         setNextId('');
         setLoadingNextId(true);
         getNextPatientId()
@@ -96,6 +110,9 @@ const PatientBoxModal = ({
       } else {
         setActiveTab(tabNew);
         setName('');
+        setDob('');
+        setGender('');
+        setAge('');
       }
     }
   }, [visible, isBlank, tabNew]);
@@ -169,6 +186,26 @@ const PatientBoxModal = ({
     return () => unsubscribe();
   }, [visible]);
 
+  const onDateChange = useCallback((event, selectedDate) => {
+    setShowDatePicker(false);
+    if (selectedDate) {
+      setDateObj(selectedDate);
+      const day = String(selectedDate.getDate()).padStart(2, '0');
+      const month = String(selectedDate.getMonth() + 1).padStart(2, '0');
+      const year = selectedDate.getFullYear();
+      setDob(`${day}/${month}/${year}`);
+
+      // Calculate age
+      const today = new Date();
+      let calculatedAge = today.getFullYear() - year;
+      const m = today.getMonth() - selectedDate.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < selectedDate.getDate())) {
+        calculatedAge--;
+      }
+      setAge(String(calculatedAge));
+    }
+  }, []);
+
   const handleSelectExisting = useCallback((patient) => {
     onSet({
       id: String(patient.id ?? ''),
@@ -187,7 +224,13 @@ const PatientBoxModal = ({
     setSaving(true);
     setFormError('');
     try {
-      const created = await createPatient({ id: nextId, name: trimmedName });
+      const created = await createPatient({
+        id: nextId,
+        name: trimmedName,
+        dob: (dob || '').trim(),
+        gender: (gender || '').trim(),
+        age: (age || '').trim(),
+      });
       onSet({
         id: String(created.id ?? nextId),
         name: String(created.name ?? trimmedName),
@@ -198,7 +241,7 @@ const PatientBoxModal = ({
     } finally {
       setSaving(false);
     }
-  }, [name, nextId, onSet, onClose]);
+  }, [name, dob, gender, age, nextId, onSet, onClose]);
 
   const handleClearSelection = useCallback(() => {
     onSet({ id: '', name: '' });
@@ -312,7 +355,8 @@ const PatientBoxModal = ({
                 )}
 
                 {showNewPatientFormView && (
-                  <View style={styles.form}>
+                  <ScrollView style={styles.formScroll} contentContainerStyle={styles.formContent} keyboardShouldPersistTaps="handled">
+                    <View style={styles.form}>
                     {!isBlank && (
                       <TouchableOpacity style={styles.backToSelection} onPress={() => setShowNewPatientForm(false)}>
                         <MaterialCommunityIcons name="arrow-left" size={20} color="#22B2A6" />
@@ -341,6 +385,89 @@ const PatientBoxModal = ({
                       contextMenuHidden
                       selectTextOnFocus={false}
                     />
+
+                    <View style={styles.row}>
+                      <View style={{ flex: 1.2, marginRight: 8 }}>
+                        <Text style={styles.label} selectable={false}>DOB</Text>
+                        <TouchableOpacity 
+                          style={[styles.pickerTrigger, { marginBottom: 16 }]} 
+                          onPress={() => setShowDatePicker(true)}
+                          activeOpacity={0.7}
+                        >
+                          <Text 
+                            style={[styles.pickerTriggerText, !dob && styles.pickerPlaceholder, { flex: 1 }]}
+                            numberOfLines={1}
+                          >
+                            {dob || 'DD/MM/YYYY'}
+                          </Text>
+                          <MaterialCommunityIcons name="calendar" size={20} color="#666" />
+                        </TouchableOpacity>
+                      </View>
+                      <View style={{ flex: 0.8 }}>
+                        <Text style={styles.label} selectable={false}>Age</Text>
+                        <KioskTextInput
+                          style={styles.input}
+                          value={age}
+                          onChangeText={setAge}
+                          placeholder="Age"
+                          placeholderTextColor="#666"
+                          keyboardType="numeric"
+                          contextMenuHidden
+                          selectTextOnFocus={false}
+                        />
+                      </View>
+                    </View>
+
+                    <Text style={styles.label} selectable={false}>Gender</Text>
+                    <TouchableOpacity 
+                      style={[styles.pickerTrigger, { marginBottom: 16 }]} 
+                      onPress={() => setShowGenderMenu(true)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.pickerTriggerText, !gender && styles.pickerPlaceholder]}>
+                        {gender || 'Select Gender'}
+                      </Text>
+                      <MaterialCommunityIcons name="chevron-down" size={24} color="#666" />
+                    </TouchableOpacity>
+
+                    {showDatePicker && (
+                      <DateTimePicker
+                        value={dateObj}
+                        mode="date"
+                        display="default"
+                        onChange={onDateChange}
+                        maximumDate={new Date()}
+                      />
+                    )}
+
+                    <Modal
+                      visible={showGenderMenu}
+                      transparent
+                      animationType="fade"
+                      onRequestClose={() => setShowGenderMenu(false)}
+                    >
+                      <Pressable style={styles.menuOverlay} onPress={() => setShowGenderMenu(false)}>
+                        <View style={styles.menuContainer}>
+                          <Text style={styles.menuTitle}>Select Gender</Text>
+                          {GENDER_OPTIONS.map((opt) => (
+                            <TouchableOpacity
+                              key={opt}
+                              style={[styles.menuOption, gender === opt && styles.menuOptionSelected]}
+                              onPress={() => {
+                                setGender(opt);
+                                setShowGenderMenu(false);
+                                if (formError) setFormError('');
+                              }}
+                            >
+                              <Text style={[styles.menuOptionText, gender === opt && styles.menuOptionTextSelected]}>
+                                {opt}
+                              </Text>
+                              {gender === opt && <MaterialCommunityIcons name="check" size={20} color="#22B2A6" />}
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </Pressable>
+                    </Modal>
                     {formError ? (
                       <View style={styles.formErrorBox}>
                         <Text style={styles.formErrorTitle} selectable={false}>Unable to save patient</Text>
@@ -362,6 +489,7 @@ const PatientBoxModal = ({
                       )}
                     </TouchableOpacity>
                   </View>
+                </ScrollView>
                 )}
               </>
             )}
@@ -499,7 +627,13 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   form: {
-    minHeight: 180,
+    paddingBottom: 10,
+  },
+  formScroll: {
+    maxHeight: SCREEN_HEIGHT * 0.45,
+  },
+  formContent: {
+    flexGrow: 1,
   },
   label: {
     fontSize: 14,
@@ -585,6 +719,64 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#fff',
     marginBottom: 16,
+    height: 52,
+  },
+  pickerTrigger: {
+    backgroundColor: '#2a2a2a',
+    borderRadius: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 0,
+    height: 52, // Match KioskTextInput height roughly
+  },
+  pickerTriggerText: {
+    fontSize: 15,
+    color: '#fff',
+  },
+  pickerPlaceholder: {
+    color: '#666',
+  },
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  menuContainer: {
+    width: SCREEN_WIDTH * 0.7,
+    maxWidth: 280,
+    backgroundColor: '#1C1C1E',
+    borderRadius: 16,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  menuTitle: {
+    fontSize: 14,
+    color: '#888',
+    padding: 12,
+    fontWeight: '600',
+  },
+  menuOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 14,
+    borderRadius: 8,
+  },
+  menuOptionSelected: {
+    backgroundColor: 'rgba(34, 178, 166, 0.1)',
+  },
+  menuOptionText: {
+    fontSize: 16,
+    color: '#fff',
+  },
+  menuOptionTextSelected: {
+    color: '#22B2A6',
+    fontWeight: '600',
   },
   setButton: {
     backgroundColor: '#22B2A6',
@@ -730,6 +922,10 @@ const styles = StyleSheet.create({
     color: '#888',
     textAlign: 'center',
     fontSize: 14,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
   },
 });
 
