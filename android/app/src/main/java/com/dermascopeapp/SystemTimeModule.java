@@ -783,7 +783,18 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
         }
     }
 
-    private Uri watermarkFile(String filePath, String text) {
+    
+    @ReactMethod
+    public void getWatermarkedImage(String filePath, String text, com.facebook.react.bridge.Promise promise) {
+        String path = watermarkFileInternal(filePath, text);
+        if (path != null) {
+            promise.resolve(path);
+        } else {
+            promise.reject("WATERMARK_ERROR", "Failed to watermark image");
+        }
+    }
+
+    private String watermarkFileInternal(String filePath, String text) {
         try {
             BitmapFactory.Options options = new BitmapFactory.Options();
             options.inMutable = true;
@@ -829,15 +840,22 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
             src.compress(Bitmap.CompressFormat.JPEG, 90, out);
             out.close();
             
-            return FileProvider.getUriForFile(
-                getReactApplicationContext(),
-                getReactApplicationContext().getPackageName() + ".provider",
-                tempFile
-            );
+            return tempFile.getAbsolutePath();
         } catch (Exception e) {
             Log.e("SystemTimeModule", "Watermarking failed for: " + filePath, e);
             return null;
         }
+    }
+
+    private Uri watermarkFile(String filePath, String text) {
+        String path = watermarkFileInternal(filePath, text);
+        if (path == null) return null;
+        
+        return FileProvider.getUriForFile(
+            getReactApplicationContext(),
+            getReactApplicationContext().getPackageName() + ".provider",
+            new File(path)
+        );
     }
 
     private boolean isConnected(BluetoothDevice device) {

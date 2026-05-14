@@ -59,7 +59,7 @@ import { useAuth } from '../context/AuthContext';
 import CustomStatusBar from '../Components/CustomStatusBar';
 import ZoomControl, { ZoomRuler } from '../Components/ZoomControl';
 import SettingsMenu from '../modals/SettingsMenu';
-import { Skia, Canvas, Image as SkiaImage, ColorMatrix } from '@shopify/react-native-skia';
+import { Skia, Canvas, Image as SkiaImage, ColorMatrix, FontStyle, ImageFormat } from '@shopify/react-native-skia';
 import {
   DEFAULT_TEMPERATURE,
   DEFAULT_TINT,
@@ -91,7 +91,7 @@ import KeyEvent from 'react-native-keyevent';
 import VolumeManager from 'react-native-volume-manager';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
-const SCALE_BASE_MM = 50.0;
+const SCALE_BASE_MM = 20.0;
 const SCALE_NUM_TICKS = 20;
 
 const MillimeterScale = ({ zoom }) => {
@@ -1781,7 +1781,7 @@ const CameraScreen = ({ navigation }) => {
   const CAPTURE_THROTTLE_MS_LOGGED_IN = 1500;
   const CAPTURE_UNLOCK_DELAY_MS_LOGGED_IN = 280;
 
-  const processImage = async (uri, zoomVal = 1.0) => {
+  const processImage = async (uri, zoomVal = 1.0, patientName = '', part = '') => {
     try {
       console.log('🖼️ processImage: Starting Skia processing for', uri, 'Zoom:', zoomVal);
 
@@ -1852,7 +1852,7 @@ const CameraScreen = ({ navigation }) => {
         
         let font = null;
         try {
-          const typeface = Skia.Typeface.MakeFromName("sans-serif", Skia.FontStyle.Normal);
+          const typeface = Skia.FontMgr.System().matchFamilyStyle("sans-serif", FontStyle.Normal);
           font = Skia.Font(typeface, Math.max(30, imgH / 40));
         } catch (fontErr) {
           console.warn('⚠️ processImage: Font creation failed', fontErr);
@@ -1880,11 +1880,42 @@ const CameraScreen = ({ navigation }) => {
       } catch (scaleDrawErr) {
         console.error('❌ processImage: Scale watermark error:', scaleDrawErr);
       }
+      
+      // --- Draw Patient Info Bar ---
+      if (patientName || part) {
+        try {
+          console.log('📝 processImage: Drawing patient info bar...');
+          const label = `Patient: ${patientName}${patientName && part ? ' | ' : ''}${part ? `Body Part: ${part}` : ''}`;
+          
+          const fontSize = Math.max(40, imgW / 25);
+          const barHeight = fontSize * 2;
+          
+          const barPaint = Skia.Paint();
+          barPaint.setColor(Skia.Color('rgba(0, 0, 0, 0.7)'));
+          canvas.drawRect({ x: 0, y: 0, width: imgW, height: barHeight }, barPaint);
+          
+          const textPaint = Skia.Paint();
+          textPaint.setColor(Skia.Color('#ffffff'));
+          textPaint.setAntiAlias(true);
+          
+          const typeface = Skia.FontMgr.System().matchFamilyStyle("sans-serif", FontStyle.Bold);
+          const font = Skia.Font(typeface, fontSize);
+          
+          const textWidth = font.measureText(label).width;
+          const x = (imgW - textWidth) / 2;
+          const y = (barHeight + fontSize * 0.8) / 2; // Center vertically
+          
+          canvas.drawText(label, x, y, textPaint, font);
+          console.log('✅ processImage: Patient info bar drawn successfully');
+        } catch (infoDrawErr) {
+          console.error('❌ processImage: Patient info bar error:', infoDrawErr);
+        }
+      }
 
       const snapshot = surface.makeImageSnapshot();
-      const encoded = snapshot.encodeToData(Skia.ImageFormat.JPEG, 90);
+      const encoded = snapshot.encodeToBase64(ImageFormat.JPEG, 90);
       const path = `${RNFS.TemporaryDirectoryPath}/processed_${Date.now()}.jpg`;
-      await RNFS.writeFile(path, encoded.getBase64(), 'base64');
+      await RNFS.writeFile(path, encoded, 'base64');
       console.log('✅ processImage: Done, path:', path);
       return path;
     } catch (err) {
@@ -1950,8 +1981,9 @@ const CameraScreen = ({ navigation }) => {
           enableShutterSound: false,
         });
 
-        // Apply White Balance Correction
-        const processedPath = await processImage(photo.path, zoomBtnValue);
+        // Apply White Balance Correction & Watermarking
+        const patientName = currentBox?.name || '';
+        const processedPath = await processImage(photo.path, zoomBtnValue, patientName, bodyPart);
         console.log('📸 handleCapturePress: processedPath =', processedPath);
         const finalPhotoPath = processedPath.startsWith('file://') ? processedPath.slice(7) : processedPath;
 

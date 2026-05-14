@@ -1329,10 +1329,24 @@ const GalleryScreen = ({ route, navigation }) => {
       )
       ));
 
-      OptimisedUploadService.enqueueExistingFileUpload(cleanPath, fileName, username, {
+      let uploadPath = cleanPath;
+      const label = image ? getShareLabel(image) : '';
+      if (label) {
+        try {
+          const watermarkedPath = await NativeModules.SystemTimeModule.getWatermarkedImage(cleanPath, label);
+          if (watermarkedPath) {
+            uploadPath = watermarkedPath;
+          }
+        } catch (err) {
+          console.warn('Watermarking failed for upload, using original:', err);
+        }
+      }
+
+      OptimisedUploadService.enqueueExistingFileUpload(uploadPath, fileName, username, {
         source: 'gallery',
         imageId: image?.id,
         patientFolder,
+        isTemp: uploadPath !== cleanPath,
       });
 
     } catch (error) {
@@ -1425,10 +1439,24 @@ const GalleryScreen = ({ route, navigation }) => {
             const cleanPath = item.path.replace('file://', '');
             const image = await ImageDatabase.getImageByFilePath(cleanPath);
 
-            OptimisedUploadService.enqueueExistingFileUpload(cleanPath, item.fileName, username, {
+            const label = image ? getShareLabel(image) : '';
+            let uploadPath = cleanPath;
+            if (label) {
+              try {
+                const watermarkedPath = await NativeModules.SystemTimeModule.getWatermarkedImage(cleanPath, label);
+                if (watermarkedPath) {
+                  uploadPath = watermarkedPath;
+                }
+              } catch (err) {
+                console.warn('Watermarking failed for multi-upload, using original:', err);
+              }
+            }
+
+            OptimisedUploadService.enqueueExistingFileUpload(uploadPath, item.fileName, username, {
               source: 'gallery',
               imageId: image?.id,
               patientFolder: image ? null : globalPatientFolder,
+              isTemp: uploadPath !== cleanPath,
             });
           }
 

@@ -2,8 +2,9 @@ import axios from 'axios';
 import Config from 'react-native-config';
 import authService from './authService';
 
-const BASE_URL = (Config.API_BASE_URL || 'http://35.154.32.201:3009').replace(/\/$/, '');
+const BASE_URL = (Config.API_BASE_URL || 'http://192.168.50.144:3009').replace(/\/$/, '');
 const PATIENTS_URL = `${BASE_URL}/api/patients`;
+const PATIENTS_V2_URL = `${BASE_URL}/api/v2/patients`;
 const AXIOS_TIMEOUT = 15000;
 
 /**
@@ -67,7 +68,7 @@ export async function getPatients() {
  * Sends POST /api/patients with { name }. Backend assigns next id.
  * Optional { id } for backward compat; if omitted backend uses next available.
  */
-export async function createPatient({ id, name, dob, gender, age }) {
+export async function createPatient({ id, name, dob, gender, age, mr_no }) {
   const token = await authService.getToken();
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -76,9 +77,10 @@ export async function createPatient({ id, name, dob, gender, age }) {
   if (dob != null) body.dob = String(dob).trim();
   if (gender != null) body.gender = String(gender).trim();
   if (age != null) body.age = String(age).trim();
+  if (mr_no != null) body.mr_no = String(mr_no).trim();
 
   const response = await axios.post(
-    PATIENTS_URL,
+    PATIENTS_V2_URL,
     body,
     { timeout: AXIOS_TIMEOUT, headers, validateStatus: () => true }
   );

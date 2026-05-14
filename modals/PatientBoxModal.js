@@ -53,6 +53,7 @@ const PatientBoxModal = ({
   const [dob, setDob] = useState('');
   const [gender, setGender] = useState('');
   const [age, setAge] = useState('');
+  const [mrNo, setMrNo] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
 
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -94,6 +95,7 @@ const PatientBoxModal = ({
         setDob('');
         setGender('');
         setAge('');
+        setMrNo('');
         setNextId('');
         setLoadingNextId(true);
         getNextPatientId()
@@ -113,6 +115,7 @@ const PatientBoxModal = ({
         setDob('');
         setGender('');
         setAge('');
+        setMrNo('');
       }
     }
   }, [visible, isBlank, tabNew]);
@@ -230,6 +233,7 @@ const PatientBoxModal = ({
         dob: (dob || '').trim(),
         gender: (gender || '').trim(),
         age: (age || '').trim(),
+        mr_no: (mrNo || '').trim(),
       });
       onSet({
         id: String(created.id ?? nextId),
@@ -241,7 +245,7 @@ const PatientBoxModal = ({
     } finally {
       setSaving(false);
     }
-  }, [name, dob, gender, age, nextId, onSet, onClose]);
+  }, [name, dob, gender, age, mrNo, nextId, onSet, onClose]);
 
   const handleClearSelection = useCallback(() => {
     onSet({ id: '', name: '' });
@@ -382,6 +386,18 @@ const PatientBoxModal = ({
                       placeholder="Patient"
                       placeholderTextColor="#666"
                       autoCapitalize="words"
+                      contextMenuHidden
+                      selectTextOnFocus={false}
+                    />
+
+                    <Text style={styles.label} selectable={false}>MR. NO.</Text>
+                    <KioskTextInput
+                      style={styles.input}
+                      value={mrNo}
+                      onChangeText={setMrNo}
+                      placeholder="Enter Medical Record Number (e.g. MRN-0001)"
+                      placeholderTextColor="#666"
+                      autoCapitalize="characters"
                       contextMenuHidden
                       selectTextOnFocus={false}
                     />
@@ -569,9 +585,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.8)', // Same as PowerOffModal
   },
   modalView: {
-    width: SCREEN_WIDTH * 0.85,
-    maxWidth: 360,
-    maxHeight: SCREEN_HEIGHT * 0.7,
+    width: SCREEN_WIDTH * 0.92,
+    maxWidth: 400,
+    maxHeight: SCREEN_HEIGHT * 0.85,
     backgroundColor: '#1C1C1E', // Same as PowerOffModal
     borderRadius: 20,
     padding: H_PAD,
@@ -630,7 +646,7 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
   },
   formScroll: {
-    maxHeight: SCREEN_HEIGHT * 0.45,
+    maxHeight: SCREEN_HEIGHT * 0.65,
   },
   formContent: {
     flexGrow: 1,
@@ -814,7 +830,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   listContainer: {
-    maxHeight: Math.min(400, SCREEN_HEIGHT * 0.5),
+    maxHeight: SCREEN_HEIGHT * 0.7,
     flexShrink: 1,
   },
   selectedBanner: {
@@ -858,7 +874,7 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   flatList: {
-    maxHeight: Math.min(300, SCREEN_HEIGHT * 0.45),
+    maxHeight: SCREEN_HEIGHT * 0.6,
     flexShrink: 1,
   },
   flatListContent: {
