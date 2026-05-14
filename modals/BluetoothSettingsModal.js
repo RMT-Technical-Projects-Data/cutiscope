@@ -69,8 +69,8 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
     const foundSub = DeviceEventEmitter.addListener('onBluetoothDeviceFound', (device) => {
       setScannedDevices(prev => {
         // Filter out if already in pairedDevices or in scannedDevices
-        if (!pairedDevices.find(d => d.address === device.address) && 
-            !prev.find(d => d.address === device.address)) {
+        if (!pairedDevices.find(d => d.address === device.address) &&
+          !prev.find(d => d.address === device.address)) {
           return [...prev, device];
         }
         return prev;
@@ -128,7 +128,7 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
         ]);
         return granted[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] === PermissionsAndroid.RESULTS.GRANTED ||
-               granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN] === PermissionsAndroid.RESULTS.GRANTED;
+          granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN] === PermissionsAndroid.RESULTS.GRANTED;
       } catch (err) {
         console.warn(err);
         return false;
@@ -278,8 +278,8 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
   };
 
   const renderDevice = ({ item, isPaired }) => (
-    <TouchableOpacity 
-      style={styles.deviceItem} 
+    <TouchableOpacity
+      style={styles.deviceItem}
       onPress={() => isPaired ? openOptions(item) : handlePair(item)}
       disabled={connectingAddress !== null}
     >
@@ -290,7 +290,7 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           {connectingAddress === item.address && (
-            <ActivityIndicator size="small" color="#4cd137" style={{ marginRight: 10 }} />
+            <ActivityIndicator size="small" color="#22B2A6" style={{ marginRight: 10 }} />
           )}
           {isPaired && (
             <>
@@ -317,10 +317,8 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose} style={styles.backButton}>
             <Image source={backIcon} style={styles.backIcon} />
-            <Text style={styles.backText}>Back</Text>
           </TouchableOpacity>
-          <VerticalDivider />
-          <Text style={styles.headerTitle}>Bluetooth Settings</Text>
+          <Text style={styles.headerTitle}>Bluetooth</Text>
         </View>
 
         <View style={styles.content}>
@@ -328,7 +326,8 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
             <Text style={styles.toggleText}>Bluetooth</Text>
             <ToggleSwitch
               isOn={bluetoothEnabled}
-              onColor="#4cd137"
+              // onColor="#4cd137"
+              onColor="#22B2A6"
               offColor="#7f8fa6"
               size="medium"
               onToggle={handleToggle}
@@ -368,7 +367,7 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
               <View style={styles.sectionHeaderContainer}>
                 <Text style={styles.sectionHeader}>Available Devices</Text>
                 {isScanning ? (
-                  <ActivityIndicator size="small" color="#4cd137" />
+                  <ActivityIndicator size="small" color="#22B2A6" />
                 ) : (
                   <TouchableOpacity onPress={startScan}>
                     <Text style={styles.scanText}>Scan</Text>
@@ -402,9 +401,9 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
         animationType="fade"
         onRequestClose={() => setShowOptionsModal(false)}
       >
-        <TouchableOpacity 
-          style={styles.optionsModalOverlay} 
-          activeOpacity={1} 
+        <TouchableOpacity
+          style={styles.optionsModalOverlay}
+          activeOpacity={1}
           onPress={() => setShowOptionsModal(false)}
         >
           <View style={styles.optionsModalContent}>
@@ -434,21 +433,21 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
             <Text style={styles.pairingMessage}>
               Pair with {pairingRequest?.name}? Confirm that this passkey is shown on {pairingRequest?.name}.
             </Text>
-            
+
             {pairingRequest?.passkey >= 0 && (
               <Text style={styles.passkeyText}>{pairingRequest?.passkey}</Text>
             )}
 
             <View style={styles.pairingButtonsRow}>
-              <TouchableOpacity 
-                style={styles.pairingButton} 
+              <TouchableOpacity
+                style={styles.pairingButton}
                 onPress={() => handleConfirmPairing(false)}
               >
                 <Text style={styles.pairingCancelText}>Cancel</Text>
               </TouchableOpacity>
               <View style={styles.pairingDivider} />
-              <TouchableOpacity 
-                style={styles.pairingButton} 
+              <TouchableOpacity
+                style={styles.pairingButton}
                 onPress={() => handleConfirmPairing(true)}
               >
                 <Text style={styles.pairingConfirmText}>Pair</Text>
@@ -471,29 +470,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: '6%',
     paddingBottom: 20,
-    backgroundColor: '#1c1c1e',
+    backgroundColor: 'transparent',
     paddingHorizontal: 20,
   },
   backButton: {
-    flexDirection: 'row',
+    height: 44,
+    width: 44,
+    borderRadius: 12,
+    backgroundColor: '#41403D',
+    borderWidth: 1,
+    borderColor: '#333333',
+    justifyContent: 'center',
     alignItems: 'center',
+    // left: 1,
+    // top: 0,
   },
   backIcon: {
-    width: 24,
-    height: 24,
-    tintColor: '#ffffff',
-    marginRight: 8,
-  },
-  backText: {
-    color: '#ffffff',
-    fontSize: 18,
-    fontFamily: 'ProductSans-Regular',
+    width: 25,
+    height: 25,
+    tintColor: '#FFFFFF',
   },
   headerTitle: {
-    color: '#ffffff',
-    fontSize: 22,
+    color: '#FFFFFF',
+    fontSize: 24,
     fontFamily: 'ProductSans-Bold',
-    marginLeft: 15,
+    letterSpacing: 0.5,
+    flex: 1,
+    // marginLeft: 15,
+    textAlign: 'center',
   },
   content: {
     padding: 20,
@@ -524,24 +528,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: 20,
     marginBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#2f3640',
-    paddingBottom: 5,
   },
   sectionHeader: {
-    color: '#4cd137',
-    fontSize: 16,
+    color: '#22B2A6',
+    fontSize: 14,
     fontFamily: 'ProductSans-Bold',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
   },
   scanText: {
-    color: '#00a8ff',
+    color: '#22B2A6',
     fontSize: 14,
     fontFamily: 'ProductSans-Bold',
   },
   list: {
-    maxHeight: '40%',
+    maxHeight: '70%',
   },
   deviceItem: {
     backgroundColor: '#2f3640',

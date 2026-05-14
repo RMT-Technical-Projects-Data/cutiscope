@@ -13,6 +13,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '@react-navigation/native';
 import { UserMessages } from '../utils/userMessages';
 import CustomKeyboard from '../Components/CustomKeyboard';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 const SettingsMenu = () => {
     const [isPressed, setIsPressed] = useState(null);
@@ -228,7 +229,7 @@ const SettingsMenu = () => {
                                     activeOpacity={0.8}
                                 >
                                     <View style={styles.iconContainer}>
-                                        <Image source={require('../assets/icon_settings.png')} style={styles.icon} />
+                                        <MaterialCommunityIcons name="bluetooth" size={24} color="#22B2A6" />
                                     </View>
                                     <View style={styles.menuText}>
                                         <Text style={styles.menuTitle}>Bluetooth</Text>
