@@ -280,8 +280,9 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
   const renderDevice = ({ item, isPaired }) => (
     <TouchableOpacity
       style={styles.deviceItem}
-      onPress={() => isPaired ? openOptions(item) : handlePair(item)}
-      disabled={connectingAddress !== null}
+      onPress={() => isPaired ? openOptions(item) : undefined}
+      disabled={!isPaired || connectingAddress !== null}
+      activeOpacity={isPaired ? 0.2 : 1}
     >
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
         <View style={{ flex: 1 }}>
@@ -350,19 +351,6 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
                 </>
               )}
 
-              <View style={styles.sectionHeaderContainer}>
-                <Text style={styles.sectionHeader}>Paired Devices</Text>
-              </View>
-              {pairedDevices.length > 0 ? (
-                <FlatList
-                  data={pairedDevices}
-                  keyExtractor={(item) => item.address}
-                  renderItem={(props) => renderDevice({ ...props, isPaired: true })}
-                  style={styles.list}
-                />
-              ) : (
-                <Text style={styles.emptyText}>No paired devices found.</Text>
-              )}
 
               <View style={styles.sectionHeaderContainer}>
                 <Text style={styles.sectionHeader}>Available Devices</Text>
@@ -544,7 +532,7 @@ const styles = StyleSheet.create({
     fontFamily: 'ProductSans-Bold',
   },
   list: {
-    maxHeight: '70%',
+    maxHeight: '90%',
   },
   deviceItem: {
     backgroundColor: '#2f3640',
