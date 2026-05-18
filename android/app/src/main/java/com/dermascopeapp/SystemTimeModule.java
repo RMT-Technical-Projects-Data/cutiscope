@@ -34,7 +34,12 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
-
+import android.bluetooth.BluetoothSocket;
+import android.app.Activity;
+import java.io.OutputStream;
+import java.io.InputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.FileInputStream;
 public class SystemTimeModule extends ReactContextBaseJavaModule {
 
     SystemTimeModule(ReactApplicationContext context) {
@@ -782,8 +787,257 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
             promise.reject("SHARE_ERROR", e.getMessage());
         }
     }
+// -------------------------------------------------------------
+// send bluettoth direct file transfer logic
+    @ReactMethod
+    public void sendFileDirectViaBluetooth(ReadableArray filePaths, String address,
+                                            com.facebook.react.bridge.Promise promise) {
+        // Must run on a background thread — socket operations block
+        new Thread(() -> {
+            BluetoothSocket socket = null;
+            try {
+                BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+                if (adapter == null) { promise.reject("BT_UNSUPPORTED", "Bluetooth not supported"); return; }
 
-    
+                BluetoothDevice device = adapter.getRemoteDevice(address);
+                if (device == null) { promise.reject("BT_DEVICE_NOT_FOUND", "Device not found"); return; }
+
+                if (adapter.isDiscovering()) adapter.cancelDiscovery();
+
+                java.util.UUID OPP_UUID = java.util.UUID.fromString("00001105-0000-1000-8000-00805F9B34FB");
+
+                // Try secure RFCOMM, then insecure
+                try {
+                    socket = device.createRfcommSocketToServiceRecord(OPP_UUID);
+                    socket.connect();
+                    Log.i("SystemTimeModule", "Secure RFCOMM connected");
+                } catch (Exception e1) {
+                    Log.w("SystemTimeModule", "Secure RFCOMM failed, trying insecure: " + e1.getMessage());
+                    try { socket.close(); } catch (Exception ignored) {}
+                    try {
+                        socket = device.createInsecureRfcommSocketToServiceRecord(OPP_UUID);
+                        socket.connect();
+                        Log.i("SystemTimeModule", "Insecure RFCOMM connected");
+                    } catch (Exception e2) {
+                        Log.e("SystemTimeModule", "Both RFCOMM attempts failed: " + e2.getMessage());
+                        launchSystemShare(filePaths, device, promise);
+                        return;
+                    }
+                }
+
+                sendObexFiles(socket, filePaths);
+                promise.resolve("Files sent successfully via OBEX");
+
+            } catch (Exception e) {
+                Log.e("SystemTimeModule", "OBEX send failed, falling back to system share", e);
+                if (socket != null) try { socket.close(); } catch (Exception ignored) {}
+                launchSystemShare(filePaths, null, promise);
+            }
+        }).start();
+    }
+
+    private void launchSystemShare(ReadableArray filePaths, BluetoothDevice device,
+                                    com.facebook.react.bridge.Promise promise) {
+        try {
+            ArrayList<Uri> uris = new ArrayList<>();
+            for (int i = 0; i < filePaths.size(); i++) {
+                File file = new File(filePaths.getString(i));
+                if (file.exists()) {
+                    uris.add(FileProvider.getUriForFile(getReactApplicationContext(),
+                            getReactApplicationContext().getPackageName() + ".provider", file));
+                }
+            }
+            Intent intent = new Intent(Intent.ACTION_SEND_MULTIPLE);
+            intent.setType("image/jpeg");
+            intent.setPackage("com.android.bluetooth");
+            intent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+            if (device != null) intent.putExtra(BluetoothDevice.EXTRA_DEVICE, device);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+
+            Activity activity = getCurrentActivity();
+            if (activity != null) try { activity.stopLockTask(); } catch (Exception ignored) {}
+
+            getReactApplicationContext().startActivity(intent);
+            promise.resolve("Fallback system share launched");
+        } catch (Exception e) {
+            promise.reject("SHARE_ERROR", e.getMessage());
+        }
+    }
+
+    // ─── Corrected OBEX client ────────────────────────────────────────────────────
+
+    private void sendObexFiles(BluetoothSocket socket, ReadableArray filePaths) throws Exception {
+        OutputStream out = socket.getOutputStream();
+        InputStream  in  = socket.getInputStream();
+
+        // ── CONNECT ──────────────────────────────────────────────────────────────
+        // Advertise 0xFFFF but we MUST use whatever the server responds with
+        out.write(new byte[]{
+            (byte)0x80, 0x00, 0x07,   // opcode CONNECT + length=7
+            0x10, 0x00,               // OBEX v1.0, flags=0
+            (byte)0xFF, (byte)0xFF    // our advertised max packet size
+        });
+        out.flush();
+
+        byte[] connResp = readObexPacket(in);
+        if ((connResp[0] & 0xFF) != 0xA0)
+            throw new IOException("OBEX CONNECT rejected: 0x" + Integer.toHexString(connResp[0] & 0xFF));
+
+        // ★ Read server's max packet size from CONNECT response bytes 5-6
+        // Layout: [respCode(1)] [pktLen(2)] [version(1)] [flags(1)] [maxPkt(2)]
+        int serverMaxPacket = 0xFFFF;
+        if (connResp.length >= 7) {
+            serverMaxPacket = ((connResp[5] & 0xFF) << 8) | (connResp[6] & 0xFF);
+            if (serverMaxPacket < 255) serverMaxPacket = 255; // sanity floor
+        }
+        final int MAX_PACKET = serverMaxPacket; // ★ use THIS for all PUT packets
+        Log.i("SystemTimeModule", "OBEX CONNECT OK — server max packet: " + MAX_PACKET + " bytes");
+
+        // ── PUT each file ─────────────────────────────────────────────────────────
+        for (int i = 0; i < filePaths.size(); i++) {
+            File file = new File(filePaths.getString(i));
+            if (!file.exists()) {
+                Log.w("SystemTimeModule", "Skipping missing file: " + filePaths.getString(i));
+                continue;
+            }
+
+            // Read whole file into memory
+            byte[] fileData;
+            try (FileInputStream fis = new FileInputStream(file);
+                ByteArrayOutputStream buf = new ByteArrayOutputStream()) {
+                byte[] tmp = new byte[8192]; int n;
+                while ((n = fis.read(tmp)) != -1) buf.write(tmp, 0, n);
+                fileData = buf.toByteArray();
+            }
+
+            byte[] nameHdr = buildNameHeader(file.getName());    // UTF-16BE, 0x01
+            byte[] typeHdr = buildTypeHeader("image/jpeg");      // ASCII+\0, 0x42
+            byte[] lenHdr  = buildLengthHeader(fileData.length); // 4-byte int, 0xC3
+
+            int pktOverhead   = 3; // opcode(1) + pkt-len(2)
+            int bodyHdrSize   = 3; // body-HI(1) + body-len(2)
+            int commonHeaders = nameHdr.length + typeHdr.length + lenHdr.length;
+
+            int offset = 0;
+            boolean firstPacket = true;
+
+            while (offset < fileData.length) {
+                int available = MAX_PACKET - pktOverhead - bodyHdrSize;
+                if (firstPacket) available -= commonHeaders;
+
+                int chunkSize = Math.min(fileData.length - offset, available);
+                boolean isLast = (offset + chunkSize >= fileData.length);
+
+                ByteArrayOutputStream payload = new ByteArrayOutputStream();
+                if (firstPacket) {
+                    payload.write(nameHdr);
+                    payload.write(typeHdr);
+                    payload.write(lenHdr);
+                }
+
+                // 0x48 = Body (more to come), 0x49 = End-of-Body (last chunk)
+                int bodyHdrLen = 3 + chunkSize;
+                payload.write(isLast ? 0x49 : 0x48);
+                payload.write(bodyHdrLen >> 8);
+                payload.write(bodyHdrLen & 0xFF);
+                payload.write(fileData, offset, chunkSize);
+
+                byte[] payloadBytes = payload.toByteArray();
+                int pktLen = pktOverhead + payloadBytes.length;
+
+                // 0x02 = PUT non-final, 0x82 = PUT final (last packet for this file)
+                out.write(isLast ? 0x82 : 0x02);
+                out.write(pktLen >> 8);
+                out.write(pktLen & 0xFF);
+                out.write(payloadBytes);
+                out.flush();
+
+                byte[] resp = readObexPacket(in);
+                int respCode = resp[0] & 0xFF;
+
+                if (isLast) {
+                    if (respCode != 0xA0)
+                        throw new IOException("PUT final rejected for " + file.getName() + ": 0x" + Integer.toHexString(respCode));
+                    Log.i("SystemTimeModule", "PUT OK: " + file.getName());
+                } else {
+                    if (respCode != 0x90)
+                        throw new IOException("PUT continue rejected: 0x" + Integer.toHexString(respCode));
+                }
+
+                offset += chunkSize;
+                firstPacket = false;
+            }
+        }
+
+        // ── DISCONNECT ───────────────────────────────────────────────────────────
+        out.write(new byte[]{(byte)0x81, 0x00, 0x03});
+        out.flush();
+        try { readObexPacket(in); } catch (Exception ignored) {}
+        socket.close();
+        Log.i("SystemTimeModule", "OBEX session complete");
+    }
+    // ─── OBEX header builders ─────────────────────────────────────────────────────
+
+    /** 0x01 — Name: Unicode UTF-16BE + 2-byte null terminator */
+    private byte[] buildNameHeader(String name) throws Exception {
+        byte[] utf16 = name.getBytes("UTF-16BE");
+        int total = 3 + utf16.length + 2; // HI(1) + len(2) + chars + null(2)
+        byte[] h = new byte[total];
+        h[0] = 0x01;
+        h[1] = (byte)(total >> 8);
+        h[2] = (byte)(total & 0xFF);
+        System.arraycopy(utf16, 0, h, 3, utf16.length);
+        // Last 2 bytes stay 0x00 0x00 (null terminator) from array init
+        return h;
+    }
+
+    /** 0x42 — Type: ASCII MIME type + single null terminator */
+    private byte[] buildTypeHeader(String mimeType) throws Exception {
+        byte[] ascii = (mimeType + "\0").getBytes("US-ASCII");
+        int total = 3 + ascii.length;
+        byte[] h = new byte[total];
+        h[0] = 0x42;
+        h[1] = (byte)(total >> 8);
+        h[2] = (byte)(total & 0xFF);
+        System.arraycopy(ascii, 0, h, 3, ascii.length);
+        return h;
+    }
+
+    /**
+     * 0xC3 — Length: 4-byte unsigned int.
+     * Note: 0xCx headers have NO length field — just HI(1) + value(4) = 5 bytes total.
+     */
+    private byte[] buildLengthHeader(long len) {
+        return new byte[]{
+            (byte)0xC3,
+            (byte)(len >> 24), (byte)(len >> 16), (byte)(len >> 8), (byte)len
+        };
+    }
+
+    // ─── I/O helpers ─────────────────────────────────────────────────────────────
+
+    /** Read a full OBEX response packet (header tells us the length). */
+    private byte[] readObexPacket(InputStream in) throws IOException {
+        byte[] hdr = new byte[3];
+        readFully(in, hdr, 0, 3);
+        int total = ((hdr[1] & 0xFF) << 8) | (hdr[2] & 0xFF);
+        if (total < 3) throw new IOException("Malformed OBEX packet, length=" + total);
+        byte[] pkt = new byte[total];
+        pkt[0] = hdr[0]; pkt[1] = hdr[1]; pkt[2] = hdr[2];
+        if (total > 3) readFully(in, pkt, 3, total - 3);
+        return pkt;
+    }
+
+    private void readFully(InputStream in, byte[] buf, int off, int len) throws IOException {
+        int read = 0;
+        while (read < len) {
+            int n = in.read(buf, off + read, len - read);
+            if (n == -1) throw new IOException("Stream closed unexpectedly after " + read + "/" + len + " bytes");
+            read += n;
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------
     @ReactMethod
     public void getWatermarkedImage(String filePath, String text, com.facebook.react.bridge.Promise promise) {
         String path = watermarkFileInternal(filePath, text);

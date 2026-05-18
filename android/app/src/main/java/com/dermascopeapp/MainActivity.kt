@@ -128,8 +128,8 @@ class MainActivity : ReactActivity() {
                 Log.i("MainActivity", "Not device owner - kiosk lock task not started")
                 return
             }
-            // Allow only this app in lock task mode
-            dpm.setLockTaskPackages(adminName, arrayOf(packageName))
+            // Allow only this app and bluetooth packages in lock task mode
+            dpm.setLockTaskPackages(adminName, arrayOf(packageName, "com.android.bluetooth", "com.google.android.bluetooth"))
             // No lock screen - go straight to app
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 dpm.setKeyguardDisabled(adminName, true)

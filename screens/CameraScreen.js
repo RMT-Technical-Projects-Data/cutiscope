@@ -95,7 +95,6 @@ const SCALE_BASE_MM = 20.0;
 const SCALE_NUM_TICKS = 20;
 
 const MillimeterScale = ({ zoom }) => {
-  const currentMm = SCALE_BASE_MM / zoom;
   const numTicks = SCALE_NUM_TICKS;
   
   return (
@@ -103,7 +102,9 @@ const MillimeterScale = ({ zoom }) => {
       <View style={styles.mmScaleLine} />
       {Array.from({ length: numTicks + 1 }).map((_, index) => {
         const isMajor = index % 5 === 0;
-        const val = ((numTicks - index) / numTicks) * currentMm;
+        const minMm = 10.0 / zoom;
+        const maxMm = 20.0 / zoom;
+        const val = minMm + ((numTicks - index) / numTicks) * (maxMm - minMm);
         const topPosition = `${(index / numTicks) * 100}%`;
         
         return (
@@ -111,7 +112,7 @@ const MillimeterScale = ({ zoom }) => {
             <View style={isMajor ? styles.mmScaleTickMajor : styles.mmScaleTickMinor} />
             {isMajor && (
               <Text style={styles.mmScaleText}>
-                {val === 0 ? '0' : val.toFixed(1)}
+                {val.toFixed(1)}
               </Text>
             )}
           </View>
@@ -1847,7 +1848,8 @@ const CameraScreen = ({ navigation }) => {
 
         canvas.drawLine(scaleX, scaleTop, scaleX, scaleTop + scaleHeight, scalePaint);
 
-        const currentMm = SCALE_BASE_MM / zoomVal;
+        const minMm = 10.0 / zoomVal;
+        const maxMm = 20.0 / zoomVal;
         const numTicks = SCALE_NUM_TICKS;
         
         let font = null;
@@ -1866,8 +1868,8 @@ const CameraScreen = ({ navigation }) => {
           canvas.drawLine(scaleX, y, scaleX + tickWidth, y, scalePaint);
           
           if (isMajor && font) {
-            const val = ((numTicks - i) / numTicks) * currentMm;
-            const text = val === 0 ? '0' : val.toFixed(1);
+            const val = minMm + ((numTicks - i) / numTicks) * (maxMm - minMm);
+            const text = val.toFixed(1);
             const textX = scaleX + tickWidth + (imgW * 0.015);
             canvas.drawText(text, textX, y + (font.getSize() / 3), scalePaint, font);
           }

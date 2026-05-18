@@ -35,6 +35,7 @@ import { uploadToUserS3Folder, uploadWithImageRecord, buildS3PathFromImage, dele
 import OptimisedUploadService from '../services/OptimisedUploadService';
 import ImageDatabase from '../services/ImageDatabase';
 import ConfirmationModal from '../modals/ConfirmationModal';
+import BluetoothShareModal from '../modals/BluetoothShareModal';
 import { showInAppToast } from '../utils/Helpers';
 import CustomStatusBar from '../Components/CustomStatusBar';
 
@@ -372,6 +373,16 @@ const GalleryScreen = ({ route, navigation }) => {
     isDestructive: false,
     onConfirm: () => { },
   });
+
+  // Bluetooth Custom Share Modal State
+  const [bluetoothShareVisible, setBluetoothShareVisible] = useState(false);
+  const [bluetoothShareFiles, setBluetoothShareFiles] = useState([]);
+  const [bluetoothShareLabels, setBluetoothShareLabels] = useState([]);
+
+  const handleBluetoothShareSuccess = useCallback(() => {
+    setSelectedPhotos([]);
+    setIsSelectionMode(false);
+  }, []);
 
   // Sync ref with state
   useEffect(() => {
@@ -1162,39 +1173,20 @@ const GalleryScreen = ({ route, navigation }) => {
     return label;
   }, []);
 
-  const handleBluetoothShareSelected = useCallback(async () => {
+  const handleBluetoothShareSelected = useCallback(() => {
     if (selectedPhotos.length === 0) {
       showInAppToast("No images selected!", { durationMs: 2000, position: 'bottom' });
       return;
     }
 
-    try {
-      const { SystemTimeModule } = NativeModules;
-      if (SystemTimeModule && SystemTimeModule.sendFilesViaBluetooth) {
-        const cleanPaths = selectedPhotos.map(path => path.replace('file://', ''));
-        
-        // Construct labels for each selected photo individually
-        const labels = selectedPhotos.map(path => {
-          const photo = activePhotos.find(p => p.path === path || p.absolutePath === path.replace('file://', ''));
-          return photo ? getShareLabel(photo) : '';
-        });
-        
-        await SystemTimeModule.sendFilesViaBluetooth(cleanPaths, labels);
-      } else if (SystemTimeModule && SystemTimeModule.sendFileViaBluetooth) {
-        // Fallback: send one by one if multiple share is not supported
-        for (const path of selectedPhotos) {
-          const cleanPath = path.replace('file://', '');
-          const photo = activePhotos.find(p => p.path === path || p.absolutePath === cleanPath);
-          const label = photo ? getShareLabel(photo) : '';
-          await SystemTimeModule.sendFileViaBluetooth(cleanPath, label);
-        }
-      }
-      setSelectedPhotos([]);
-      setIsSelectionMode(false);
-    } catch (e) {
-      console.warn('Bluetooth multi-share error:', e);
-      showInAppToast("Failed to share via Bluetooth", { durationMs: 2000, position: 'bottom' });
-    }
+    const labels = selectedPhotos.map(path => {
+      const photo = activePhotos.find(p => p.path === path || p.absolutePath === path.replace('file://', ''));
+      return photo ? getShareLabel(photo) : '';
+    });
+
+    setBluetoothShareFiles(selectedPhotos);
+    setBluetoothShareLabels(labels);
+    setBluetoothShareVisible(true);
   }, [selectedPhotos, activePhotos, getShareLabel]);
 
   // Core upload logic – uses image record when available so upload always goes to correct patient
@@ -1814,6 +1806,14 @@ const GalleryScreen = ({ route, navigation }) => {
             setConfirmModalVisible(false);
           }}
         />
+
+        <BluetoothShareModal
+          visible={bluetoothShareVisible}
+          onClose={() => setBluetoothShareVisible(false)}
+          selectedFiles={bluetoothShareFiles}
+          selectedLabels={bluetoothShareLabels}
+          onShareSuccess={handleBluetoothShareSuccess}
+        />
       </View>
 
       {/* Deletion Modal — self-contained full-screen loader */}
@@ -2088,20 +2088,11 @@ const FullScreenGalleryModal = React.memo(({
               {/* Bluetooth Share Button */}
               <TouchableOpacity
                 style={styles.uploadButtonFull}
-                onPress={async () => {
-                  try {
-                    const { SystemTimeModule } = NativeModules;
-                    if (SystemTimeModule && SystemTimeModule.sendFileViaBluetooth) {
-                      const cleanPath = currentPhoto.path.replace('file://', '');
-                      const label = getShareLabel ? getShareLabel(currentPhoto) : '';
-                      await SystemTimeModule.sendFileViaBluetooth(cleanPath, label);
-                    }
-                  } catch (e) {
-                    console.warn('Bluetooth share error:', e);
-                    setErrorMsg('Failed to share via Bluetooth');
-                    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
-                    errorTimerRef.current = setTimeout(() => setErrorMsg(null), 3500);
-                  }
+                onPress={() => {
+                  const label = getShareLabel ? getShareLabel(currentPhoto) : '';
+                  setBluetoothShareFiles([currentPhoto.path]);
+                  setBluetoothShareLabels([label]);
+                  setBluetoothShareVisible(true);
                 }}
               >
                 <MaterialCommunityIcons name="bluetooth" size={30} color={ACCENT_TEAL} style={{ marginBottom: 4 }} />
