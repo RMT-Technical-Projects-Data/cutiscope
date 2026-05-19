@@ -40,6 +40,7 @@ import java.io.OutputStream;
 import java.io.InputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
+
 public class SystemTimeModule extends ReactContextBaseJavaModule {
 
     SystemTimeModule(ReactApplicationContext context) {
@@ -105,8 +106,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                         map.putString("name", device.getName() != null ? device.getName() : "Unknown Device");
                         map.putBoolean("connected", true);
                         getReactApplicationContext()
-                            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                            .emit("onBluetoothConnectionChanged", map);
+                                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                                .emit("onBluetoothConnectionChanged", map);
                     } catch (SecurityException e) {
                         // Silently handle
                     }
@@ -120,8 +121,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                         map.putString("name", device.getName() != null ? device.getName() : "Unknown Device");
                         map.putBoolean("connected", false);
                         getReactApplicationContext()
-                            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                            .emit("onBluetoothConnectionChanged", map);
+                                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                                .emit("onBluetoothConnectionChanged", map);
                     } catch (SecurityException e) {
                         // Silently handle
                     }
@@ -130,7 +131,7 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
                 int type = intent.getIntExtra(BluetoothDevice.EXTRA_PAIRING_VARIANT, BluetoothDevice.ERROR);
                 int passkey = intent.getIntExtra(BluetoothDevice.EXTRA_PAIRING_KEY, BluetoothDevice.ERROR);
-                
+
                 if (device != null) {
                     try {
                         WritableMap map = Arguments.createMap();
@@ -138,10 +139,10 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                         map.putString("name", device.getName() != null ? device.getName() : "Unknown Device");
                         map.putInt("variant", type);
                         map.putInt("passkey", passkey);
-                        
+
                         getReactApplicationContext()
-                            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                            .emit("onBluetoothPairingRequest", map);
+                                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                                .emit("onBluetoothPairingRequest", map);
                     } catch (SecurityException e) {
                         // Silently handle
                     }
@@ -154,8 +155,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                     map.putString("address", device.getAddress());
                     map.putBoolean("bonded", true);
                     getReactApplicationContext()
-                        .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                        .emit("onBluetoothBondStateChanged", map);
+                            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                            .emit("onBluetoothBondStateChanged", map);
                 }
             }
         }
@@ -194,7 +195,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                 os.close();
                 process.waitFor();
             } catch (IOException e) {
-                // su not found, if the app has permission it might work via sh for some settings
+                // su not found, if the app has permission it might work via sh for some
+                // settings
                 // but 'date' and 'hwclock' definitely need root.
                 Log.w("SystemTimeModule", "Root access unavailable for setTime");
             }
@@ -443,13 +445,15 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
         try {
             boolean success;
             if (enable) {
-                // Note: enable() is deprecated since API 33 and may require user consent or be restricted
+                // Note: enable() is deprecated since API 33 and may require user consent or be
+                // restricted
                 success = adapter.enable();
             } else {
                 success = adapter.disable();
             }
-            
-            // On many modern Android versions, enable/disable returns false if the app isn't a system app,
+
+            // On many modern Android versions, enable/disable returns false if the app
+            // isn't a system app,
             // but we'll resolve true if we at least made the attempt without an exception.
             promise.resolve(true);
         } catch (SecurityException se) {
@@ -613,18 +617,19 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
             Process process = Runtime.getRuntime().exec("su");
             DataOutputStream os = new DataOutputStream(process.getOutputStream());
             // Direct binder calls are much faster than UI automation
-            // We try common transaction codes for setPairingConfirmation(String address, boolean confirm)
+            // We try common transaction codes for setPairingConfirmation(String address,
+            // boolean confirm)
             // Android 11: 40, Android 12: 43, Android 13: 44, Android 14: 45
             // s16 = String, i32 1 = true
             os.writeBytes("service call bluetooth 40 s16 " + address + " i32 1\n");
             os.writeBytes("service call bluetooth 43 s16 " + address + " i32 1\n");
             os.writeBytes("service call bluetooth 44 s16 " + address + " i32 1\n");
             os.writeBytes("service call bluetooth 45 s16 " + address + " i32 1\n");
-            
+
             // Fallback: If binder calls failed, try a quick keyevent
             os.writeBytes("input keyevent KEYCODE_DPAD_RIGHT\n");
             os.writeBytes("input keyevent KEYCODE_ENTER\n");
-            
+
             os.writeBytes("exit\n");
             os.flush();
             os.close();
@@ -640,7 +645,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                 os.flush();
                 os.close();
                 sh.waitFor();
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -669,7 +675,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                 os.flush();
                 os.close();
                 sh.waitFor();
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -705,10 +712,9 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                     return;
                 }
                 finalUri = FileProvider.getUriForFile(
-                    getReactApplicationContext(),
-                    getReactApplicationContext().getPackageName() + ".provider",
-                    file
-                );
+                        getReactApplicationContext(),
+                        getReactApplicationContext().getPackageName() + ".provider",
+                        file);
             }
 
             if (finalUri == null) {
@@ -720,7 +726,7 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
             intent.setAction(Intent.ACTION_SEND);
             intent.setType("image/jpeg");
             intent.putExtra(Intent.EXTRA_STREAM, finalUri);
-            
+
             if (text != null && !text.isEmpty()) {
                 intent.putExtra(Intent.EXTRA_TEXT, text);
                 intent.putExtra(Intent.EXTRA_SUBJECT, text);
@@ -739,13 +745,14 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
     }
 
     @ReactMethod
-    public void sendFilesViaBluetooth(ReadableArray filePaths, ReadableArray labels, com.facebook.react.bridge.Promise promise) {
+    public void sendFilesViaBluetooth(ReadableArray filePaths, ReadableArray labels,
+            com.facebook.react.bridge.Promise promise) {
         try {
             ArrayList<Uri> uris = new ArrayList<>();
             for (int i = 0; i < filePaths.size(); i++) {
                 String filePath = filePaths.getString(i);
                 String label = (labels != null && i < labels.size()) ? labels.getString(i) : null;
-                
+
                 Uri finalUri;
                 if (label != null && !label.isEmpty()) {
                     finalUri = watermarkFile(filePath, label);
@@ -753,15 +760,14 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                     File file = new File(filePath);
                     if (file.exists()) {
                         finalUri = FileProvider.getUriForFile(
-                            getReactApplicationContext(),
-                            getReactApplicationContext().getPackageName() + ".provider",
-                            file
-                        );
+                                getReactApplicationContext(),
+                                getReactApplicationContext().getPackageName() + ".provider",
+                                file);
                     } else {
                         finalUri = null;
                     }
                 }
-                
+
                 if (finalUri != null) {
                     uris.add(finalUri);
                 }
@@ -787,57 +793,90 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
             promise.reject("SHARE_ERROR", e.getMessage());
         }
     }
-// -------------------------------------------------------------
-// send bluettoth direct file transfer logic
+
+    // -------------------------------------------------------------
+    // send bluettoth direct file transfer logic
     @ReactMethod
     public void sendFileDirectViaBluetooth(ReadableArray filePaths, String address,
-                                            com.facebook.react.bridge.Promise promise) {
-        // Must run on a background thread — socket operations block
+            com.facebook.react.bridge.Promise promise) {
         new Thread(() -> {
             BluetoothSocket socket = null;
+            boolean rfcommConnected = false; // ★ track whether we got past connection
+
             try {
                 BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
-                if (adapter == null) { promise.reject("BT_UNSUPPORTED", "Bluetooth not supported"); return; }
+                if (adapter == null) {
+                    promise.reject("BT_UNSUPPORTED", "Bluetooth not supported");
+                    return;
+                }
 
                 BluetoothDevice device = adapter.getRemoteDevice(address);
-                if (device == null) { promise.reject("BT_DEVICE_NOT_FOUND", "Device not found"); return; }
+                if (device == null) {
+                    promise.reject("BT_DEVICE_NOT_FOUND", "Device not found");
+                    return;
+                }
 
-                if (adapter.isDiscovering()) adapter.cancelDiscovery();
+                if (adapter.isDiscovering())
+                    adapter.cancelDiscovery();
 
                 java.util.UUID OPP_UUID = java.util.UUID.fromString("00001105-0000-1000-8000-00805F9B34FB");
 
-                // Try secure RFCOMM, then insecure
+                // Try secure RFCOMM first, then insecure
                 try {
                     socket = device.createRfcommSocketToServiceRecord(OPP_UUID);
                     socket.connect();
                     Log.i("SystemTimeModule", "Secure RFCOMM connected");
                 } catch (Exception e1) {
                     Log.w("SystemTimeModule", "Secure RFCOMM failed, trying insecure: " + e1.getMessage());
-                    try { socket.close(); } catch (Exception ignored) {}
+                    try {
+                        if (socket != null)
+                            socket.close();
+                    } catch (Exception ignored) {
+                    }
+                    socket = null;
                     try {
                         socket = device.createInsecureRfcommSocketToServiceRecord(OPP_UUID);
                         socket.connect();
                         Log.i("SystemTimeModule", "Insecure RFCOMM connected");
                     } catch (Exception e2) {
-                        Log.e("SystemTimeModule", "Both RFCOMM attempts failed: " + e2.getMessage());
+                        // ★ Only fall back to system share on RFCOMM connection failure
+                        Log.e("SystemTimeModule",
+                                "Both RFCOMM attempts failed, using system share: " + e2.getMessage());
                         launchSystemShare(filePaths, device, promise);
                         return;
                     }
                 }
 
+                // ★ Mark that RFCOMM is up — any failure after this is an OBEX-level rejection
+                rfcommConnected = true;
+
                 sendObexFiles(socket, filePaths);
-                promise.resolve("Files sent successfully via OBEX");
+                promise.resolve("Files sent successfully");
 
             } catch (Exception e) {
-                Log.e("SystemTimeModule", "OBEX send failed, falling back to system share", e);
-                if (socket != null) try { socket.close(); } catch (Exception ignored) {}
-                launchSystemShare(filePaths, null, promise);
+                Log.e("SystemTimeModule", "OBEX transfer failed: " + e.getMessage());
+
+                if (!rfcommConnected) {
+                    // Should not reach here (handled above) but guard anyway
+                    launchSystemShare(filePaths, null, promise);
+                } else {
+                    // ★ OBEX was rejected or cancelled by remote device
+                    // Do NOT launch system share — just reject cleanly, stay in kiosk mode
+                    promise.reject("BT_TRANSFER_FAILED", "Transfer failed or was cancelled: " + e.getMessage());
+                }
+            } finally {
+                if (socket != null) {
+                    try {
+                        socket.close();
+                    } catch (Exception ignored) {
+                    }
+                }
             }
         }).start();
     }
 
     private void launchSystemShare(ReadableArray filePaths, BluetoothDevice device,
-                                    com.facebook.react.bridge.Promise promise) {
+            com.facebook.react.bridge.Promise promise) {
         try {
             ArrayList<Uri> uris = new ArrayList<>();
             for (int i = 0; i < filePaths.size(); i++) {
@@ -851,11 +890,16 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
             intent.setType("image/jpeg");
             intent.setPackage("com.android.bluetooth");
             intent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
-            if (device != null) intent.putExtra(BluetoothDevice.EXTRA_DEVICE, device);
+            if (device != null)
+                intent.putExtra(BluetoothDevice.EXTRA_DEVICE, device);
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
 
             Activity activity = getCurrentActivity();
-            if (activity != null) try { activity.stopLockTask(); } catch (Exception ignored) {}
+            if (activity != null)
+                try {
+                    activity.stopLockTask();
+                } catch (Exception ignored) {
+                }
 
             getReactApplicationContext().startActivity(intent);
             promise.resolve("Fallback system share launched");
@@ -864,18 +908,19 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
         }
     }
 
-    // ─── Corrected OBEX client ────────────────────────────────────────────────────
+    // ─── Corrected OBEX client
+    // ────────────────────────────────────────────────────
 
     private void sendObexFiles(BluetoothSocket socket, ReadableArray filePaths) throws Exception {
         OutputStream out = socket.getOutputStream();
-        InputStream  in  = socket.getInputStream();
+        InputStream in = socket.getInputStream();
 
         // ── CONNECT ──────────────────────────────────────────────────────────────
         // Advertise 0xFFFF but we MUST use whatever the server responds with
-        out.write(new byte[]{
-            (byte)0x80, 0x00, 0x07,   // opcode CONNECT + length=7
-            0x10, 0x00,               // OBEX v1.0, flags=0
-            (byte)0xFF, (byte)0xFF    // our advertised max packet size
+        out.write(new byte[] {
+                (byte) 0x80, 0x00, 0x07, // opcode CONNECT + length=7
+                0x10, 0x00, // OBEX v1.0, flags=0
+                (byte) 0xFF, (byte) 0xFF // our advertised max packet size
         });
         out.flush();
 
@@ -888,7 +933,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
         int serverMaxPacket = 0xFFFF;
         if (connResp.length >= 7) {
             serverMaxPacket = ((connResp[5] & 0xFF) << 8) | (connResp[6] & 0xFF);
-            if (serverMaxPacket < 255) serverMaxPacket = 255; // sanity floor
+            if (serverMaxPacket < 255)
+                serverMaxPacket = 255; // sanity floor
         }
         final int MAX_PACKET = serverMaxPacket; // ★ use THIS for all PUT packets
         Log.i("SystemTimeModule", "OBEX CONNECT OK — server max packet: " + MAX_PACKET + " bytes");
@@ -904,18 +950,20 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
             // Read whole file into memory
             byte[] fileData;
             try (FileInputStream fis = new FileInputStream(file);
-                ByteArrayOutputStream buf = new ByteArrayOutputStream()) {
-                byte[] tmp = new byte[8192]; int n;
-                while ((n = fis.read(tmp)) != -1) buf.write(tmp, 0, n);
+                    ByteArrayOutputStream buf = new ByteArrayOutputStream()) {
+                byte[] tmp = new byte[8192];
+                int n;
+                while ((n = fis.read(tmp)) != -1)
+                    buf.write(tmp, 0, n);
                 fileData = buf.toByteArray();
             }
 
-            byte[] nameHdr = buildNameHeader(file.getName());    // UTF-16BE, 0x01
-            byte[] typeHdr = buildTypeHeader("image/jpeg");      // ASCII+\0, 0x42
-            byte[] lenHdr  = buildLengthHeader(fileData.length); // 4-byte int, 0xC3
+            byte[] nameHdr = buildNameHeader(file.getName()); // UTF-16BE, 0x01
+            byte[] typeHdr = buildTypeHeader("image/jpeg"); // ASCII+\0, 0x42
+            byte[] lenHdr = buildLengthHeader(fileData.length); // 4-byte int, 0xC3
 
-            int pktOverhead   = 3; // opcode(1) + pkt-len(2)
-            int bodyHdrSize   = 3; // body-HI(1) + body-len(2)
+            int pktOverhead = 3; // opcode(1) + pkt-len(2)
+            int bodyHdrSize = 3; // body-HI(1) + body-len(2)
             int commonHeaders = nameHdr.length + typeHdr.length + lenHdr.length;
 
             int offset = 0;
@@ -923,7 +971,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
 
             while (offset < fileData.length) {
                 int available = MAX_PACKET - pktOverhead - bodyHdrSize;
-                if (firstPacket) available -= commonHeaders;
+                if (firstPacket)
+                    available -= commonHeaders;
 
                 int chunkSize = Math.min(fileData.length - offset, available);
                 boolean isLast = (offset + chunkSize >= fileData.length);
@@ -957,7 +1006,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
 
                 if (isLast) {
                     if (respCode != 0xA0)
-                        throw new IOException("PUT final rejected for " + file.getName() + ": 0x" + Integer.toHexString(respCode));
+                        throw new IOException(
+                                "PUT final rejected for " + file.getName() + ": 0x" + Integer.toHexString(respCode));
                     Log.i("SystemTimeModule", "PUT OK: " + file.getName());
                 } else {
                     if (respCode != 0x90)
@@ -970,13 +1020,17 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
         }
 
         // ── DISCONNECT ───────────────────────────────────────────────────────────
-        out.write(new byte[]{(byte)0x81, 0x00, 0x03});
+        out.write(new byte[] { (byte) 0x81, 0x00, 0x03 });
         out.flush();
-        try { readObexPacket(in); } catch (Exception ignored) {}
+        try {
+            readObexPacket(in);
+        } catch (Exception ignored) {
+        }
         socket.close();
         Log.i("SystemTimeModule", "OBEX session complete");
     }
-    // ─── OBEX header builders ─────────────────────────────────────────────────────
+    // ─── OBEX header builders
+    // ─────────────────────────────────────────────────────
 
     /** 0x01 — Name: Unicode UTF-16BE + 2-byte null terminator */
     private byte[] buildNameHeader(String name) throws Exception {
@@ -984,8 +1038,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
         int total = 3 + utf16.length + 2; // HI(1) + len(2) + chars + null(2)
         byte[] h = new byte[total];
         h[0] = 0x01;
-        h[1] = (byte)(total >> 8);
-        h[2] = (byte)(total & 0xFF);
+        h[1] = (byte) (total >> 8);
+        h[2] = (byte) (total & 0xFF);
         System.arraycopy(utf16, 0, h, 3, utf16.length);
         // Last 2 bytes stay 0x00 0x00 (null terminator) from array init
         return h;
@@ -997,20 +1051,21 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
         int total = 3 + ascii.length;
         byte[] h = new byte[total];
         h[0] = 0x42;
-        h[1] = (byte)(total >> 8);
-        h[2] = (byte)(total & 0xFF);
+        h[1] = (byte) (total >> 8);
+        h[2] = (byte) (total & 0xFF);
         System.arraycopy(ascii, 0, h, 3, ascii.length);
         return h;
     }
 
     /**
      * 0xC3 — Length: 4-byte unsigned int.
-     * Note: 0xCx headers have NO length field — just HI(1) + value(4) = 5 bytes total.
+     * Note: 0xCx headers have NO length field — just HI(1) + value(4) = 5 bytes
+     * total.
      */
     private byte[] buildLengthHeader(long len) {
-        return new byte[]{
-            (byte)0xC3,
-            (byte)(len >> 24), (byte)(len >> 16), (byte)(len >> 8), (byte)len
+        return new byte[] {
+                (byte) 0xC3,
+                (byte) (len >> 24), (byte) (len >> 16), (byte) (len >> 8), (byte) len
         };
     }
 
@@ -1021,10 +1076,14 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
         byte[] hdr = new byte[3];
         readFully(in, hdr, 0, 3);
         int total = ((hdr[1] & 0xFF) << 8) | (hdr[2] & 0xFF);
-        if (total < 3) throw new IOException("Malformed OBEX packet, length=" + total);
+        if (total < 3)
+            throw new IOException("Malformed OBEX packet, length=" + total);
         byte[] pkt = new byte[total];
-        pkt[0] = hdr[0]; pkt[1] = hdr[1]; pkt[2] = hdr[2];
-        if (total > 3) readFully(in, pkt, 3, total - 3);
+        pkt[0] = hdr[0];
+        pkt[1] = hdr[1];
+        pkt[2] = hdr[2];
+        if (total > 3)
+            readFully(in, pkt, 3, total - 3);
         return pkt;
     }
 
@@ -1032,7 +1091,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
         int read = 0;
         while (read < len) {
             int n = in.read(buf, off + read, len - read);
-            if (n == -1) throw new IOException("Stream closed unexpectedly after " + read + "/" + len + " bytes");
+            if (n == -1)
+                throw new IOException("Stream closed unexpectedly after " + read + "/" + len + " bytes");
             read += n;
         }
     }
@@ -1053,47 +1113,49 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
             BitmapFactory.Options options = new BitmapFactory.Options();
             options.inMutable = true;
             Bitmap src = BitmapFactory.decodeFile(filePath, options);
-            if (src == null) return null;
-            
+            if (src == null)
+                return null;
+
             Canvas canvas = new Canvas(src);
             int width = src.getWidth();
             int height = src.getHeight();
-            
+
             // Draw semi-transparent black bar at the top
             Paint barPaint = new Paint();
             barPaint.setColor(Color.BLACK);
             barPaint.setAlpha(180);
-            
+
             int fontSize = width / 25; // Proportional font size
-            if (fontSize < 20) fontSize = 20;
-            
+            if (fontSize < 20)
+                fontSize = 20;
+
             Paint textPaint = new Paint();
             textPaint.setColor(Color.WHITE);
             textPaint.setTextSize(fontSize);
             textPaint.setAntiAlias(true);
             textPaint.setFakeBoldText(true);
-            
+
             Rect textBounds = new Rect();
             textPaint.getTextBounds(text, 0, text.length(), textBounds);
-            
+
             int padding = fontSize;
             int barHeight = textBounds.height() + padding * 2;
-            
+
             // Draw background bar
             canvas.drawRect(0, 0, width, barHeight, barPaint);
-            
+
             // Draw centered text
             float x = (width - textBounds.width()) / 2f;
             float y = padding + textBounds.height();
             canvas.drawText(text, x, y, textPaint);
-            
+
             // Save to temp file
             File cacheDir = getReactApplicationContext().getCacheDir();
             File tempFile = File.createTempFile("watermarked_", ".jpg", cacheDir);
             FileOutputStream out = new FileOutputStream(tempFile);
             src.compress(Bitmap.CompressFormat.JPEG, 90, out);
             out.close();
-            
+
             return tempFile.getAbsolutePath();
         } catch (Exception e) {
             Log.e("SystemTimeModule", "Watermarking failed for: " + filePath, e);
@@ -1103,13 +1165,13 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
 
     private Uri watermarkFile(String filePath, String text) {
         String path = watermarkFileInternal(filePath, text);
-        if (path == null) return null;
-        
+        if (path == null)
+            return null;
+
         return FileProvider.getUriForFile(
-            getReactApplicationContext(),
-            getReactApplicationContext().getPackageName() + ".provider",
-            new File(path)
-        );
+                getReactApplicationContext(),
+                getReactApplicationContext().getPackageName() + ".provider",
+                new File(path));
     }
 
     private boolean isConnected(BluetoothDevice device) {
