@@ -1742,6 +1742,12 @@ const GalleryScreen = ({ route, navigation }) => {
           onUpload={handleUploadImage}
           isGuest={isGuest}
           getShareLabel={getShareLabel}
+          onBluetoothShare={(photo) => {
+            const label = getShareLabel ? getShareLabel(photo) : '';
+            setBluetoothShareFiles([photo.path]);
+            setBluetoothShareLabels([label]);
+            setBluetoothShareVisible(true);
+          }}
         />
 
         {/* Bottom Action Bar - Photo selection */}
@@ -1837,7 +1843,8 @@ const FullScreenGalleryModal = React.memo(({
   onDelete,
   onUpload,
   isGuest,
-  getShareLabel
+  getShareLabel,
+  onBluetoothShare
 }) => {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [errorMsg, setErrorMsg] = useState(null);
@@ -2089,10 +2096,9 @@ const FullScreenGalleryModal = React.memo(({
               <TouchableOpacity
                 style={styles.uploadButtonFull}
                 onPress={() => {
-                  const label = getShareLabel ? getShareLabel(currentPhoto) : '';
-                  setBluetoothShareFiles([currentPhoto.path]);
-                  setBluetoothShareLabels([label]);
-                  setBluetoothShareVisible(true);
+                  if (onBluetoothShare) {
+                    onBluetoothShare(currentPhoto);
+                  }
                 }}
               >
                 <MaterialCommunityIcons name="bluetooth" size={30} color={ACCENT_TEAL} style={{ marginBottom: 4 }} />
