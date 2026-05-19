@@ -10,6 +10,8 @@ const defaultDescriptor = {
   getSelection: () => ({ start: 0, end: 0 }),
   setSelection: () => {},
   keyboardType: 'default',
+  showDismiss: false,
+  blur: () => {},
 };
 
 const CustomKeyboardContext = createContext({
@@ -17,18 +19,22 @@ const CustomKeyboardContext = createContext({
   unregisterFocusedInput: () => {},
   insertText: () => {},
   deleteBackward: () => {},
+  dismissKeyboard: () => {},
   hasFocusedInput: false,
   keyboardType: 'default',
+  showDismiss: false,
 });
 
 export function CustomKeyboardProvider({ children }) {
   const focusedRef = useRef(null);
   const [hasFocusedInput, setHasFocusedInput] = useState(false);
   const [keyboardType, setKeyboardType] = useState('default');
+  const [showDismiss, setShowDismiss] = useState(false);
 
   const registerFocusedInput = useCallback((id, descriptor) => {
     focusedRef.current = { id, ...descriptor };
     setKeyboardType(descriptor.keyboardType || 'default');
+    setShowDismiss(!!descriptor.showDismiss);
     setHasFocusedInput(true);
   }, []);
 
@@ -36,6 +42,7 @@ export function CustomKeyboardProvider({ children }) {
     if (focusedRef.current?.id === id) {
       focusedRef.current = null;
       setKeyboardType('default');
+      setShowDismiss(false);
       setHasFocusedInput(false);
     }
   }, []);
@@ -70,16 +77,24 @@ export function CustomKeyboardProvider({ children }) {
     cur.setSelection({ start: newCursor, end: newCursor });
   }, []);
 
+  const dismissKeyboard = useCallback(() => {
+    if (focusedRef.current && typeof focusedRef.current.blur === 'function') {
+      focusedRef.current.blur();
+    }
+  }, []);
+
   const value = useMemo(
     () => ({
       registerFocusedInput,
       unregisterFocusedInput,
       insertText,
       deleteBackward,
+      dismissKeyboard,
       hasFocusedInput,
       keyboardType,
+      showDismiss,
     }),
-    [hasFocusedInput, registerFocusedInput, unregisterFocusedInput, insertText, deleteBackward, keyboardType]
+    [hasFocusedInput, registerFocusedInput, unregisterFocusedInput, insertText, deleteBackward, dismissKeyboard, keyboardType, showDismiss]
   );
 
   return (

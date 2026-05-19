@@ -17,6 +17,16 @@ const KioskTextInput = forwardRef(function KioskTextInput({
   id: propId,
   ...rest
 }, ref) {
+  const localRef = useRef(null);
+  const setRef = useCallback((node) => {
+    localRef.current = node;
+    if (typeof ref === 'function') {
+      ref(node);
+    } else if (ref) {
+      ref.current = node;
+    }
+  }, [ref]);
+
   const idRef = useRef(propId ?? `kiosk_${++kioskInputId}`);
   const id = idRef.current;
   const [selection, setSelectionState] = useState({ start: 0, end: 0 });
@@ -55,6 +65,8 @@ const KioskTextInput = forwardRef(function KioskTextInput({
         getSelection,
         setSelection,
         keyboardType: rest.keyboardType || 'default',
+        showDismiss: rest.showDismiss ?? false,
+        blur: () => localRef.current?.blur?.(),
       });
       rest.onFocus?.(e);
     },
@@ -82,7 +94,7 @@ const KioskTextInput = forwardRef(function KioskTextInput({
 
   return (
     <TextInput
-      ref={ref}
+      ref={setRef}
       {...rest}
       value={value}
       onChangeText={onChangeText}

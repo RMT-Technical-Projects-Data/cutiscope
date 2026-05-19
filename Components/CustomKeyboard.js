@@ -144,7 +144,7 @@ const KeyRow = memo(function KeyRow({ keys, onKeyPress }) {
 
 // ─── Main keyboard ─────────────────────────────────────────────────────────────
 function CustomKeyboard({ onKeyPressFeedback }) {
-  const { insertText, deleteBackward, hasFocusedInput, keyboardType } = useCustomKeyboard();
+  const { insertText, deleteBackward, dismissKeyboard, hasFocusedInput, keyboardType, showDismiss } = useCustomKeyboard();
   const [layout, setLayout] = useState(LAYOUT_ALPHA);
   const [capsState, setCapsState] = useState(CAPS_OFF);
 
@@ -187,6 +187,17 @@ function CustomKeyboard({ onKeyPressFeedback }) {
 
   return (
     <View style={styles.container}>
+      {showDismiss && (
+        <View style={styles.accessoryBar}>
+          <Pressable
+            style={({ pressed }) => [styles.dismissBtn, pressed && styles.dismissBtnPressed]}
+            onPress={dismissKeyboard}
+          >
+            <Icon name="keyboard-close" size={20} color="#22B2A6" />
+            <Text style={styles.dismissText}>Done</Text>
+          </Pressable>
+        </View>
+      )}
       {/* ========== ALPHA LAYOUT ========== */}
       {layout === LAYOUT_ALPHA && (
         <>
@@ -337,6 +348,34 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '500',
+  },
+  accessoryBar: {
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#3a3a3c',
+    marginBottom: 6,
+  },
+  dismissBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    backgroundColor: '#3a3a3c',
+    borderRadius: 6,
+  },
+  dismissBtnPressed: {
+    opacity: 0.8,
+  },
+  dismissText: {
+    color: '#22B2A6',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 6,
   },
 });
 

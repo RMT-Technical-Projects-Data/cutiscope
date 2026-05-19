@@ -20,6 +20,7 @@ import NetInfo from '@react-native-community/netinfo';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import KioskTextInput from '../Components/KioskTextInput';
 import CustomKeyboard from '../Components/CustomKeyboard';
+import { useCustomKeyboard } from '../context/CustomKeyboardContext';
 import backIcon from '../assets/icon_back.png';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import CustomStatusBar from '../Components/CustomStatusBar';
@@ -43,6 +44,7 @@ const PatientBoxModal = ({
   initialName = '',
   onSet,
 }) => {
+  const { hasFocusedInput } = useCustomKeyboard();
   const isBlank = !initialId && !initialName;
   const [activeTab, setActiveTab] = useState(TAB_NEW_BLANK);
   const [showNewPatientForm, setShowNewPatientForm] = useState(false);
@@ -308,7 +310,7 @@ const PatientBoxModal = ({
       {/* Simple container like PowerOffModal */}
       <View style={styles.container}>
         <CustomStatusBar />
-        <View style={styles.modalView}>
+        <View style={[styles.modalView, hasFocusedInput && styles.modalViewKeyboardOpen]}>
           {/* Header with back button */}
           <View style={styles.header}>
             <TouchableOpacity onPress={handleBackdrop} style={styles.backBtn}>
@@ -359,7 +361,11 @@ const PatientBoxModal = ({
                 )}
 
                 {showNewPatientFormView && (
-                  <ScrollView style={styles.formScroll} contentContainerStyle={styles.formContent} keyboardShouldPersistTaps="handled">
+                  <ScrollView 
+                    style={[styles.formScroll, hasFocusedInput && styles.formScrollKeyboardOpen]} 
+                    contentContainerStyle={styles.formContent} 
+                    keyboardShouldPersistTaps="handled"
+                  >
                     <View style={styles.form}>
                     {!isBlank && (
                       <TouchableOpacity style={styles.backToSelection} onPress={() => setShowNewPatientForm(false)}>
@@ -388,6 +394,7 @@ const PatientBoxModal = ({
                       autoCapitalize="words"
                       contextMenuHidden
                       selectTextOnFocus={false}
+                      showDismiss={true}
                     />
 
                     <Text style={styles.label} selectable={false}>MR. NO.</Text>
@@ -400,6 +407,7 @@ const PatientBoxModal = ({
                       autoCapitalize="characters"
                       contextMenuHidden
                       selectTextOnFocus={false}
+                      showDismiss={true}
                     />
 
                     <View style={styles.row}>
@@ -430,6 +438,7 @@ const PatientBoxModal = ({
                           keyboardType="numeric"
                           contextMenuHidden
                           selectTextOnFocus={false}
+                          showDismiss={true}
                         />
                       </View>
                     </View>
@@ -511,7 +520,7 @@ const PatientBoxModal = ({
             )}
 
             {showList && (
-              <View style={styles.listContainer}>
+              <View style={[styles.listContainer, hasFocusedInput && styles.listContainerKeyboardOpen]}>
                 {!isBlank && (
                   <View style={styles.selectedBanner}>
                     <MaterialCommunityIcons name="check-circle" size={18} color="#22B2A6" />
@@ -558,7 +567,7 @@ const PatientBoxModal = ({
                     data={filteredList}
                     keyExtractor={keyExtractor}
                     renderItem={renderPatientItem}
-                    style={styles.flatList}
+                    style={[styles.flatList, hasFocusedInput && styles.flatListKeyboardOpen]}
                     contentContainerStyle={styles.flatListContent}
                     keyboardShouldPersistTaps="handled"
                     initialNumToRender={12}
@@ -942,6 +951,18 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'flex-start',
+  },
+  modalViewKeyboardOpen: {
+    maxHeight: SCREEN_HEIGHT * 0.48,
+  },
+  formScrollKeyboardOpen: {
+    maxHeight: SCREEN_HEIGHT * 0.3,
+  },
+  listContainerKeyboardOpen: {
+    maxHeight: SCREEN_HEIGHT * 0.35,
+  },
+  flatListKeyboardOpen: {
+    maxHeight: SCREEN_HEIGHT * 0.25,
   },
 });
 
