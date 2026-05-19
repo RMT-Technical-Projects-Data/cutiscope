@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Config from 'react-native-config';
 import { UserMessages, toUserMessage } from '../utils/userMessages';
 
-const BASE_URL = (Config.API_BASE_URL || 'http://192.168.50.144:3009').replace(/\/$/, '');
+const BASE_URL = (Config.API_BASE_URL || 'http://35.154.32.201:4040').replace(/\/$/, '');
 const API_URL = `${BASE_URL}/api/users`;
 
 if (__DEV__) {

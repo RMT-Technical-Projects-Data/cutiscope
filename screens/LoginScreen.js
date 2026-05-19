@@ -23,7 +23,8 @@ import ConfirmationModal from '../modals/ConfirmationModal';
 const { height, width } = Dimensions.get('window');
 
 // Use environment variable or fallback
-const API_BASE_URL = Config.API_BASE_URL || 'http://35.154.32.201:3009';
+const API_BASE_URL = Config.API_BASE_URL || 'http://35.154.32.201:4040';
+// const API_BASE_URL = Config.API_BASE_URL || 'http://192.168.50.75:3009';
 const API_TIMEOUT = parseInt(Config.API_TIMEOUT || '10000');
 
 // Configure axios defaults
@@ -251,10 +252,10 @@ const LoginScreen = ({ navigation }) => {
             </Text>
 
             {__DEV__ && (
-            <View style={styles.debugBadge}>
-              <Text style={styles.debugText}>Host: {API_BASE_URL.replace('http://', '')}</Text>
-            </View>
-          )}
+              <View style={styles.debugBadge}>
+                <Text style={styles.debugText}>Host: {API_BASE_URL.replace('http://', '')}</Text>
+              </View>
+            )}
           </View>
 
         </ScrollView>

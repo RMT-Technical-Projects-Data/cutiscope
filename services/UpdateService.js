@@ -4,7 +4,7 @@ import DeviceInfo from 'react-native-device-info';
 const checkUpdate = async () => {
     try {
         // Fallback to PC IP for Wi-Fi debugging
-        const baseUrl = Config.API_BASE_URL || "http://35.154.32.201:3009";
+        const baseUrl = Config.API_BASE_URL || "http://35.154.32.201:4040";
         const response = await fetch(`${baseUrl}/api/admin/apk-version`);
 
         if (!response.ok) {

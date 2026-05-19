@@ -1,8 +1,9 @@
 import axios from 'axios';
 import Config from 'react-native-config';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import authService from './authService';
 
-const BASE_URL = (Config.API_BASE_URL || 'http://192.168.50.144:3009').replace(/\/$/, '');
+const BASE_URL = (Config.API_BASE_URL || 'http://35.154.32.201:4040').replace(/\/$/, '');
 const PATIENTS_URL = `${BASE_URL}/api/patients`;
 const PATIENTS_V2_URL = `${BASE_URL}/api/v2/patients`;
 const AXIOS_TIMEOUT = 15000;
@@ -72,6 +73,15 @@ export async function createPatient({ id, name, dob, gender, age, mr_no }) {
   const token = await authService.getToken();
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
+
+  try {
+    const serialNumber = await AsyncStorage.getItem('serial_number');
+    if (serialNumber) {
+      headers['X-Device-ID'] = serialNumber;
+    }
+  } catch (e) {
+    console.error('Failed to retrieve serial number for patient creation:', e);
+  }
   const body = name != null && String(name).trim() ? { name: String(name).trim() } : {};
   if (id != null && String(id).trim()) body.id = String(id).trim();
   if (dob != null) body.dob = String(dob).trim();

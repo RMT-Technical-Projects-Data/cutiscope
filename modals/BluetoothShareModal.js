@@ -36,9 +36,9 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
   useEffect(() => {
     if (visible) {
       // Temporarily exit Kiosk mode to permit standard Bluetooth activities / sharing intents
-      KioskMode.stopKioskMode()
-        .then(() => console.log('[BluetoothShareModal] Kiosk Mode stopped successfully'))
-        .catch(err => console.warn('[BluetoothShareModal] Failed to stop Kiosk Mode', err));
+      // KioskMode.stopKioskMode()
+      //   .then(() => console.log('[BluetoothShareModal] Kiosk Mode stopped successfully'))
+      //   .catch(err => console.warn('[BluetoothShareModal] Failed to stop Kiosk Mode', err));
 
       checkAndActivateBluetooth();
     } else {
