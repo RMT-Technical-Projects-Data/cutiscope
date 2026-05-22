@@ -67,6 +67,8 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
   // Handle BT events
   useEffect(() => {
     const foundSub = DeviceEventEmitter.addListener('onBluetoothDeviceFound', (device) => {
+      if (!device.name || device.name.trim() === '' || device.name === 'Unknown Device') return;
+
       setScannedDevices(prev => {
         // Filter out if already in pairedDevices or in scannedDevices
         if (!pairedDevices.find(d => d.address === device.address) &&

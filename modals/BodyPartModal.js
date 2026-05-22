@@ -44,7 +44,7 @@ const styles = StyleSheet.create({
   input: { backgroundColor: '#2c2c2e', color: '#fff', borderRadius: 8, padding: 12, fontSize: 16, marginBottom: 20 },
   buttonRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 },
   cancelBtn: { padding: 10 },
-  cancelText: { color: '#ff453a', fontSize: 16, fontFamily: 'ProductSans-Regular' },
+  cancelText: { color: '#22B2A6', fontSize: 16, fontFamily: 'ProductSans-Regular' },
   saveBtn: { padding: 10, backgroundColor: '#22B2A6', borderRadius: 8, paddingHorizontal: 15 },
   saveText: { color: '#000', fontSize: 16, fontFamily: 'ProductSans-Bold' },
 });

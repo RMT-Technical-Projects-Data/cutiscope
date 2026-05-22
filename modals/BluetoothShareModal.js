@@ -51,6 +51,7 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
     if (!visible) return;
 
     const foundSub = DeviceEventEmitter.addListener('onBluetoothDeviceFound', (device) => {
+      if (!device.name || device.name.trim() === '' || device.name === 'Unknown Device') return;
       setScannedDevices(prev => {
         if (!pairedDevices.find(d => d.address === device.address) &&
           !prev.find(d => d.address === device.address)) {

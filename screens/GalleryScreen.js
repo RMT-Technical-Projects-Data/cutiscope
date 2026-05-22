@@ -2002,7 +2002,8 @@ const FullScreenGalleryModal = React.memo(({
           </Text>
         </View>
 
-        {(() => {
+        {/* 
+        (() => {
           let patientText = '';
           let bodyPartText = '';
           
@@ -2051,7 +2052,8 @@ const FullScreenGalleryModal = React.memo(({
             );
           }
           return null;
-        })()}
+        })()
+        */}
 
         {/* Sub-header (Filename only) - Small, above the image */}
         <View style={styles.fullscreenMetadataSubHeader}>

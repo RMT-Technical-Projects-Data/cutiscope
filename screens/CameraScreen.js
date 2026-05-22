@@ -1883,18 +1883,13 @@ const CameraScreen = ({ navigation }) => {
         console.error('❌ processImage: Scale watermark error:', scaleDrawErr);
       }
       
-      // --- Draw Patient Info Bar ---
+      // --- Draw Patient Info Box ---
       if (patientName || part) {
         try {
-          console.log('📝 processImage: Drawing patient info bar...');
+          console.log('📝 processImage: Drawing patient info box...');
           const label = `Patient: ${patientName}${patientName && part ? ' | ' : ''}${part ? `Body Part: ${part}` : ''}`;
           
           const fontSize = Math.max(40, imgW / 25);
-          const barHeight = fontSize * 2;
-          
-          const barPaint = Skia.Paint();
-          barPaint.setColor(Skia.Color('rgba(0, 0, 0, 0.7)'));
-          canvas.drawRect({ x: 0, y: 0, width: imgW, height: barHeight }, barPaint);
           
           const textPaint = Skia.Paint();
           textPaint.setColor(Skia.Color('#ffffff'));
@@ -1904,13 +1899,29 @@ const CameraScreen = ({ navigation }) => {
           const font = Skia.Font(typeface, fontSize);
           
           const textWidth = font.measureText(label).width;
-          const x = (imgW - textWidth) / 2;
-          const y = (barHeight + fontSize * 0.8) / 2; // Center vertically
           
-          canvas.drawText(label, x, y, textPaint, font);
-          console.log('✅ processImage: Patient info bar drawn successfully');
+          const paddingX = fontSize * 1.0;
+          const paddingY = fontSize * 0.6;
+          const boxWidth = textWidth + paddingX * 2;
+          const boxHeight = fontSize + paddingY * 2;
+          
+          const boxX = (imgW - boxWidth) / 2;
+          // const boxY = imgH * 0.12;
+          const boxY = imgH - boxHeight - (imgH * 0.05); 
+          
+          const boxPaint = Skia.Paint();
+          boxPaint.setColor(Skia.Color('rgba(0, 0, 0, 0.6)'));
+          boxPaint.setAntiAlias(true);
+          
+          canvas.drawRect({ x: boxX, y: boxY, width: boxWidth, height: boxHeight }, boxPaint);
+          
+          const textX = boxX + paddingX;
+          const textY = boxY + boxHeight / 2 + fontSize * 0.35; 
+          
+          canvas.drawText(label, textX, textY, textPaint, font);
+          console.log('✅ processImage: Patient info box drawn successfully');
         } catch (infoDrawErr) {
-          console.error('❌ processImage: Patient info bar error:', infoDrawErr);
+          console.error('❌ processImage: Patient info box error:', infoDrawErr);
         }
       }
 
