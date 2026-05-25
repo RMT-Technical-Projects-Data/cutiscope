@@ -84,7 +84,15 @@ export async function createPatient({ id, name, dob, gender, age, mr_no }) {
   }
   const body = name != null && String(name).trim() ? { name: String(name).trim() } : {};
   if (id != null && String(id).trim()) body.id = String(id).trim();
-  if (dob != null) body.dob = String(dob).trim();
+  if (dob != null) {
+    const trimmedDob = String(dob).trim();
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmedDob)) {
+      const [d, m, y] = trimmedDob.split('/');
+      body.dob = `${y}-${m}-${d}`;
+    } else {
+      body.dob = trimmedDob;
+    }
+  }
   if (gender != null) body.gender = String(gender).trim();
   if (age != null) body.age = String(age).trim();
   if (mr_no != null) body.mr_no = String(mr_no).trim();
