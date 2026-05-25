@@ -75,24 +75,37 @@ class SystemPowerModule(private val reactContext: ReactApplicationContext) : Rea
     fun powerOff() {
         try {
             Log.d("SystemPowerModule", "Attempting power off...")
-            
-            // Try Accessibility Service fallback (shows system dialog)
+
+            // 1. Try ROOT first (silent shutdown)
+            try {
+                Log.i("SystemPowerModule", "Trying root shutdown...")
+                Runtime.getRuntime().exec(arrayOf("su", "-c", "reboot -p"))
+                return
+            } catch (e: Exception) {
+                Log.e("SystemPowerModule", "Root shutdown failed: ${e.message}")
+            }
+
+            // 2. Fallback to shell
+            try {
+                Log.i("SystemPowerModule", "Trying shell shutdown...")
+                Runtime.getRuntime().exec(arrayOf("sh", "-c", "reboot -p"))
+                return
+            } catch (e: Exception) {
+                Log.e("SystemPowerModule", "Shell shutdown failed: ${e.message}")
+            }
+
+            // 3. LAST fallback → show OS power menu
             PowerMenuAccessibilityService.instance?.let {
-                Log.i("SystemPowerModule", "Showing system power dialog via Accessibility")
+                Log.i("SystemPowerModule", "Showing system power dialog")
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                    it.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_POWER_DIALOG)
-                    return
+                    it.performGlobalAction(
+                        android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_POWER_DIALOG
+                    )
                 }
             }
 
-            try {
-                Runtime.getRuntime().exec(arrayOf("su", "-c", "reboot -p"))
-            } catch (e: Exception) {
-                Log.w("SystemPowerModule", "su powerOff failed, trying sh...")
-                Runtime.getRuntime().exec(arrayOf("sh", "-c", "reboot -p"))
-            }
         } catch (e: Exception) {
-            Log.e("SystemPowerModule", "Failed to power off: ${e.message}")
+            Log.e("SystemPowerModule", "Failed to power off", e)
         }
     }
 
@@ -100,38 +113,53 @@ class SystemPowerModule(private val reactContext: ReactApplicationContext) : Rea
     fun restart() {
         try {
             Log.d("SystemPowerModule", "Attempting restart...")
-            val dpm = reactContext.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-            val adminComponent = ComponentName(reactContext, KioskDeviceAdminReceiver::class.java)
-            
-            if (dpm.isAdminActive(adminComponent)) {
-                try {
+
+            // 1. ROOT reboot FIRST (fastest & silent)
+            try {
+                Log.i("SystemPowerModule", "Trying root reboot...")
+                Runtime.getRuntime().exec(arrayOf("su", "-c", "reboot"))
+                return
+            } catch (e: Exception) {
+                Log.e("SystemPowerModule", "Root reboot failed: ${e.message}")
+            }
+
+            // 2. Device Owner fallback
+            try {
+                val dpm = reactContext.getSystemService(
+                    Context.DEVICE_POLICY_SERVICE
+                ) as DevicePolicyManager
+
+                val adminComponent =
+                    ComponentName(
+                        reactContext,
+                        KioskDeviceAdminReceiver::class.java
+                    )
+
+                if (dpm.isDeviceOwnerApp(reactContext.packageName)) {
                     Log.i("SystemPowerModule", "Trying DPM.reboot()")
+
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
                         dpm.reboot(adminComponent)
                         return
                     }
-                } catch (e: Exception) {
-                    Log.e("SystemPowerModule", "DPM.reboot() failed: ${e.message}")
                 }
+            } catch (e: Exception) {
+                Log.e("SystemPowerModule", "DPM reboot failed: ${e.message}")
             }
-            
-            // Try Accessibility Service fallback (shows system dialog)
+
+            // 3. LAST fallback → OS power dialog
             PowerMenuAccessibilityService.instance?.let {
-                Log.i("SystemPowerModule", "Showing system power dialog via Accessibility")
+                Log.i("SystemPowerModule", "Showing system power dialog")
+
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                    it.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_POWER_DIALOG)
-                    return
+                    it.performGlobalAction(
+                        android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_POWER_DIALOG
+                    )
                 }
             }
 
-            try {
-                Runtime.getRuntime().exec(arrayOf("su", "-c", "reboot"))
-            } catch (e: Exception) {
-                Log.w("SystemPowerModule", "su reboot failed, trying sh...")
-                Runtime.getRuntime().exec(arrayOf("sh", "-c", "reboot"))
-            }
         } catch (e: Exception) {
-            Log.e("SystemPowerModule", "Failed to restart: ${e.message}")
+            Log.e("SystemPowerModule", "Failed to restart", e)
         }
     }
 
@@ -142,6 +170,11 @@ class SystemPowerModule(private val reactContext: ReactApplicationContext) : Rea
         
         try {
             Log.d("SystemPowerModule", "Attempting lock screen...")
+            
+            // Set flag on MainActivity to indicate this is a deliberate lock action.
+            // This prevents screenOffReceiver from waking the screen back up.
+            MainActivity.isDeliberateLock = true
+            
             val dpm = reactContext.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
             val adminComponent = ComponentName(reactContext, KioskDeviceAdminReceiver::class.java)
             
@@ -158,10 +191,12 @@ class SystemPowerModule(private val reactContext: ReactApplicationContext) : Rea
             }
             
             Log.w("SystemPowerModule", "Admin and Accessibility fallbacks failed. Falling back to moveTaskToBack")
+            MainActivity.isDeliberateLock = false
             val currentActivity = reactContext.currentActivity
             currentActivity?.moveTaskToBack(true)
             
         } catch (e: Exception) {
+            MainActivity.isDeliberateLock = false
             Log.e("SystemPowerModule", "Lock failed: ${e.message}")
         } finally {
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
@@ -169,6 +204,7 @@ class SystemPowerModule(private val reactContext: ReactApplicationContext) : Rea
             }, 1000)
         }
     }
+
 
     override fun onHostResume() {
         Log.d("SystemPowerModule", "onHostResume: Resetting isLocking flag")

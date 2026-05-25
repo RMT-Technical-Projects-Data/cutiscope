@@ -32,8 +32,15 @@ import java.io.InputStreamReader
 import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : ReactActivity() {
+    companion object {
+        @JvmStatic
+        @Volatile
+        var isDeliberateLock = false
+    }
+
     // Add these fields with your existing ones
     private var wakeLock: PowerManager.WakeLock? = null
+    private var temporaryWakeLock: PowerManager.WakeLock? = null
     private val wakeLockRefreshHandler = Handler(Looper.getMainLooper())
     private var wakeLockRefreshRunnable: Runnable? = null
     
@@ -114,6 +121,12 @@ class MainActivity : ReactActivity() {
         startPowerButtonMonitor()
 
         Log.i("MainActivity", "Activity created, services started")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        isDeliberateLock = false
+        Log.d("MainActivity", "onResume: reset isDeliberateLock to false")
     }
 
     /**
@@ -311,19 +324,43 @@ class MainActivity : ReactActivity() {
     private val screenOffReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
-                Log.i("MainActivity", "Screen OFF detected - attempting immediate wake up and power menu trigger")
-                
-                // 1. Turn off torch
-                turnOffTorchAtSystemLevel()
-                
-                // 2. Wake the screen back up immediately
-                wakeUpScreen()
-                
-                // 4. Release old wake lock and re-acquire in wakeUpScreen
-                releaseWakeLock()
+                if (isDeliberateLock) {
+                    Log.i("MainActivity", "Screen OFF detected (Deliberate lock) - NOT waking up screen")
+                    isDeliberateLock = false
+                    
+                    // 1. Turn off torch
+                    turnOffTorchAtSystemLevel()
+                    
+                    // 2. Release wake lock
+                    releaseWakeLock()
+                } else {
+                    Log.i("MainActivity", "Screen OFF detected (Non-deliberate) - attempting immediate wake up")
+                    
+                    // 1. Turn off torch
+                    turnOffTorchAtSystemLevel()
+                    
+                    // 2. Wake the screen back up immediately
+                    wakeUpScreen()
+                    
+                    // 3. Release old wake lock
+                    releaseWakeLock()
+                }
             } else if (intent.action == Intent.ACTION_SCREEN_ON) {
                 Log.i("MainActivity", "Screen ON - acquiring wake lock")
                 acquireWakeLock()
+                
+                // Release temporary wake lock since screen is now ON
+                try {
+                    temporaryWakeLock?.let {
+                        if (it.isHeld) {
+                            it.release()
+                            Log.i("MainActivity", "Temporary wake lock released")
+                        }
+                    }
+                    temporaryWakeLock = null
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Error releasing temporary wake lock: ${e.message}")
+                }
             }
         }
     }
@@ -360,23 +397,54 @@ class MainActivity : ReactActivity() {
             Log.d("MainActivity", "wakeUpScreen() called")
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             
+            // Release existing temporary wake lock if any
+            try {
+                temporaryWakeLock?.let {
+                    if (it.isHeld) {
+                        it.release()
+                    }
+                }
+            } catch (e: Exception) {}
+            
             // Method 1: WakeLock with ACQUIRE_CAUSES_WAKEUP (No root needed)
-            val wakeLock = pm.newWakeLock(
+            temporaryWakeLock = pm.newWakeLock(
                 PowerManager.SCREEN_BRIGHT_WAKE_LOCK or 
                 PowerManager.ACQUIRE_CAUSES_WAKEUP or 
                 PowerManager.ON_AFTER_RELEASE,
                 "dermascopeapp:powerbutton_wakeup"
-            )
-            wakeLock.acquire(3000)
-            wakeLock.release()
-            
-            // Method 2: Shell command fallback (Needs root)
-            try {
-                Runtime.getRuntime().exec(arrayOf("su", "-c", "input keyevent 224"))
-            } catch (e: Exception) {
-                // Method 3: Non-root shell fallback
-                Runtime.getRuntime().exec(arrayOf("input", "keyevent", "224"))
+            ).apply {
+                setReferenceCounted(false)
+                acquire(3000)
             }
+            Log.i("MainActivity", "Temporary wake lock acquired")
+
+            // Also schedule a delayed acquisition to handle cases where the OS overrides immediate wake locks
+            val handler = Handler(Looper.getMainLooper())
+            handler.postDelayed({
+                try {
+                    val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+                    if (!powerManager.isInteractive) {
+                        Log.i("MainActivity", "Screen still off after 100ms - acquiring wake lock again")
+                        temporaryWakeLock?.acquire(3000)
+                    }
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Delayed wake lock failed: ${e.message}")
+                }
+            }, 100)
+            
+            // Method 2: Shell command fallback (Needs root, run in background)
+            Thread {
+                try {
+                    Runtime.getRuntime().exec(arrayOf("su", "-c", "input keyevent 224"))
+                } catch (e: Exception) {
+                    try {
+                        // Method 3: Non-root shell fallback
+                        Runtime.getRuntime().exec(arrayOf("input", "keyevent", "224"))
+                    } catch (ex: Exception) {
+                        Log.e("MainActivity", "Shell wake up failed: ${ex.message}")
+                    }
+                }
+            }.start()
             
             Log.i("MainActivity", "Wake up signals sent")
         } catch (e: Exception) {
