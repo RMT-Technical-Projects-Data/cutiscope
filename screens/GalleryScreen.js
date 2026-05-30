@@ -2543,11 +2543,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  deleteButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   btnText: {
     paddingVertical: 3,
     fontSize: 14,
     fontWeight: '500',
     color: PRIMARY_TEXT,
+    textAlign: 'center',
   },
   actionIcon: {
     width: 30,

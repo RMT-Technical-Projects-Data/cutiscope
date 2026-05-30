@@ -134,6 +134,15 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
 
                 if (device != null) {
                     try {
+                        // ★ Temporarily exit kiosk mode so BluetoothPairingDialog can appear
+                        Activity activity = getCurrentActivity();
+                        if (activity != null) {
+                            activity.runOnUiThread(() -> {
+                                try { activity.stopLockTask(); }
+                                catch (Exception ignored) {}
+                            });
+                        }
+
                         WritableMap map = Arguments.createMap();
                         map.putString("address", device.getAddress());
                         map.putString("name", device.getName() != null ? device.getName() : "Unknown Device");
@@ -141,8 +150,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                         map.putInt("passkey", passkey);
 
                         getReactApplicationContext()
-                                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                                .emit("onBluetoothPairingRequest", map);
+                            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                            .emit("onBluetoothPairingRequest", map);
                     } catch (SecurityException e) {
                         // Silently handle
                     }
@@ -150,13 +159,33 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
             } else if (BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(action)) {
                 int state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR);
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-                if (device != null && state == BluetoothDevice.BOND_BONDED) {
-                    WritableMap map = Arguments.createMap();
-                    map.putString("address", device.getAddress());
-                    map.putBoolean("bonded", true);
-                    getReactApplicationContext()
-                            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                            .emit("onBluetoothBondStateChanged", map);
+                
+                if (device != null) {
+                    if (state == BluetoothDevice.BOND_BONDED || state == BluetoothDevice.BOND_NONE){
+                        Activity activity = getCurrentActivity();
+                        if (activity != null) {
+                            activity.runOnUiThread(() -> {
+                            try { activity.startLockTask(); }
+                            catch (Exception ignored) {}
+
+                            });
+
+                        }
+
+                    }
+
+                    if (state == BluetoothDevice.BOND_BONDED) {
+                        WritableMap map = Arguments.createMap();
+                        map.putString("address", device.getAddress());
+                        map.putBoolean("bonded", true);
+                        getReactApplicationContext().getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class).emit("onBluetoothBondStateChanged", map);
+
+
+                    }
+
+
+
+    
                 }
             }
         }
