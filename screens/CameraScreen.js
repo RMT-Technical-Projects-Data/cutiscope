@@ -2806,7 +2806,7 @@ const CameraScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   patientNameTopBar: {
     position: 'absolute',
-    top: '4.5%',
+    top: '6%',
     width: '100%',
     alignItems: 'center',
     justifyContent: 'center',

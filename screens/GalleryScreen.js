@@ -1688,7 +1688,7 @@ const GalleryScreen = ({ route, navigation }) => {
         ) : !isFolderLevel && !isPhotoLevel ? (
           <View style={styles.emptyMemories}>
             <Text style={styles.emptyMemoriesText}>
-              {isGuest ? 'No photos in guest session' : 'No photos found'}
+              {isGuest ? 'No photos in guest mode' : 'No photos found'}
             </Text>
             <Text style={styles.emptyMemoriesSubText}>
               {isGuest

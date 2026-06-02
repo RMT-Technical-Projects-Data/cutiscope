@@ -14,8 +14,6 @@ import {
   PermissionsAndroid,
   Platform
 } from 'react-native';
-import CustomStatusBar from '../Components/CustomStatusBar';
-import VerticalDivider from '../Components/VerticalDivider';
 import backIcon from '../assets/icon_back.png';
 import ToggleSwitch from 'toggle-switch-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -314,9 +312,9 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
       animationType="slide"
       transparent={true}
       onRequestClose={onClose}
+      statusBarTranslucent={true}
     >
       <View style={styles.modalContainer}>
-        <CustomStatusBar />
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose} style={styles.backButton}>
             <Image source={backIcon} style={styles.backIcon} />
@@ -454,6 +452,7 @@ const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
     backgroundColor: '#000000',
+    marginTop: 40,
   },
   header: {
     flexDirection: 'row',
