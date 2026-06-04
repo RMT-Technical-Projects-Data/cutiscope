@@ -2898,17 +2898,18 @@ const styles = StyleSheet.create({
     paddingRight: 30, // Extreme Right spacing
   },
   galleryButtonWrapper: {
-    width: 60,
-    height: 60,
+    width: 80,
+    height: 80,
     justifyContent: 'center',
     alignItems: 'center',
   },
   galleryIcon: {
-    width: 55,
-    height: 55,
-    borderRadius: 10,
+    width: 70,
+    height: 70,
+    borderRadius: 35,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.5)',
+    overflow: 'hidden',
   },
   captureButtonWrapper: {
     width: 100,
@@ -2932,7 +2933,7 @@ const styles = StyleSheet.create({
 
   // Legacy styles (keeping if needed but overrides prevent usage)
   captureButton: { width: 100, height: 100 },
-  galleryButton: { width: 50, height: 55 },
+  galleryButton: { width: 70, height: 70, borderRadius: 35, overflow: 'hidden' },
   focusStatusContainer: {
     position: 'absolute',
     top: '10%',

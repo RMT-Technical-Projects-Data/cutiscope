@@ -880,6 +880,15 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                 rfcommConnected = true;
 
                 sendObexFiles(socket, filePaths);
+                try {
+                    WritableMap statusMap = Arguments.createMap();
+                    statusMap.putString("status", "completed");
+                    getReactApplicationContext()
+                        .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                        .emit("onBluetoothShareStatusChanged", statusMap);
+                } catch (Exception ex) {
+                    Log.e("SystemTimeModule", "Failed to emit completed status: " + ex.getMessage());
+                }
                 promise.resolve("Files sent successfully");
 
             } catch (Exception e) {
@@ -891,6 +900,15 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                 } else {
                     // ★ OBEX was rejected or cancelled by remote device
                     // Do NOT launch system share — just reject cleanly, stay in kiosk mode
+                    try {
+                        WritableMap statusMap = Arguments.createMap();
+                        statusMap.putString("status", "cancelled");
+                        getReactApplicationContext()
+                            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                            .emit("onBluetoothShareStatusChanged", statusMap);
+                    } catch (Exception ex) {
+                        Log.e("SystemTimeModule", "Failed to emit cancelled status: " + ex.getMessage());
+                    }
                     promise.reject("BT_TRANSFER_FAILED", "Transfer failed or was cancelled: " + e.getMessage());
                 }
             } finally {
@@ -956,6 +974,16 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
         byte[] connResp = readObexPacket(in);
         if ((connResp[0] & 0xFF) != 0xA0)
             throw new IOException("OBEX CONNECT rejected: 0x" + Integer.toHexString(connResp[0] & 0xFF));
+
+        try {
+            WritableMap map = Arguments.createMap();
+            map.putString("status", "accepted");
+            getReactApplicationContext()
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                .emit("onBluetoothShareStatusChanged", map);
+        } catch (Exception e) {
+            Log.e("SystemTimeModule", "Failed to emit accepted status: " + e.getMessage());
+        }
 
         // ★ Read server's max packet size from CONNECT response bytes 5-6
         // Layout: [respCode(1)] [pktLen(2)] [version(1)] [flags(1)] [maxPkt(2)]

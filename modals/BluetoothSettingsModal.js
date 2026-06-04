@@ -377,7 +377,7 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
 
           {!bluetoothEnabled && (
             <Text style={styles.infoText}>
-              Turn Bluetooth on to connect with supported devices. Note that changes here will affect the OS Bluetooth state.
+              Turn Bluetooth on to check supported devices.
             </Text>
           )}
         </View>

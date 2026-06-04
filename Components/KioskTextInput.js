@@ -29,7 +29,10 @@ const KioskTextInput = forwardRef(function KioskTextInput({
 
   const idRef = useRef(propId ?? `kiosk_${++kioskInputId}`);
   const id = idRef.current;
-  const [selection, setSelectionState] = useState({ start: 0, end: 0 });
+  const [selection, setSelectionState] = useState(() => {
+    const len = value ? String(value).length : 0;
+    return { start: len, end: len };
+  });
   const { registerFocusedInput, unregisterFocusedInput } = useCustomKeyboard();
 
   const valueRef = useRef(value ?? '');

@@ -21,7 +21,7 @@ import SerialNumberModal from './modals/SerialNumberModal';
 import UpdateModal from './modals/UpdateModal';
 import PowerOffModal from './modals/PowerOffModal';
 import KioskMode from './utils/KioskMode';
-import { IN_APP_TOAST_EVENT } from './utils/Helpers';
+import { IN_APP_TOAST_EVENT, showInAppToast } from './utils/Helpers';
 
 const Stack = createNativeStackNavigator();
 
@@ -326,10 +326,17 @@ const App = () => {
     const subPhysical = DeviceEventEmitter.addListener('onPowerButtonPressed', handleShowPowerMenu);
     const subRequest = DeviceEventEmitter.addListener('requestPowerMenu', handleShowPowerMenu);
 
+    const shareSub = DeviceEventEmitter.addListener('onBluetoothShareStatusChanged', (event) => {
+      if (event.status === 'accepted') {
+        showInAppToast("Device accepted, transfer has begun", { durationMs: 3000 });
+      }
+    });
+
     return () => {
       Orientation.unlockAllOrientations();
       subPhysical.remove();
       subRequest.remove();
+      shareSub.remove();
     };
   }, []);
 
@@ -533,7 +540,7 @@ const App = () => {
                               style={[styles.kioskPinInput, serialInputError ? styles.kioskPinInputError : null]}
                               value={serialInputValue}
                               onChangeText={(t) => { setSerialInputValue(t); setSerialInputError(''); }}
-                              placeholder="Serial Number"
+                              // placeholder="Serial Number"
                               placeholderTextColor="#666"
                               autoCapitalize="characters"
                               autoCorrect={false}

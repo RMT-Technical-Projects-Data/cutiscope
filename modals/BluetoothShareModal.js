@@ -20,7 +20,7 @@ import { showInAppToast } from '../utils/Helpers';
 import backIcon from '../assets/icon_back.png';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import KioskMode from '../utils/KioskMode';
-
+import { ToastAndroid } from 'react-native';
 const { SystemTimeModule } = NativeModules;
 const { width } = Dimensions.get('window');
 
@@ -60,6 +60,8 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
       });
     });
 
+
+
     const finishSub = DeviceEventEmitter.addListener('onBluetoothDiscoveryFinished', () => {
       setIsScanning(false);
     });
@@ -69,6 +71,24 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
       finishSub.remove();
     };
   }, [visible, pairedDevices]);
+
+  useEffect(() => {
+    if (!visible) return;
+
+    const acceptedSub = DeviceEventEmitter.addListener(
+      'onBluetoothShareStatusChanged',
+      (event) => {
+        if (event.status === 'accepted') {
+          ToastAndroid.show('Device accepted, transfer has begun', ToastAndroid.LONG);
+          showInAppToast("Device accepted, transfer has begun", { durationMs: 3000 });
+        }
+      }
+    );
+
+    return () => {
+      acceptedSub.remove();
+    };
+  }, [visible]);
 
   const requestPermissions = async () => {
     if (Platform.OS === 'android') {
@@ -196,13 +216,26 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
       await stopScan();
       const cleanPaths = selectedFiles.map(path => path.replace('file://', ''));
       await SystemTimeModule.sendFileDirectViaBluetooth(cleanPaths, device.address);
-      // If fallback was used, the promise resolves immediately and onClose() will be called.
-      // If direct succeeded, we also close and notify success.
+      showInAppToast("File transfer completed", { durationMs: 3000 });
       if (onShareSuccess) onShareSuccess();
       onClose();
     } catch (e) {
-      console.error('Sharing failed:', e);
-      showInAppToast("Failed to send file", { durationMs: 3000 });
+      console.warn('Sharing failed:', e);
+      const msg = (e && e.message) || String(e);
+      const isCancelled =
+          (e && e.code === 'BT_TRANSFER_FAILED') || msg.includes('0xc3');
+
+      if (isCancelled) {
+        if (Platform.OS === 'android') {
+          ToastAndroid.show('Transfer canceled by receiver', ToastAndroid.LONG);
+        }
+        showInAppToast("Transfer canceled by receiver", { durationMs: 3000 });
+      } else {
+        if (Platform.OS === 'android') {
+          ToastAndroid.show('Failed to send file', ToastAndroid.LONG);
+        }
+        showInAppToast("Failed to send file", { durationMs: 3000 });
+      }
     } finally {
       setSharingAddress(null);
     }
