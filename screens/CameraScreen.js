@@ -2367,6 +2367,7 @@ const CameraScreen = ({ navigation }) => {
                     minZoom={minZoom}
                     maxZoom={maxZoom}
                     onZoomChange={setZoomBtnValue}
+                    disabled={!!cameraError}
                   />
                 </View>
 
@@ -2530,7 +2531,8 @@ const CameraScreen = ({ navigation }) => {
           {/* ========== LIGHT TOGGLE BUTTON ========== */}
           {/* ========== LIGHT TOGGLE BUTTON ========== */}
           <Pressable
-            style={[styles.menuItemLight]}
+            style={[styles.menuItemLight, cameraError && { opacity: 0.5 }]}
+            disabled={!!cameraError}
             onPressIn={onLightButtonPressIn}
             onPressOut={onLightButtonPressOut}
             // onLongPress={onLightButtonLongPress}
@@ -2611,7 +2613,8 @@ const CameraScreen = ({ navigation }) => {
           {/* CENTER: Capture – enabled even when no patient selected (logged-in users only) to show toast */}
           <View style={styles.centerContainer}>
             <TouchableOpacity
-              style={styles.captureButtonWrapper}
+              style={[styles.captureButtonWrapper, cameraError && { opacity: 0.5 }]}
+              disabled={!!cameraError}
               onPress={handleCapturePress}
               onPressIn={() => setOnCapturePress(true)}
               onPressOut={() => setOnCapturePress(false)}
@@ -2641,6 +2644,7 @@ const CameraScreen = ({ navigation }) => {
                 }}
                 isCompact={true}
                 currentZoom={zoomBtnValue}
+                disabled={!!cameraError}
               />
             </View>
           </View>
@@ -2649,7 +2653,10 @@ const CameraScreen = ({ navigation }) => {
         {/* ========== CONTROLS ========== */}
         <>
           {showSlider && (
-            <View style={styles.scaleContainer}>
+            <View 
+              style={[styles.scaleContainer, cameraError && { opacity: 0.5 }]} 
+              pointerEvents={cameraError ? 'none' : 'auto'}
+            >
               <ScrollView
                 ref={scrollExposureViewRef}
                 horizontal
@@ -2678,7 +2685,10 @@ const CameraScreen = ({ navigation }) => {
           )}
 
           {showFocusScale && (
-            <View style={styles.scaleContainer}>
+            <View 
+              style={[styles.scaleContainer, cameraError && { opacity: 0.5 }]} 
+              pointerEvents={cameraError ? 'none' : 'auto'}
+            >
               <ScrollView
                 ref={focusScrollViewRef}
                 horizontal
@@ -2713,7 +2723,10 @@ const CameraScreen = ({ navigation }) => {
           )}
 
           {showScale && (
-            <View style={styles.scaleContainer}>
+            <View 
+              style={[styles.scaleContainer, cameraError && { opacity: 0.5 }]} 
+              pointerEvents={cameraError ? 'none' : 'auto'}
+            >
               <ScrollView
                 ref={scrollViewRef}
                 horizontal
