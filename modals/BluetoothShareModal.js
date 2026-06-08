@@ -225,12 +225,17 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
       const isCancelled =
           (e && e.code === 'BT_TRANSFER_FAILED') || msg.includes('0xc3');
 
+      const isConnectFailed = e && e.code === 'BT_CONNECT_FAILED';
+
       if (isCancelled) {
         if (Platform.OS === 'android') {
           ToastAndroid.show('Transfer canceled by receiver', ToastAndroid.LONG);
         }
         showInAppToast("Transfer canceled by receiver", { durationMs: 3000 });
-      } else {
+      } else if (isConnectFailed) {
+        
+        showInAppToast(msg || "Make sure the receiving device is set to receive files via Bluetooth.", { durationMs: 4000 });
+      }else {
         if (Platform.OS === 'android') {
           ToastAndroid.show('Failed to send file', ToastAndroid.LONG);
         }

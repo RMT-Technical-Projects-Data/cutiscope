@@ -869,9 +869,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                         Log.i("SystemTimeModule", "Insecure RFCOMM connected");
                     } catch (Exception e2) {
                         // ★ Only fall back to system share on RFCOMM connection failure
-                        Log.e("SystemTimeModule",
-                                "Both RFCOMM attempts failed, using system share: " + e2.getMessage());
-                        launchSystemShare(filePaths, device, promise);
+                        Log.e("SystemTimeModule", "Both RFCOMM attempts failed: " + e2.getMessage());
+                        promise.reject("BT_CONNECT_FAILED","Make sure the receiving device is set to receive files via Bluetooth.");
                         return;
                     }
                 }
@@ -896,7 +895,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
 
                 if (!rfcommConnected) {
                     // Should not reach here (handled above) but guard anyway
-                    launchSystemShare(filePaths, null, promise);
+                    // launchSystemShare(filePaths, null, promise);
+                    promise.reject("BT_CONNECT_FAILED","Make sure the receiving device is set to receive files via Bluetooth.");
                 } else {
                     // ★ OBEX was rejected or cancelled by remote device
                     // Do NOT launch system share — just reject cleanly, stay in kiosk mode
