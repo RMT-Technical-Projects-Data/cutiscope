@@ -91,8 +91,8 @@ import KeyEvent from 'react-native-keyevent';
 import VolumeManager from 'react-native-volume-manager';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
-const SCALE_BASE_MM = 20.0;
-const SCALE_NUM_TICKS = 20;
+const SCALE_BASE_MM = 15.0;
+const SCALE_NUM_TICKS = 15;
 
 const MillimeterScale = ({ zoom }) => {
   const numTicks = SCALE_NUM_TICKS;
@@ -102,8 +102,8 @@ const MillimeterScale = ({ zoom }) => {
       <View style={styles.mmScaleLine} />
       {Array.from({ length: numTicks + 1 }).map((_, index) => {
         const isMajor = index % 5 === 0;
-        const minMm = 10.0 / zoom;
-        const maxMm = 20.0 / zoom;
+        const minMm = 0.0 / zoom;
+        const maxMm = 15.0 / zoom;
         const val = minMm + ((numTicks - index) / numTicks) * (maxMm - minMm);
         const topPosition = `${(index / numTicks) * 100}%`;
         
@@ -1848,8 +1848,8 @@ const CameraScreen = ({ navigation }) => {
 
         canvas.drawLine(scaleX, scaleTop, scaleX, scaleTop + scaleHeight, scalePaint);
 
-        const minMm = 10.0 / zoomVal;
-        const maxMm = 20.0 / zoomVal;
+        const minMm = 0.0 / zoomVal;
+        const maxMm = 15.0 / zoomVal;
         const numTicks = SCALE_NUM_TICKS;
         
         let font = null;

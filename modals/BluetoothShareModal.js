@@ -30,6 +30,8 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
   const [pairedDevices, setPairedDevices] = useState([]);
   const [scannedDevices, setScannedDevices] = useState([]);
   const [sharingAddress, setSharingAddress] = useState(null);
+  const [showMenu, setShowMenu] = useState(false);
+  const [showPairedDevicesScreen, setShowPairedDevicesScreen] = useState(false);
 
   // Load Bluetooth State and check permissions on open
   useEffect(() => {
@@ -246,6 +248,43 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
     }
   };
 
+  const handleUnpairDevice = async (device) => {
+    try {
+      if (SystemTimeModule && SystemTimeModule.unpairDevice) {
+        await SystemTimeModule.unpairDevice(device.address);
+        showInAppToast(`Unpaired ${device.name || 'device'} successfully`);
+        // Refresh paired devices list
+        loadPairedDevices();
+      }
+    } catch (e) {
+      console.warn('Unpairing failed:', e);
+      showInAppToast('Failed to unpair device');
+    }
+  };
+
+  const renderPairedDeviceForUnpair = ({ item }) => (
+    <View style={styles.deviceItem}>
+      <View style={styles.deviceInfo}>
+        <MaterialCommunityIcons
+          name="bluetooth-connect"
+          size={24}
+          color="#22B2A6"
+          style={{ marginRight: 15 }}
+        />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.deviceName}>{item.name}</Text>
+          <Text style={styles.deviceMac}>{item.address}</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.unpairButton}
+          onPress={() => handleUnpairDevice(item)}
+        >
+          <Text style={styles.unpairButtonText}>Unpair</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   const renderDevice = ({ item, isPaired }) => (
     <TouchableOpacity
       style={styles.deviceItem}
@@ -286,6 +325,9 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
             <Image source={backIcon} style={styles.backIcon} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Bluetooth Share</Text>
+          <TouchableOpacity onPress={() => setShowMenu(prev => !prev)} style={styles.kebabButton}>
+            <MaterialCommunityIcons name="dots-vertical" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
         </View>
 
         <View style={styles.content}>
@@ -358,6 +400,53 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
             </View>
           )}
         </View>
+
+        {showMenu && (
+          <TouchableOpacity 
+            style={styles.menuOverlay} 
+            activeOpacity={1} 
+            onPress={() => setShowMenu(false)}
+          >
+            <View style={styles.dropdownMenu}>
+              <TouchableOpacity 
+                style={styles.menuItem} 
+                onPress={() => {
+                  setShowMenu(false);
+                  setShowPairedDevicesScreen(true);
+                }}
+              >
+                <Text style={styles.menuItemText}>Paired Devices</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        )}
+
+        {showPairedDevicesScreen && (
+          <View style={[StyleSheet.absoluteFillObject, { backgroundColor: '#000000', zIndex: 2000 }]}>
+            <View style={styles.header}>
+              <TouchableOpacity onPress={() => setShowPairedDevicesScreen(false)} style={styles.backButton}>
+                <Image source={backIcon} style={styles.backIcon} />
+              </TouchableOpacity>
+              <Text style={styles.headerTitle}>Paired Devices</Text>
+              <View style={{ width: 44 }} />
+            </View>
+
+            <View style={styles.content}>
+              {pairedDevices.length > 0 ? (
+                <FlatList
+                  data={pairedDevices}
+                  keyExtractor={(item) => item.address}
+                  renderItem={renderPairedDeviceForUnpair}
+                  showsVerticalScrollIndicator={false}
+                />
+              ) : (
+                <View style={styles.emptyContainer}>
+                  <Text style={styles.emptyText}>No paired devices found.</Text>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
       </View>
     </Modal>
   );
@@ -399,7 +488,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     flex: 1,
     textAlign: 'center',
-    marginRight: 44, // Offset back button to center title perfectly
+    marginRight: 0,
   },
   content: {
     paddingHorizontal: 20,
@@ -495,6 +584,64 @@ const styles = StyleSheet.create({
     fontFamily: 'ProductSans-Regular',
     fontStyle: 'italic',
     textAlign: 'center',
+  },
+  kebabButton: {
+    height: 44,
+    width: 44,
+    borderRadius: 12,
+    backgroundColor: '#41403D',
+    borderWidth: 1,
+    borderColor: '#333333',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  menuOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1000,
+    backgroundColor: 'transparent',
+  },
+  dropdownMenu: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 100 : 70,
+    right: 20,
+    backgroundColor: '#1C1C1E',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#2F3640',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 8,
+    minWidth: 160,
+  },
+  menuItem: {
+    paddingVertical: 10,
+    width: '100%',
+  },
+  menuItemText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontFamily: 'ProductSans-Regular',
+  },
+  unpairButton: {
+    backgroundColor: '#E74C3C',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  unpairButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontFamily: 'ProductSans-Bold',
   },
 });
 
