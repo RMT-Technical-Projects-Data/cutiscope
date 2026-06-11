@@ -33,6 +33,7 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [pairingRequest, setPairingRequest] = useState(null);
+  const [isTransitioning, setIsTransitioning] = useState(false);
 
   // Load initial state
   useEffect(() => {
@@ -190,6 +191,8 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
   };
 
   const handleToggle = async (isOn) => {
+    if (isTransitioning) return;
+    setIsTransitioning(true);
     setBluetoothEnabled(isOn);
     try {
       await AsyncStorage.setItem('@bluetooth_state', isOn.toString());
@@ -212,6 +215,10 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
     } catch (e) {
       console.warn('Error setting bluetooth state', e);
       setBluetoothEnabled(!isOn);
+    } finally {
+      setTimeout(() => {
+        setIsTransitioning(false);
+      }, 1500);
     }
   };
 
@@ -323,15 +330,15 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
         </View>
 
         <View style={styles.content}>
-          <View style={styles.toggleRow}>
+          <View style={[styles.toggleRow, isTransitioning && { opacity: 0.6 }]}>
             <Text style={styles.toggleText}>Bluetooth</Text>
             <ToggleSwitch
               isOn={bluetoothEnabled}
-              // onColor="#4cd137"
               onColor="#22B2A6"
               offColor="#7f8fa6"
               size="medium"
               onToggle={handleToggle}
+              disabled={isTransitioning}
             />
           </View>
 

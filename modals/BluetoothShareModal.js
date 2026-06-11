@@ -32,6 +32,7 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
   const [sharingAddress, setSharingAddress] = useState(null);
   const [showMenu, setShowMenu] = useState(false);
   const [showPairedDevicesScreen, setShowPairedDevicesScreen] = useState(false);
+  const [isTransitioning, setIsTransitioning] = useState(false);
 
   // Load Bluetooth State and check permissions on open
   useEffect(() => {
@@ -187,6 +188,8 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
   };
 
   const handleToggle = async (isOn) => {
+    if (isTransitioning) return;
+    setIsTransitioning(true);
     setBluetoothEnabled(isOn);
     try {
       await AsyncStorage.setItem('@bluetooth_state', isOn.toString());
@@ -206,6 +209,10 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
     } catch (e) {
       console.warn('Error setting bluetooth state:', e);
       setBluetoothEnabled(!isOn);
+    } finally {
+      setTimeout(() => {
+        setIsTransitioning(false);
+      }, 1500);
     }
   };
 
@@ -331,7 +338,7 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
         </View>
 
         <View style={styles.content}>
-          <View style={styles.toggleRow}>
+          <View style={[styles.toggleRow, isTransitioning && { opacity: 0.6 }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <MaterialCommunityIcons name="bluetooth" size={24} color="#FFFFFF" style={{ marginRight: 10 }} />
               <Text style={styles.toggleText}>Bluetooth</Text>
@@ -342,6 +349,7 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
               offColor="#7F8FA6"
               size="medium"
               onToggle={handleToggle}
+              disabled={isTransitioning}
             />
           </View>
 
