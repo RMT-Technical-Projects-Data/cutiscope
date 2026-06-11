@@ -144,7 +144,7 @@ const KeyRow = memo(function KeyRow({ keys, onKeyPress }) {
 
 // ─── Main keyboard ─────────────────────────────────────────────────────────────
 function CustomKeyboard({ onKeyPressFeedback }) {
-  const { insertText, deleteBackward, dismissKeyboard, hasFocusedInput, keyboardType, showDismiss } = useCustomKeyboard();
+  const { insertText, deleteBackward, dismissKeyboard, submitEditing, hasFocusedInput, keyboardType, showDismiss } = useCustomKeyboard();
   const [layout, setLayout] = useState(LAYOUT_ALPHA);
   const [capsState, setCapsState] = useState(CAPS_OFF);
 
@@ -222,7 +222,8 @@ function CustomKeyboard({ onKeyPressFeedback }) {
               style={({ pressed }) => [styles.key, styles.keyEnter, pressed && styles.keyPressed]}
               onPress={() => {
                 DeviceEventEmitter.emit('userActivity');
-                handleChar('\n');
+                setImmediate(() => Vibration.vibrate(KEY_HAPTIC_MS));
+                submitEditing();
               }}
               android_disableSound
               android_ripple={null}
@@ -259,7 +260,8 @@ function CustomKeyboard({ onKeyPressFeedback }) {
               style={({ pressed }) => [styles.key, styles.keyEnter, pressed && styles.keyPressed]}
               onPress={() => {
                 DeviceEventEmitter.emit('userActivity');
-                handleChar('\n');
+                setImmediate(() => Vibration.vibrate(KEY_HAPTIC_MS));
+                submitEditing();
               }}
               android_disableSound
               android_ripple={null}

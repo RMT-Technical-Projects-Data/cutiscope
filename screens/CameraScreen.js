@@ -92,27 +92,37 @@ import VolumeManager from 'react-native-volume-manager';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 const SCALE_BASE_MM = 15.0;
-const SCALE_NUM_TICKS = 15;
 
 const MillimeterScale = ({ zoom }) => {
-  const numTicks = SCALE_NUM_TICKS;
+  const maxMm = 15.0 / zoom;
+  const totalSteps = Math.floor(maxMm * 10);
+  const ticks = [];
+  for (let i = 0; i <= totalSteps; i++) {
+    ticks.push(i / 10);
+  }
   
   return (
     <View style={styles.mmScaleContainer}>
       <View style={styles.mmScaleLine} />
-      {Array.from({ length: numTicks + 1 }).map((_, index) => {
-        const isMajor = index % 5 === 0;
-        const minMm = 0.0 / zoom;
-        const maxMm = 15.0 / zoom;
-        const val = minMm + ((numTicks - index) / numTicks) * (maxMm - minMm);
-        const topPosition = `${(index / numTicks) * 100}%`;
+      {ticks.map((val, index) => {
+        const valRounded = Math.round(val * 10);
+        const isMajor = valRounded % 10 === 0;
+        const isMedium = valRounded % 10 === 5;
+        const topPosition = `${((maxMm - val) / maxMm) * 100}%`;
+        
+        let tickStyle = styles.mmScaleTickMinor;
+        if (isMajor) {
+          tickStyle = styles.mmScaleTickMajor;
+        } else if (isMedium) {
+          tickStyle = styles.mmScaleTickMedium;
+        }
         
         return (
           <View key={index} style={[styles.mmScaleTickRow, { top: topPosition }]}>
-            <View style={isMajor ? styles.mmScaleTickMajor : styles.mmScaleTickMinor} />
+            <View style={tickStyle} />
             {isMajor && (
               <Text style={styles.mmScaleText}>
-                {val.toFixed(1)}
+                {val.toFixed(0)}
               </Text>
             )}
           </View>
@@ -1848,9 +1858,7 @@ const CameraScreen = ({ navigation }) => {
 
         canvas.drawLine(scaleX, scaleTop, scaleX, scaleTop + scaleHeight, scalePaint);
 
-        const minMm = 0.0 / zoomVal;
         const maxMm = 15.0 / zoomVal;
-        const numTicks = SCALE_NUM_TICKS;
         
         let font = null;
         try {
@@ -1860,16 +1868,26 @@ const CameraScreen = ({ navigation }) => {
           console.warn('⚠️ processImage: Font creation failed', fontErr);
         }
 
-        for (let i = 0; i <= numTicks; i++) {
-          const isMajor = i % 5 === 0;
-          const y = scaleTop + (i / numTicks) * scaleHeight;
-          const tickWidth = isMajor ? (imgW * 0.04) : (imgW * 0.02);
+        const totalSteps = Math.floor(maxMm * 10);
+        for (let step = 0; step <= totalSteps; step++) {
+          const val = step / 10;
+          const valRounded = Math.round(val * 10);
+          const isMajor = valRounded % 10 === 0;
+          const isMedium = valRounded % 10 === 5;
+          
+          const y = scaleTop + ((maxMm - val) / maxMm) * scaleHeight;
+          
+          let tickWidth = imgW * 0.015; // minor tick (0.1 mm)
+          if (isMajor) {
+            tickWidth = imgW * 0.04;   // major tick (1.0 mm)
+          } else if (isMedium) {
+            tickWidth = imgW * 0.027;  // medium tick (0.5 mm)
+          }
           
           canvas.drawLine(scaleX, y, scaleX + tickWidth, y, scalePaint);
           
           if (isMajor && font) {
-            const val = minMm + ((numTicks - i) / numTicks) * (maxMm - minMm);
-            const text = val.toFixed(1);
+            const text = val.toFixed(0);
             const textX = scaleX + tickWidth + (imgW * 0.015);
             canvas.drawText(text, textX, y + (font.getSize() / 3), scalePaint, font);
           }
@@ -3627,6 +3645,16 @@ const styles = StyleSheet.create({
     width: 8,
     height: 1.5,
     backgroundColor: 'rgba(255,255,255,0.8)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.8,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  mmScaleTickMedium: {
+    width: 12,
+    height: 2,
+    backgroundColor: 'rgba(255,255,255,0.9)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.8,

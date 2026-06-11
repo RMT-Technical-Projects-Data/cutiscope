@@ -12,6 +12,7 @@ const defaultDescriptor = {
   keyboardType: 'default',
   showDismiss: false,
   blur: () => {},
+  onSubmitEditing: undefined,
 };
 
 const CustomKeyboardContext = createContext({
@@ -20,6 +21,7 @@ const CustomKeyboardContext = createContext({
   insertText: () => {},
   deleteBackward: () => {},
   dismissKeyboard: () => {},
+  submitEditing: () => {},
   hasFocusedInput: false,
   keyboardType: 'default',
   showDismiss: false,
@@ -83,6 +85,17 @@ export function CustomKeyboardProvider({ children }) {
     }
   }, []);
 
+  const submitEditing = useCallback(() => {
+    const cur = focusedRef.current;
+    if (cur) {
+      if (typeof cur.onSubmitEditing === 'function') {
+        cur.onSubmitEditing();
+      } else {
+        dismissKeyboard();
+      }
+    }
+  }, [dismissKeyboard]);
+
   const value = useMemo(
     () => ({
       registerFocusedInput,
@@ -90,11 +103,12 @@ export function CustomKeyboardProvider({ children }) {
       insertText,
       deleteBackward,
       dismissKeyboard,
+      submitEditing,
       hasFocusedInput,
       keyboardType,
       showDismiss,
     }),
-    [hasFocusedInput, registerFocusedInput, unregisterFocusedInput, insertText, deleteBackward, dismissKeyboard, keyboardType, showDismiss]
+    [hasFocusedInput, registerFocusedInput, unregisterFocusedInput, insertText, deleteBackward, dismissKeyboard, submitEditing, keyboardType, showDismiss]
   );
 
   return (

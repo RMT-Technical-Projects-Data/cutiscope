@@ -197,6 +197,7 @@ const LoginScreen = ({ navigation }) => {
                 autoComplete="email"
                 editable={!loading}
                 returnKeyType="next"
+                showDismiss={true}
               />
             </View>
 
@@ -213,6 +214,7 @@ const LoginScreen = ({ navigation }) => {
                 editable={!loading}
                 returnKeyType="done"
                 onSubmitEditing={handleLogin}
+                showDismiss={true}
               />
             </View>
 

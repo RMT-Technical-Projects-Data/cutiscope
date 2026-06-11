@@ -56,6 +56,13 @@ const KioskTextInput = forwardRef(function KioskTextInput({
     setSelectionState(s);
   }, []);
 
+  const onSubmitEditingRef = useRef(rest.onSubmitEditing);
+  onSubmitEditingRef.current = rest.onSubmitEditing;
+
+  const onSubmitEditing = useCallback(() => {
+    onSubmitEditingRef.current?.();
+  }, []);
+
   useEffect(() => {
     return () => unregisterFocusedInput(id);
   }, [id, unregisterFocusedInput]);
@@ -70,10 +77,11 @@ const KioskTextInput = forwardRef(function KioskTextInput({
         keyboardType: rest.keyboardType || 'default',
         showDismiss: rest.showDismiss ?? false,
         blur: () => localRef.current?.blur?.(),
+        onSubmitEditing,
       });
       rest.onFocus?.(e);
     },
-    [id, getValue, setValue, getSelection, setSelection, registerFocusedInput, rest]
+    [id, getValue, setValue, getSelection, setSelection, registerFocusedInput, rest, onSubmitEditing]
   );
 
   const handleBlur = useCallback(
