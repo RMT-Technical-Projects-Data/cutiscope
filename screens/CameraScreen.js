@@ -1830,8 +1830,14 @@ const CameraScreen = ({ navigation }) => {
         0, 0, 0, 1, 0,
       ];
 
-      const imgW = image.width();
-      const imgH = image.height();
+      const originalW = image.width();
+      const originalH = image.height();
+
+      // Detect if the photo was captured in landscape sensor orientation
+      const isLandscape = originalW > originalH;
+      // Set target portrait dimensions
+      const imgW = isLandscape ? originalH : originalW;
+      const imgH = isLandscape ? originalW : originalH;
 
       const surface = Skia.Surface.MakeOffscreen(imgW, imgH);
       if (!surface) {
@@ -1842,7 +1848,17 @@ const CameraScreen = ({ navigation }) => {
       const canvas = surface.getCanvas();
       const paint = Skia.Paint();
       paint.setColorFilter(Skia.ColorFilter.MakeMatrix(matrix));
+
+      if (isLandscape) {
+        canvas.save();
+        // Translate and rotate 90 degrees clockwise to fit the image perfectly within the portrait bounds
+        canvas.translate(imgW, 0);
+        canvas.rotate(90, 0, 0);
+      }
       canvas.drawImage(image, 0, 0, paint);
+      if (isLandscape) {
+        canvas.restore();
+      }
 
       // --- Draw Millimeter Scale Watermark ---
       try {
