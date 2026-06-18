@@ -263,9 +263,6 @@ const CameraScreen = ({ navigation }) => {
   ).current;
 
 
-
-
-
   // Handle Android Hardware Back Button
   useFocusEffect(
     useCallback(() => {

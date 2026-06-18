@@ -261,7 +261,11 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
         await SystemTimeModule.unpairDevice(device.address);
         showInAppToast(`Unpaired ${device.name || 'device'} successfully`);
         // Refresh paired devices list
-        loadPairedDevices();
+        // loadPairedDevices();
+        setTimeout(() => {
+
+          loadPairedDevices();
+        }, 500); // or 300–500 ms, enough for the system to update
       }
     } catch (e) {
       console.warn('Unpairing failed:', e);
@@ -639,7 +643,7 @@ const styles = StyleSheet.create({
     fontFamily: 'ProductSans-Regular',
   },
   unpairButton: {
-    backgroundColor: '#E74C3C',
+    backgroundColor: '#22B2A6',
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 8,
