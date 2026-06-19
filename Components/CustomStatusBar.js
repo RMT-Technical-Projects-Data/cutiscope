@@ -13,6 +13,8 @@ import emptyBattery from '../assets/icon_emptyBattery.png';
 import chargingBattery from '../assets/icon_chargingBattery.png';
 import connectedWifi from '../assets/icon_wifi.png';
 import { DeviceEventEmitter } from 'react-native';
+import SystemSetting from 'react-native-system-setting';
+import bluetoothIcon from '../assets/icons8-bluetooth-100.png';
 
 
 // Simple event emitter for custom events
@@ -63,6 +65,7 @@ const CustomStatusBar = ({
   const [batteryState, setBatteryState] = useState('');
   const [wifiEnabled, setWifiEnabled] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [bluetoothEnabled, setBluetoothEnabled] = useState(false);
   const [isCustomTimeSet, setIsCustomTimeSet] = useState(globalIsCustomTimeSet); // Flag to track custom time setting
   const [customTime, setCustomTime] = useState(globalCustomTime); // Track custom time
 
@@ -92,6 +95,18 @@ const CustomStatusBar = ({
       <Image
         style={styles.wifiIcon}
         source={connected && connectedWifi}
+      />
+    );
+  };
+
+  const renderBluetoothIcon = () => {
+    if (!bluetoothEnabled) {
+      return null; // Don't show anything if Bluetooth is off
+    }
+    return (
+      <Image
+        style={styles.bluetoothIcon}
+        source={bluetoothIcon}
       />
     );
   };
@@ -141,6 +156,15 @@ const CustomStatusBar = ({
     }
   }, []);
 
+  const checkBluetoothStatus = useCallback(async () => {
+    try {
+      const isEnabled = await SystemSetting.isBluetoothEnabled();
+      setBluetoothEnabled(isEnabled);
+    } catch (error) {
+      console.error('Error checking Bluetooth status: ', error);
+    }
+  }, []);
+
 
 
   // Effect to handle loading timezone and time updates
@@ -156,6 +180,7 @@ const CustomStatusBar = ({
       setBatteryState(powerState.batteryState);
     });
     checkWifiStatus();
+    checkBluetoothStatus();
 
     // Set interval using BackgroundTimer to update time every second
     const interval = BackgroundTimer.setInterval(() => {
@@ -173,6 +198,7 @@ const CustomStatusBar = ({
         setBatteryState(powerState.batteryState); // Set battery status (charging, discharging, full, etc.)
       });
       checkWifiStatus();
+      checkBluetoothStatus();
       // console.log(batteryPercentage);
     }, 1000);
 
@@ -196,7 +222,7 @@ const CustomStatusBar = ({
       eventEmitter.removeAllListeners('timeChange');
 
     };
-  }, [timezone, isCustomTimeSet, customTime, updateTime, checkWifiStatus]);
+  }, [timezone, isCustomTimeSet, customTime, updateTime, checkWifiStatus, checkBluetoothStatus]);
 
   return (
     <View style={styles.container}>
@@ -213,6 +239,7 @@ const CustomStatusBar = ({
       {/* <Text style={{color: 'white', alignSelf: 'center'}}>Dermscope v4</Text> */}
       <View style={styles.rightContainer}>
         {renderWifiIcon()}
+        {renderBluetoothIcon()}
         <View style={styles.batteryContainer}>
           <Text style={styles.info}>{batteryPercentage != null ? `${batteryPercentage}%` : '--%'}</Text>
           {renderBatteryImage()}
@@ -275,6 +302,13 @@ const styles = StyleSheet.create({
   wifiIcon: {
     width: 24,
     height: 24,
+    marginRight: 8,
+  },
+  bluetoothIcon: {
+    width: 18,
+    height: 18,
+    tintColor: 'white',
+    marginRight: 8,
   },
 });
 
