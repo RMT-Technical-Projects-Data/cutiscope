@@ -1239,4 +1239,23 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
             return false;
         }
     }
+
+    @ReactMethod
+    public void setBluetoothName(String name, com.facebook.react.bridge.Promise promise) {
+        try {
+            BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+            if (adapter == null) {
+                promise.reject("BT_NOT_SUPPORTED", "Bluetooth is not supported on this device");
+                return;
+            }
+            boolean success = adapter.setName(name);
+            if (success) {
+                promise.resolve(true);
+            } else {
+                promise.reject("BT_NAME_SET_FAILED", "Failed to set Bluetooth local name");
+            }
+        } catch (Exception e) {
+            promise.reject("BT_NAME_SET_EXCEPTION", e.getMessage(), e);
+        }
+    }
 }

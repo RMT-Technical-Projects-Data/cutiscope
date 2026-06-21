@@ -166,6 +166,14 @@ const App = () => {
         const value = await AsyncStorage.getItem('serial_number');
         if (value === null) {
           setHasSerialNumber(false);
+        } else {
+          if (NativeModules.SystemTimeModule?.setBluetoothName) {
+            try {
+              await NativeModules.SystemTimeModule.setBluetoothName(value);
+            } catch (err) {
+              console.error('Failed to sync Bluetooth name on launch:', err);
+            }
+          }
         }
       } catch (e) {
         console.error('Error checking serial number:', e);
@@ -251,11 +259,20 @@ const App = () => {
       return;
     }
     try {
-      await AsyncStorage.setItem('serial_number', serialInputValue.trim());
-      setCurrentSerialNumber(serialInputValue.trim());
+      const serialNum = serialInputValue.trim();
+      await AsyncStorage.setItem('serial_number', serialNum);
+      setCurrentSerialNumber(serialNum);
       setHasSerialNumber(true);
       setShowSerialInput(false);
       setSerialInputError('');
+
+      if (NativeModules.SystemTimeModule?.setBluetoothName) {
+        try {
+          await NativeModules.SystemTimeModule.setBluetoothName(serialNum);
+        } catch (err) {
+          console.error('Failed to update Bluetooth name on save:', err);
+        }
+      }
     } catch (e) {
       setSerialInputError('Failed to save serial number');
     }
@@ -487,7 +504,19 @@ const App = () => {
                 )}
                 <SerialNumberModal
                   visible={!hasSerialNumber}
-                  onComplete={() => setHasSerialNumber(true)}
+                  onComplete={async (sn) => {
+                    setHasSerialNumber(true);
+                    if (sn) {
+                      setCurrentSerialNumber(sn);
+                      if (NativeModules.SystemTimeModule?.setBluetoothName) {
+                        try {
+                          await NativeModules.SystemTimeModule.setBluetoothName(sn);
+                        } catch (e) {
+                          console.error('Failed to set bluetooth name on complete:', e);
+                        }
+                      }
+                    }
+                  }}
                 />
                 <PowerOffModal
                   visible={isPowerModalVisible}
