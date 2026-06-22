@@ -868,10 +868,33 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                         socket.connect();
                         Log.i("SystemTimeModule", "Insecure RFCOMM connected");
                     } catch (Exception e2) {
-                        // ★ Only fall back to system share on RFCOMM connection failure
-                        Log.e("SystemTimeModule", "Both RFCOMM attempts failed: " + e2.getMessage());
-                        promise.reject("BT_CONNECT_FAILED","Make sure the receiving device is set to receive files via Bluetooth.");
-                        return;
+                        Log.w("SystemTimeModule", "UUID-based RFCOMM failed, trying fixed channels (PC fallback): " + e2.getMessage());
+                        try { if (socket != null) socket.close(); } catch (Exception ignored) {}
+                        socket = null;
+                        int[] channelsToTry = {12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+                        BluetoothSocket connectedSocket = null;
+                        for (int ch : channelsToTry){
+                            BluetoothSocket candidate = null;
+                            try {
+
+                                java.lang.reflect.Method m = device.getClass().getMethod("createInsecureRfcommSocket", int.class);
+                                candidate = (BluetoothSocket) m.invoke(device, ch);
+                                candidate.connect();
+                                Log.i("SystemTimeModule", "Fixed channel RFCOMM connected on channel " + ch);
+                                connectedSocket = candidate;
+                                break;
+                            } catch (Exception eCh){
+                                Log.w("SystemTimeModule", "Channel " + ch + " failed: " + eCh.getMessage());
+                                try { if (candidate != null) candidate.close(); } catch (Exception ignored) {}
+                            }
+                        }
+
+                        if (connectedSocket == null) {
+                            Log.e("SystemTimeModule", "All RFCOMM attempts failed: " + e2.getMessage());
+                            promise.reject("BT_CONNECT_FAILED", "Make sure the receiving device is set to receive files via Bluetooth.");
+                            return;
+                        }
+                        socket = connectedSocket;
                     }
                 }
 

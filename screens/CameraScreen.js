@@ -46,7 +46,7 @@ import Sound from 'react-native-sound';
 import { PermissionsAndroid } from 'react-native';
 import { NativeModules } from 'react-native';
 import { ScrollView } from 'react-native-gesture-handler';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import DeviceInfo from 'react-native-device-info';
 import { UserMessages } from '../utils/userMessages';
 import { ensureGuestPhotosDir, getGuestPhotosDir } from '../utils/guestPhotos';
@@ -134,6 +134,7 @@ const MillimeterScale = ({ zoom }) => {
 };
 
 const CameraScreen = ({ navigation }) => {
+  const isFocused = useIsFocused();
   const [showImage, setShowImage] = useState(false);
 
   // Use Auth Context
@@ -2835,7 +2836,7 @@ const CameraScreen = ({ navigation }) => {
 
         {/* ========== STANDBY MODAL ========== */}
         <StandbyModal
-          visible={isStandby}
+          visible={isStandby && isFocused}
           onActivate={() => {
             setIsStandby(false);
             resetInactivityTimer();

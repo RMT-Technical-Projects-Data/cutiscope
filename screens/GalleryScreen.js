@@ -1040,12 +1040,11 @@ const GalleryScreen = ({ route, navigation }) => {
   }, [isSelectionMode, togglePhotoSelection]);
 
   const handlePhotoLongPress = useCallback((photoId) => {
-    if (isGuest) return; // Disable selection mode for guests
     if (!isSelectionMode) {
       setIsSelectionMode(true);
     }
     togglePhotoSelection(photoId);
-  }, [isSelectionMode, togglePhotoSelection, isGuest]);
+  }, [isSelectionMode, togglePhotoSelection]);
 
   // Delete single image
   const handleDeleteCurrentImage = useCallback(async (photoObj) => {
@@ -1643,7 +1642,7 @@ const GalleryScreen = ({ route, navigation }) => {
             </Text>
           </View>
 
-          {!isGuest && isSelectionMode && isPhotoLevel && activePhotos.length > 0 && (
+          {isSelectionMode && isPhotoLevel && activePhotos.length > 0 && (
             <TouchableOpacity
               style={[
                 styles.selectAllButton,
@@ -1656,7 +1655,7 @@ const GalleryScreen = ({ route, navigation }) => {
               </Text>
             </TouchableOpacity>
           )}
-          {!isGuest && isSelectionMode && isFolderLevel && albumItems.length > 0 && (
+          {isSelectionMode && isFolderLevel && albumItems.length > 0 && (
             <TouchableOpacity
               style={[
                 styles.selectAllButton,
@@ -1762,15 +1761,13 @@ const GalleryScreen = ({ route, navigation }) => {
                 <Text style={styles.btnText}>Upload</Text>
               </TouchableOpacity>
             )}
-            {!isGuest && (
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={handleDeleteSelected}
-              >
-                <Image source={deleteIcon} style={[styles.actionIcon, { tintColor: ACCENT_TEAL }]} />
-                <Text style={styles.btnText}>Delete</Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={handleDeleteSelected}
+            >
+              <Image source={deleteIcon} style={[styles.actionIcon, { tintColor: ACCENT_TEAL }]} />
+              <Text style={styles.btnText}>Delete</Text>
+            </TouchableOpacity>
             
             {/* Bluetooth Share Selected Button */}
             <TouchableOpacity
