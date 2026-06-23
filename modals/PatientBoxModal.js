@@ -36,6 +36,7 @@ const TAB_EXISTING_BLANK = 'Existing Patient';
 const TAB_EXISTING_SET = 'Existing patients';
 
 const GENDER_OPTIONS = ['Male', 'Female', 'Other'];
+const MR_NO_PREFIX = 'MRI-';
 
 const PatientBoxModal = ({
   visible,
@@ -235,7 +236,7 @@ const PatientBoxModal = ({
         dob: (dob || '').trim(),
         gender: (gender || '').trim(),
         age: (age || '').trim(),
-        mr_no: (mrNo || '').trim(),
+        mr_no: (mrNo || '').trim() ? `${MR_NO_PREFIX}${(mrNo || '').trim()}` : '',
       });
       onSet({
         id: String(created.id ?? nextId),
@@ -398,17 +399,22 @@ const PatientBoxModal = ({
                     />
 
                     <Text style={styles.label} selectable={false}>MR. NO.</Text>
-                    <KioskTextInput
-                      style={styles.input}
-                      value={mrNo}
-                      onChangeText={setMrNo}
-                      placeholder="Enter Medical Record Number (e.g. MRN-0001)"
-                      placeholderTextColor="#666"
-                      autoCapitalize="characters"
-                      contextMenuHidden
-                      selectTextOnFocus={false}
-                      showDismiss={true}
-                    />
+                    <View style={styles.mrNoRow}>
+                      <View style={styles.mrNoPrefix}>
+                        <Text style={styles.mrNoPrefixText} selectable={false}>{MR_NO_PREFIX}</Text>
+                      </View>
+                      <KioskTextInput
+                        style={[styles.input, styles.mrNoInput]}
+                        value={mrNo}
+                        onChangeText={(text) => setMrNo(String(text).replace(/^MRI-/i, '').replace(/\D/g, ''))}
+                        placeholder="1234"
+                        placeholderTextColor="#666"
+                        keyboardType="numeric"
+                        contextMenuHidden
+                        selectTextOnFocus={false}
+                        showDismiss={true}
+                      />
+                    </View>
 
                     <View style={styles.row}>
                       <View style={{ flex: 1.2, marginRight: 8 }}>
@@ -745,6 +751,27 @@ const styles = StyleSheet.create({
     color: '#fff',
     marginBottom: 16,
     height: 52,
+  },
+  mrNoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  mrNoPrefix: {
+    backgroundColor: '#2a2a2a',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    height: 52,
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  mrNoPrefixText: {
+    fontSize: 16,
+    color: '#aaa',
+  },
+  mrNoInput: {
+    flex: 1,
+    marginBottom: 0,
   },
   pickerTrigger: {
     backgroundColor: '#2a2a2a',
