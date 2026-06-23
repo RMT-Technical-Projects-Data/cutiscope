@@ -719,6 +719,7 @@ const CameraScreen = ({ navigation }) => {
     const anyModalVisible =
       menuVisible ||
       patientBoxModalVisible ||
+      bodyPartModalVisible ||
       wifiMenuVisible ||
       exitModalVisible ||
       powerOffModalVisible;
@@ -737,7 +738,7 @@ const CameraScreen = ({ navigation }) => {
         clearTimeout(timeoutRef.current);
       }
     };
-  }, [isScreenFocused, isStandby, menuVisible, patientBoxModalVisible, wifiMenuVisible, exitModalVisible, powerOffModalVisible, resetInactivityTimer]);
+  }, [isScreenFocused, isStandby, menuVisible, patientBoxModalVisible, bodyPartModalVisible, wifiMenuVisible, exitModalVisible, powerOffModalVisible, resetInactivityTimer]);
 
 
 
@@ -2367,7 +2368,13 @@ const CameraScreen = ({ navigation }) => {
                   ref={cameraRef}
                   style={styles.preview}
                   device={device}
-                  isActive={isScreenFocused && !wifiMenuVisible && !isStandby} // Pause camera when modals are open or in standby to prevent bleed
+                  isActive={
+                    isScreenFocused
+                    && !wifiMenuVisible
+                    && !isStandby
+                    && !patientBoxModalVisible
+                    && !bodyPartModalVisible
+                  }
                   photo={true}
                   animatedProps={animatedCameraProps}
                   format={format}
