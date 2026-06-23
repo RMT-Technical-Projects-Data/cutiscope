@@ -30,6 +30,7 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
   const [pairedDevices, setPairedDevices] = useState([]);
   const [scannedDevices, setScannedDevices] = useState([]);
   const [sharingAddress, setSharingAddress] = useState(null);
+  const [pairingRequest, setPairingRequest] = useState(null);
   const [showMenu, setShowMenu] = useState(false);
   const [showPairedDevicesScreen, setShowPairedDevicesScreen] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
@@ -75,9 +76,25 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
       setIsScanning(false);
     });
 
+    const pairingSub = DeviceEventEmitter.addListener('onBluetoothPairingRequest', (event) => {
+      setPairingRequest(event);
+    });
+
+    const bondSub = DeviceEventEmitter.addListener('onBluetoothBondStateChanged', (event) => {
+      if (event.cancelled) {
+        setPairingRequest(null);
+      }
+      if (event.bonded) {
+        setPairingRequest(null);
+        loadPairedDevices();
+      }
+    });
+
     return () => {
       foundSub.remove();
       finishSub.remove();
+      pairingSub.remove();
+      bondSub.remove();
     };
   }, [visible, pairedDevices]);
 
@@ -222,6 +239,18 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
     }
   };
 
+  const handleConfirmPairing = async (confirm) => {
+    if (!pairingRequest || !SystemTimeModule?.confirmPairing) return;
+    const address = pairingRequest.address;
+    setPairingRequest(null);
+    try {
+      await SystemTimeModule.confirmPairing(address, confirm);
+    } catch (e) {
+      console.warn('Error confirming pairing', e);
+      showInAppToast('Failed to confirm pairing');
+    }
+  };
+
   const handleDeviceSelect = async (device) => {
     if (sharingAddress) return;
     setSharingAddress(device.address);
@@ -240,9 +269,15 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
       const isCancelled =
           (e && e.code === 'BT_TRANSFER_FAILED') || msg.includes('0xc3');
 
+      const isPairingCancelled = e && e.code === 'BT_PAIRING_CANCELLED';
       const isConnectFailed = e && e.code === 'BT_CONNECT_FAILED';
 
-      if (isCancelled) {
+      if (isPairingCancelled) {
+        if (Platform.OS === 'android') {
+          ToastAndroid.show('Bluetooth pairing was cancelled', ToastAndroid.LONG);
+        }
+        showInAppToast("Bluetooth pairing was cancelled", { durationMs: 3000 });
+      } else if (isCancelled) {
         if (Platform.OS === 'android') {
           ToastAndroid.show('Transfer canceled by receiver', ToastAndroid.LONG);
         }
@@ -469,6 +504,42 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
           </View>
         )}
       </View>
+
+      <Modal
+        visible={pairingRequest !== null}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => handleConfirmPairing(false)}
+      >
+        <View style={styles.pairingModalOverlay}>
+          <View style={styles.pairingModalContent}>
+            <Text style={styles.pairingTitle}>Bluetooth pairing request</Text>
+            <Text style={styles.pairingMessage}>
+              Pair with {pairingRequest?.name}? Confirm that this passkey is shown on {pairingRequest?.name}.
+            </Text>
+
+            {pairingRequest?.passkey >= 0 && (
+              <Text style={styles.passkeyText}>{pairingRequest?.passkey}</Text>
+            )}
+
+            <View style={styles.pairingButtonsRow}>
+              <TouchableOpacity
+                style={styles.pairingButton}
+                onPress={() => handleConfirmPairing(false)}
+              >
+                <Text style={styles.pairingCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <View style={styles.pairingDivider} />
+              <TouchableOpacity
+                style={styles.pairingButton}
+                onPress={() => handleConfirmPairing(true)}
+              >
+                <Text style={styles.pairingConfirmText}>Pair</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </Modal>
   );
 };
@@ -682,6 +753,69 @@ const styles = StyleSheet.create({
     fontFamily: 'ProductSans-Regular',
     marginTop: 2,
     textAlign: 'center',
+  },
+  pairingModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pairingModalContent: {
+    backgroundColor: '#1C1C1E',
+    width: '85%',
+    borderRadius: 25,
+    paddingTop: 30,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#2F3640',
+    overflow: 'hidden',
+  },
+  pairingTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontFamily: 'ProductSans-Bold',
+    marginBottom: 15,
+  },
+  pairingMessage: {
+    color: '#A4B0BE',
+    fontSize: 16,
+    fontFamily: 'ProductSans-Regular',
+    textAlign: 'center',
+    paddingHorizontal: 20,
+    marginBottom: 20,
+    lineHeight: 22,
+  },
+  passkeyText: {
+    color: '#FFFFFF',
+    fontSize: 36,
+    fontFamily: 'ProductSans-Bold',
+    letterSpacing: 2,
+    marginBottom: 30,
+  },
+  pairingButtonsRow: {
+    flexDirection: 'row',
+    width: '100%',
+    borderTopWidth: 1,
+    borderTopColor: '#2F3640',
+  },
+  pairingButton: {
+    flex: 1,
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  pairingDivider: {
+    width: 1,
+    backgroundColor: '#2F3640',
+  },
+  pairingCancelText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontFamily: 'ProductSans-Regular',
+  },
+  pairingConfirmText: {
+    color: '#22B2A6',
+    fontSize: 16,
+    fontFamily: 'ProductSans-Bold',
   },
 });
 

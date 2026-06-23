@@ -40,8 +40,14 @@ import java.io.OutputStream;
 import java.io.InputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public class SystemTimeModule extends ReactContextBaseJavaModule {
+
+    private final ConcurrentHashMap<String, CountDownLatch> pendingBondLatches = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Boolean> pendingBondResults = new ConcurrentHashMap<>();
 
     SystemTimeModule(ReactApplicationContext context) {
         super(context);
@@ -158,9 +164,12 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                 }
             } else if (BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(action)) {
                 int state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR);
+                int prevState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.ERROR);
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
                 
                 if (device != null) {
+                    String address = device.getAddress();
+
                     if (state == BluetoothDevice.BOND_BONDED || state == BluetoothDevice.BOND_NONE){
                         Activity activity = getCurrentActivity();
                         if (activity != null) {
@@ -175,17 +184,19 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                     }
 
                     if (state == BluetoothDevice.BOND_BONDED) {
+                        completeBondWait(address, true);
                         WritableMap map = Arguments.createMap();
-                        map.putString("address", device.getAddress());
+                        map.putString("address", address);
                         map.putBoolean("bonded", true);
                         getReactApplicationContext().getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class).emit("onBluetoothBondStateChanged", map);
-
-
+                    } else if (state == BluetoothDevice.BOND_NONE && prevState == BluetoothDevice.BOND_BONDING) {
+                        completeBondWait(address, false);
+                        WritableMap map = Arguments.createMap();
+                        map.putString("address", address);
+                        map.putBoolean("bonded", false);
+                        map.putBoolean("cancelled", true);
+                        getReactApplicationContext().getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class).emit("onBluetoothBondStateChanged", map);
                     }
-
-
-
-    
                 }
             }
         }
@@ -823,6 +834,40 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
         }
     }
 
+    private void completeBondWait(String address, boolean success) {
+        pendingBondResults.put(address, success);
+        CountDownLatch latch = pendingBondLatches.get(address);
+        if (latch != null) {
+            latch.countDown();
+        }
+    }
+
+    private boolean ensureDeviceBonded(BluetoothDevice device) throws Exception {
+        if (device.getBondState() == BluetoothDevice.BOND_BONDED) {
+            return true;
+        }
+
+        String address = device.getAddress();
+        CountDownLatch latch = new CountDownLatch(1);
+        pendingBondLatches.put(address, latch);
+
+        try {
+            if (device.getBondState() == BluetoothDevice.BOND_BONDED) {
+                return true;
+            }
+
+            if (device.getBondState() == BluetoothDevice.BOND_NONE) {
+                device.createBond();
+            }
+
+            latch.await(90, TimeUnit.SECONDS);
+            return device.getBondState() == BluetoothDevice.BOND_BONDED;
+        } finally {
+            pendingBondLatches.remove(address);
+            pendingBondResults.remove(address);
+        }
+    }
+
     // -------------------------------------------------------------
     // send bluettoth direct file transfer logic
     @ReactMethod
@@ -847,6 +892,11 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
 
                 if (adapter.isDiscovering())
                     adapter.cancelDiscovery();
+
+                if (!ensureDeviceBonded(device)) {
+                    promise.reject("BT_PAIRING_CANCELLED", "Bluetooth pairing was cancelled or failed");
+                    return;
+                }
 
                 java.util.UUID OPP_UUID = java.util.UUID.fromString("00001105-0000-1000-8000-00805F9B34FB");
 
