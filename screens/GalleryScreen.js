@@ -24,7 +24,7 @@ import RNFS from 'react-native-fs';
 import NetInfo from '@react-native-community/netinfo';
 import ImageViewer from 'react-native-image-zoom-viewer';
 import { GestureHandlerRootView, Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Reanimated, { useSharedValue, useAnimatedStyle, withTiming } from 'react-native-reanimated';
+import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from 'react-native-reanimated';
 import { requestStoragePermissionForGallery } from '../utils/Helpers';
 import { getGuestPhotosDir } from '../utils/guestPhotos';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -72,7 +72,7 @@ const ACCENT_TEAL = '#22B2A6';
 const STATUS_BAR_HEIGHT = Platform.OS === 'ios' ? 44 : StatusBar.currentHeight || 0;
 const EXTRA_HEADER_PADDING = 40;
 
-const ZoomableImage = ({ uri }) => {
+const ZoomableImage = ({ uri, onTap }) => {
   const [imgDims, setImgDims] = useState({ w: width, h: screenHeight });
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -105,6 +105,16 @@ const ZoomableImage = ({ uri }) => {
     }
     return { displayedWidth: dWidth, displayedHeight: dHeight };
   }, [imgDims]);
+
+  const singleTap = Gesture.Tap()
+    .numberOfTaps(1)
+    .maxDeltaX(15)
+    .maxDeltaY(15)
+    .onEnd(() => {
+      if (onTap) {
+        runOnJS(onTap)();
+      }
+    });
 
   const pinch = Gesture.Pinch()
     .onUpdate((e) => {
@@ -164,7 +174,7 @@ const ZoomableImage = ({ uri }) => {
       }
     });
 
-  const composed = Gesture.Simultaneous(pinch, pan);
+  const composed = Gesture.Simultaneous(pinch, pan, singleTap);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
@@ -1849,12 +1859,14 @@ const FullScreenGalleryModal = React.memo(({
   const flatListRef = useRef(null);
   const currentPhotoIdRef = useRef(photos[initialIndex]?.path);
   const wasVisibleRef = useRef(false);
+  const [showOverlays, setShowOverlays] = useState(true);
 
   // When opened, reset to initial
   useEffect(() => {
     if (visible && !wasVisibleRef.current && photos.length > 0) {
       setCurrentIndex(initialIndex);
       currentPhotoIdRef.current = photos[initialIndex]?.path;
+      setShowOverlays(true);
       // Scroll to the initial index, if flatList is mounted
       setTimeout(() => {
         if (flatListRef.current && photos.length > initialIndex) {
@@ -1936,9 +1948,13 @@ const FullScreenGalleryModal = React.memo(({
     { length: width, offset: width * index, index }
   ), []);
 
+  const toggleOverlays = useCallback(() => {
+    setShowOverlays(prev => !prev);
+  }, []);
+
   const renderItem = useCallback(({ item }) => (
-    <ZoomableImage uri={item.path} />
-  ), []);
+    <ZoomableImage uri={item.path} onTap={toggleOverlays} />
+  ), [toggleOverlays]);
 
   if (!visible || photos.length === 0) return null;
 
@@ -1954,7 +1970,7 @@ const FullScreenGalleryModal = React.memo(({
       statusBarTranslucent={true}
     >
       <GestureHandlerRootView style={styles.fullScreenModalBackground}>
-        <CustomStatusBar />
+        {showOverlays && <CustomStatusBar />}
 
         <View style={styles.gestureContainer}>
           <FlatList
@@ -1977,27 +1993,29 @@ const FullScreenGalleryModal = React.memo(({
         </View>
 
         {/* Header (Back button, Date and Index) */}
-        <View style={styles.fullscreenHeader}>
-          <TouchableOpacity
-            style={styles.backButtonContainer}
-            onPress={onClose}
-          >
-            <Image source={backIcon} style={[styles.backButtonIcon, { tintColor: PRIMARY_TEXT }]} />
-          </TouchableOpacity>
+        {showOverlays && (
+          <View style={styles.fullscreenHeader}>
+            <TouchableOpacity
+              style={styles.backButtonContainer}
+              onPress={onClose}
+            >
+              <Image source={backIcon} style={[styles.backButtonIcon, { tintColor: PRIMARY_TEXT }]} />
+            </TouchableOpacity>
 
-          <View style={styles.fullscreenHeaderCenter}>
-            <Text style={styles.fullscreenDateText}>
-              {currentPhoto.timestamp ? currentPhoto.timestamp.toLocaleString([], {
-                day: '2-digit', month: '2-digit', year: 'numeric',
-                hour: '2-digit', minute: '2-digit'
-              }) : ''}
+            <View style={styles.fullscreenHeaderCenter}>
+              <Text style={styles.fullscreenDateText}>
+                {currentPhoto.timestamp ? currentPhoto.timestamp.toLocaleString([], {
+                  day: '2-digit', month: '2-digit', year: 'numeric',
+                  hour: '2-digit', minute: '2-digit'
+                }) : ''}
+              </Text>
+            </View>
+
+            <Text style={styles.fullscreenIndexText}>
+              {currentIndex + 1} / {photos.length}
             </Text>
           </View>
-
-          <Text style={styles.fullscreenIndexText}>
-            {currentIndex + 1} / {photos.length}
-          </Text>
-        </View>
+        )}
 
         {/* 
         (() => {
@@ -2053,70 +2071,74 @@ const FullScreenGalleryModal = React.memo(({
         */}
 
         {/* Sub-header (Filename only) - Small, above the image */}
-        <View style={styles.fullscreenMetadataSubHeader}>
-          <Text style={styles.fullScreenPhotoNameSmall} numberOfLines={1}>
-            {currentPhoto.name}
-          </Text>
-        </View>
+        {showOverlays && (
+          <View style={styles.fullscreenMetadataSubHeader}>
+            <Text style={styles.fullScreenPhotoNameSmall} numberOfLines={1}>
+              {currentPhoto.name}
+            </Text>
+          </View>
+        )}
 
         {/* Action buttons (Footer Area) */}
-        <View style={styles.actionContainerFull}>
-          {/* Status Indicator / Loader */}
-          {(currentPhoto.uploadStatus === 'PENDING' || currentPhoto.uploadStatus === 'UPLOADING') ? (
-            <View style={styles.loaderContainerFull}>
-              <ActivityIndicator size="small" color={ACCENT_TEAL} />
-              <Text style={[styles.btnText, { marginLeft: 10 }]}>Uploading...</Text>
-            </View>
-          ) : (
-            <>
-              {/* Upload / Retry Button */}
-              {!isGuest && currentPhoto.uploadStatus !== 'UPLOADED' && (
+        {showOverlays && (
+          <View style={styles.actionContainerFull}>
+            {/* Status Indicator / Loader */}
+            {(currentPhoto.uploadStatus === 'PENDING' || currentPhoto.uploadStatus === 'UPLOADING') ? (
+              <View style={styles.loaderContainerFull}>
+                <ActivityIndicator size="small" color={ACCENT_TEAL} />
+                <Text style={[styles.btnText, { marginLeft: 10 }]}>Uploading...</Text>
+              </View>
+            ) : (
+              <>
+                {/* Upload / Retry Button */}
+                {!isGuest && currentPhoto.uploadStatus !== 'UPLOADED' && (
+                  <TouchableOpacity
+                    style={styles.uploadButtonFull}
+                    onPress={async () => {
+                      const result = await onUpload(currentPhoto.path, currentPhoto.name);
+                      if (result === false) {
+                        setErrorMsg('No internet connection');
+                        if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+                        errorTimerRef.current = setTimeout(() => setErrorMsg(null), 3500);
+                      } else {
+                        setErrorMsg(null);
+                      }
+                    }}
+                  >
+                    <Image source={uploadIcon} style={[styles.actionIconFull, { tintColor: ACCENT_TEAL }]} />
+                    <Text style={styles.btnText}>
+                      {currentPhoto.uploadStatus === 'FAILED' ? 'Retry' : 'Upload'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Bluetooth Share Button */}
                 <TouchableOpacity
                   style={styles.uploadButtonFull}
-                  onPress={async () => {
-                    const result = await onUpload(currentPhoto.path, currentPhoto.name);
-                    if (result === false) {
-                      setErrorMsg('No internet connection');
-                      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
-                      errorTimerRef.current = setTimeout(() => setErrorMsg(null), 3500);
-                    } else {
-                      setErrorMsg(null);
+                  onPress={() => {
+                    if (onBluetoothShare) {
+                      onBluetoothShare(currentPhoto);
                     }
                   }}
                 >
-                  <Image source={uploadIcon} style={[styles.actionIconFull, { tintColor: ACCENT_TEAL }]} />
-                  <Text style={styles.btnText}>
-                    {currentPhoto.uploadStatus === 'FAILED' ? 'Retry' : 'Upload'}
-                  </Text>
+                  <MaterialCommunityIcons name="bluetooth" size={30} color={ACCENT_TEAL} style={{ marginBottom: 4 }} />
+                  <Text style={styles.btnText}>Share</Text>
                 </TouchableOpacity>
-              )}
 
-              {/* Bluetooth Share Button */}
-              <TouchableOpacity
-                style={styles.uploadButtonFull}
-                onPress={() => {
-                  if (onBluetoothShare) {
-                    onBluetoothShare(currentPhoto);
-                  }
-                }}
-              >
-                <MaterialCommunityIcons name="bluetooth" size={30} color={ACCENT_TEAL} style={{ marginBottom: 4 }} />
-                <Text style={styles.btnText}>Share</Text>
-              </TouchableOpacity>
-
-              {/* Delete Button */}
-              <TouchableOpacity
-                style={styles.deleteButton}
-                onPress={() => {
-                  onDelete(currentPhoto);
-                }}
-              >
-                <Image source={deleteIcon} style={[styles.actionIconFull, { tintColor: ACCENT_TEAL }]} />
-                <Text style={styles.btnText}>Delete</Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
+                {/* Delete Button */}
+                <TouchableOpacity
+                  style={styles.deleteButton}
+                  onPress={() => {
+                    onDelete(currentPhoto);
+                  }}
+                >
+                  <Image source={deleteIcon} style={[styles.actionIconFull, { tintColor: ACCENT_TEAL }]} />
+                  <Text style={styles.btnText}>Delete</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        )}
 
         {/* Inline Error Message Overlay */}
         {errorMsg && (

@@ -1939,7 +1939,7 @@ const CameraScreen = ({ navigation }) => {
           
           const boxX = (imgW - boxWidth) / 2;
           // const boxY = imgH * 0.12;
-          const boxY = imgH - boxHeight - (imgH * 0.05); 
+          const boxY = imgH - boxHeight - (imgH * 0.01); 
           
           const boxPaint = Skia.Paint();
           boxPaint.setColor(Skia.Color('rgba(0, 0, 0, 0.6)'));
