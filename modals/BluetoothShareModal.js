@@ -33,6 +33,7 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
   const [showMenu, setShowMenu] = useState(false);
   const [showPairedDevicesScreen, setShowPairedDevicesScreen] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const [serialNumber, setSerialNumber] = useState('');
 
   // Load Bluetooth State and check permissions on open
   useEffect(() => {
@@ -43,6 +44,11 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
       //   .catch(err => console.warn('[BluetoothShareModal] Failed to stop Kiosk Mode', err));
 
       checkAndActivateBluetooth();
+
+      // Fetch device serial number
+      AsyncStorage.getItem('serial_number')
+        .then(sn => setSerialNumber(sn || ''))
+        .catch(err => console.warn('[BluetoothShareModal] Failed to load serial number:', err));
     } else {
       stopScan();
     }
@@ -335,7 +341,10 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
           <TouchableOpacity onPress={onClose} style={styles.backButton}>
             <Image source={backIcon} style={styles.backIcon} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Bluetooth Share</Text>
+          <View style={styles.headerTitleContainer}>
+            <Text style={styles.headerTitleMain}>Bluetooth Share</Text>
+            {serialNumber ? <Text style={styles.serialNumberText}>S/N: {serialNumber}</Text> : null}
+          </View>
           <TouchableOpacity onPress={() => setShowMenu(prev => !prev)} style={styles.kebabButton}>
             <MaterialCommunityIcons name="dots-vertical" size={24} color="#FFFFFF" />
           </TouchableOpacity>
@@ -654,6 +663,25 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontFamily: 'ProductSans-Bold',
+  },
+  headerTitleContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTitleMain: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontFamily: 'ProductSans-Bold',
+    letterSpacing: 0.5,
+    textAlign: 'center',
+  },
+  serialNumberText: {
+    color: '#22B2A6',
+    fontSize: 14,
+    fontFamily: 'ProductSans-Regular',
+    marginTop: 2,
+    textAlign: 'center',
   },
 });
 

@@ -24,7 +24,7 @@ import RNFS from 'react-native-fs';
 import NetInfo from '@react-native-community/netinfo';
 import ImageViewer from 'react-native-image-zoom-viewer';
 import { GestureHandlerRootView, Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from 'react-native-reanimated';
+import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS, withDelay, useAnimatedReaction } from 'react-native-reanimated';
 import { requestStoragePermissionForGallery } from '../utils/Helpers';
 import { getGuestPhotosDir } from '../utils/guestPhotos';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -81,6 +81,19 @@ const ZoomableImage = ({ uri, onTap }) => {
   const savedTranslateX = useSharedValue(0);
   const savedTranslateY = useSharedValue(0);
 
+  // Shared values for tracking pinch starting states
+  const isPinching = useSharedValue(false);
+  const justFinishedPinching = useSharedValue(false);
+  const scaleStart = useSharedValue(1);
+  const translateXStart = useSharedValue(0);
+  const translateYStart = useSharedValue(0);
+  const focalXStart = useSharedValue(0);
+  const focalYStart = useSharedValue(0);
+
+  // Track incremental pan translation
+  const prevTranslationX = useSharedValue(0);
+  const prevTranslationY = useSharedValue(0);
+
   useEffect(() => {
     if (uri) {
       Image.getSize(uri, (w, h) => {
@@ -106,6 +119,40 @@ const ZoomableImage = ({ uri, onTap }) => {
     return { displayedWidth: dWidth, displayedHeight: dHeight };
   }, [imgDims]);
 
+  // Double-tap to zoom in (to 3x) at tapped point, or zoom back out to 1x
+  const doubleTap = Gesture.Tap()
+    .numberOfTaps(2)
+    .maxDeltaX(15)
+    .maxDeltaY(15)
+    .onEnd((e) => {
+      if (scale.value > 1.0) {
+        scale.value = withTiming(1);
+        translateX.value = withTiming(0);
+        translateY.value = withTiming(0);
+        savedScale.value = 1;
+        savedTranslateX.value = 0;
+        savedTranslateY.value = 0;
+      } else {
+        const targetScale = 3.0;
+        const tapX = e.x - width / 2;
+        const tapY = e.y - screenHeight / 2;
+
+        const maxTransX = Math.max(0, (displayedWidth * targetScale - width) / 2);
+        const maxTransY = Math.max(0, (displayedHeight * targetScale - screenHeight) / 2);
+
+        const targetTx = Math.min(Math.max(tapX * (1 - targetScale), -maxTransX), maxTransX);
+        const targetTy = Math.min(Math.max(tapY * (1 - targetScale), -maxTransY), maxTransY);
+
+        scale.value = withTiming(targetScale);
+        translateX.value = withTiming(targetTx);
+        translateY.value = withTiming(targetTy);
+        savedScale.value = targetScale;
+        savedTranslateX.value = targetTx;
+        savedTranslateY.value = targetTy;
+      }
+    });
+
+  // Single tap to toggle overlay visibility
   const singleTap = Gesture.Tap()
     .numberOfTaps(1)
     .maxDeltaX(15)
@@ -117,10 +164,40 @@ const ZoomableImage = ({ uri, onTap }) => {
     });
 
   const pinch = Gesture.Pinch()
+    .onStart((e) => {
+      isPinching.value = true;
+      scaleStart.value = scale.value;
+      translateXStart.value = translateX.value;
+      translateYStart.value = translateY.value;
+      focalXStart.value = e.focalX - width / 2;
+      focalYStart.value = e.focalY - screenHeight / 2;
+    })
     .onUpdate((e) => {
-      scale.value = Math.max(1, savedScale.value * e.scale);
+      const newScale = Math.min(Math.max(1, scaleStart.value * e.scale), 6);
+      scale.value = newScale;
+
+      const currentFocalX = e.focalX - width / 2;
+      const currentFocalY = e.focalY - screenHeight / 2;
+
+      // Unscaled focal point relative to image coordinate space
+      const p0x = (focalXStart.value - translateXStart.value) / scaleStart.value;
+      const p0y = (focalYStart.value - translateYStart.value) / scaleStart.value;
+
+      // Target translation to keep the image point under the fingers
+      const targetTx = currentFocalX - newScale * p0x;
+      const targetTy = currentFocalY - newScale * p0y;
+
+      const maxTransX = Math.max(0, (displayedWidth * newScale - width) / 2);
+      const maxTransY = Math.max(0, (displayedHeight * newScale - screenHeight) / 2);
+
+      translateX.value = Math.min(Math.max(targetTx, -maxTransX), maxTransX);
+      translateY.value = Math.min(Math.max(targetTy, -maxTransY), maxTransY);
     })
     .onEnd(() => {
+      isPinching.value = false;
+      justFinishedPinching.value = true;
+      justFinishedPinching.value = withDelay(100, withTiming(false, { duration: 0 }));
+
       if (scale.value <= 1) {
         scale.value = withTiming(1);
         savedScale.value = 1;
@@ -130,41 +207,39 @@ const ZoomableImage = ({ uri, onTap }) => {
         savedTranslateY.value = 0;
       } else {
         savedScale.value = scale.value;
-        // Clamp after zoom
-        const maxTransX = Math.max(0, (displayedWidth * scale.value - width) / 2);
-        const maxTransY = Math.max(0, (displayedHeight * scale.value - screenHeight) / 2);
-
-        if (translateX.value > maxTransX) {
-          translateX.value = withTiming(maxTransX);
-          savedTranslateX.value = maxTransX;
-        } else if (translateX.value < -maxTransX) {
-          translateX.value = withTiming(-maxTransX);
-          savedTranslateX.value = -maxTransX;
-        }
-
-        if (translateY.value > maxTransY) {
-          translateY.value = withTiming(maxTransY);
-          savedTranslateY.value = maxTransY;
-        } else if (translateY.value < -maxTransY) {
-          translateY.value = withTiming(-maxTransY);
-          savedTranslateY.value = -maxTransY;
-        }
+        savedTranslateX.value = translateX.value;
+        savedTranslateY.value = translateY.value;
       }
+    })
+    .onFinalize(() => {
+      isPinching.value = false;
     });
 
   const pan = Gesture.Pan()
+    .maxPointers(1)
     .onTouchesMove((e, state) => {
       if (scale.value <= 1.0) {
         state.fail();
       }
     })
+    .onStart(() => {
+      prevTranslationX.value = 0;
+      prevTranslationY.value = 0;
+    })
     .onUpdate((e) => {
       if (scale.value > 1.0) {
-        const maxTransX = Math.max(0, (displayedWidth * scale.value - width) / 2);
-        const maxTransY = Math.max(0, (displayedHeight * scale.value - screenHeight) / 2);
+        const dx = e.translationX - prevTranslationX.value;
+        const dy = e.translationY - prevTranslationY.value;
+        prevTranslationX.value = e.translationX;
+        prevTranslationY.value = e.translationY;
 
-        translateX.value = Math.min(Math.max(savedTranslateX.value + e.translationX, -maxTransX), maxTransX);
-        translateY.value = Math.min(Math.max(savedTranslateY.value + e.translationY, -maxTransY), maxTransY);
+        if (!isPinching.value && !justFinishedPinching.value) {
+          const maxTransX = Math.max(0, (displayedWidth * scale.value - width) / 2);
+          const maxTransY = Math.max(0, (displayedHeight * scale.value - screenHeight) / 2);
+
+          translateX.value = Math.min(Math.max(translateX.value + dx, -maxTransX), maxTransX);
+          translateY.value = Math.min(Math.max(translateY.value + dy, -maxTransY), maxTransY);
+        }
       }
     })
     .onEnd(() => {
@@ -174,7 +249,12 @@ const ZoomableImage = ({ uri, onTap }) => {
       }
     });
 
-  const composed = Gesture.Simultaneous(pinch, pan, singleTap);
+  // Compose all gestures simultaneously so pinch/pan are not blocked or delayed
+  const composed = Gesture.Simultaneous(
+    pinch,
+    pan,
+    Gesture.Exclusive(doubleTap, singleTap)
+  );
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
@@ -197,6 +277,8 @@ const ZoomableImage = ({ uri, onTap }) => {
     </GestureDetector>
   );
 };
+
+
 
 // Performance constants
 const THUMBNAIL_SIZE = (Dimensions.get('window').width / 3) - 6;

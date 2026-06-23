@@ -1786,9 +1786,9 @@ const CameraScreen = ({ navigation }) => {
 
   // ========== CAPTURE FUNCTION ==========
   // Guest: rapid capture like normal OS camera (short throttle + non-blocking save). Logged-in: 1s throttle + 500ms settle.
-  const CAPTURE_THROTTLE_MS_GUEST = 800;
-  const CAPTURE_THROTTLE_MS_LOGGED_IN = 1500;
-  const CAPTURE_UNLOCK_DELAY_MS_LOGGED_IN = 280;
+  const CAPTURE_THROTTLE_MS_GUEST = 300;
+  const CAPTURE_THROTTLE_MS_LOGGED_IN = 500;
+  const CAPTURE_UNLOCK_DELAY_MS_LOGGED_IN = 100;
 
   const processImage = async (uri, zoomVal = 1.0, patientName = '', part = '') => {
     try {
