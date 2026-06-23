@@ -28,7 +28,7 @@ class KioskModeModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                 val adminName = ComponentName(activity, KioskDeviceAdminReceiver::class.java)
 
                 if (dpm.isDeviceOwnerApp(activity.packageName)) {
-                    dpm.setLockTaskPackages(adminName, arrayOf(activity.packageName))
+                    dpm.setLockTaskPackages(adminName, arrayOf(activity.packageName, "com.android.bluetooth", "com.google.android.bluetooth"))
                 }
 
                 activity.startLockTask()

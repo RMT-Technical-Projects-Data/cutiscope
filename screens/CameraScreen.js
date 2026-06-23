@@ -46,7 +46,7 @@ import Sound from 'react-native-sound';
 import { PermissionsAndroid } from 'react-native';
 import { NativeModules } from 'react-native';
 import { ScrollView } from 'react-native-gesture-handler';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import DeviceInfo from 'react-native-device-info';
 import { UserMessages } from '../utils/userMessages';
 import { ensureGuestPhotosDir, getGuestPhotosDir } from '../utils/guestPhotos';
@@ -59,7 +59,7 @@ import { useAuth } from '../context/AuthContext';
 import CustomStatusBar from '../Components/CustomStatusBar';
 import ZoomControl, { ZoomRuler } from '../Components/ZoomControl';
 import SettingsMenu from '../modals/SettingsMenu';
-import { Skia, Canvas, Image as SkiaImage, ColorMatrix } from '@shopify/react-native-skia';
+import { Skia, Canvas, Image as SkiaImage, ColorMatrix, FontStyle, ImageFormat } from '@shopify/react-native-skia';
 import {
   DEFAULT_TEMPERATURE,
   DEFAULT_TINT,
@@ -73,6 +73,7 @@ import ConfirmationModal from '../modals/ConfirmationModal';
 import PowerOffModal from '../modals/PowerOffModal';
 import PatientBoxModal from '../modals/PatientBoxModal';
 import StandbyModal from '../modals/StandbyModal';
+import BodyPartModal from '../modals/BodyPartModal';
 
 // Import assets
 import TitleImg from '../assets/dscope-app.png';
@@ -90,7 +91,50 @@ import KeyEvent from 'react-native-keyevent';
 import VolumeManager from 'react-native-volume-manager';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
+const SCALE_BASE_MM = 15.0;
+
+const MillimeterScale = ({ zoom }) => {
+  const maxMm = 15.0 / zoom;
+  const totalSteps = Math.floor(maxMm * 10);
+  const ticks = [];
+  for (let i = 0; i <= totalSteps; i++) {
+    ticks.push(i / 10);
+  }
+  
+  return (
+    <View style={styles.mmScaleContainer}>
+      <View style={styles.mmScaleLine} />
+      {ticks.map((val, index) => {
+        const valRounded = Math.round(val * 10);
+        const isMajor = valRounded % 10 === 0;
+        const isMedium = valRounded % 10 === 5;
+        const topPosition = `${((maxMm - val) / maxMm) * 100}%`;
+        
+        let tickStyle = styles.mmScaleTickMinor;
+        if (isMajor) {
+          tickStyle = styles.mmScaleTickMajor;
+        } else if (isMedium) {
+          tickStyle = styles.mmScaleTickMedium;
+        }
+        
+        return (
+          <View key={index} style={[styles.mmScaleTickRow, { top: topPosition }]}>
+            <View style={tickStyle} />
+            {isMajor && (
+              <Text style={styles.mmScaleText}>
+                {val.toFixed(0)}
+              </Text>
+            )}
+          </View>
+        );
+      })}
+      <Text style={styles.mmScaleUnit}>mm</Text>
+    </View>
+  );
+};
+
 const CameraScreen = ({ navigation }) => {
+  const isFocused = useIsFocused();
   const [showImage, setShowImage] = useState(false);
 
   // Use Auth Context
@@ -164,6 +208,8 @@ const CameraScreen = ({ navigation }) => {
   // ========== PATIENT / BOX (images saved to folder with this ID and name) ==========
   const [currentBox, setCurrentBox] = useState({ id: '', name: '' });
   const [patientBoxModalVisible, setPatientBoxModalVisible] = useState(false);
+  const [bodyPart, setBodyPart] = useState('');
+  const [bodyPartModalVisible, setBodyPartModalVisible] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -216,9 +262,6 @@ const CameraScreen = ({ navigation }) => {
       },
     })
   ).current;
-
-
-
 
 
   // Handle Android Hardware Back Button
@@ -1747,20 +1790,22 @@ const CameraScreen = ({ navigation }) => {
   const CAPTURE_THROTTLE_MS_LOGGED_IN = 1500;
   const CAPTURE_UNLOCK_DELAY_MS_LOGGED_IN = 280;
 
-  const processImage = async (uri) => {
+  const processImage = async (uri, zoomVal = 1.0, patientName = '', part = '') => {
     try {
-      console.log('🖼️ Starting image post-processing with Skia (White Balance)...', uri);
+      console.log('🖼️ processImage: Starting Skia processing for', uri, 'Zoom:', zoomVal);
 
-      const fileUri = uri.startsWith('file://') ? uri : `file://${uri}`;
-      const data = await Skia.Data.fromURI(fileUri);
-      if (!data) {
-        console.error('❌ Failed to load image data for Skia');
+      const exists = await RNFS.exists(uri);
+      if (!exists) {
+        console.error('❌ processImage: Source file does not exist:', uri);
         return uri;
       }
 
-      const image = Skia.Image.MakeImageFromEncoded(data);
+      const data = await RNFS.readFile(uri, 'base64');
+      const skData = Skia.Data.fromBase64(data);
+      const image = Skia.Image.MakeImageFromEncoded(skData);
+      
       if (!image) {
-        console.error('❌ Failed to decode image with Skia');
+        console.error('❌ processImage: Failed to decode image with Skia');
         return uri;
       }
 
@@ -1783,41 +1828,140 @@ const CameraScreen = ({ navigation }) => {
         0, 0, 0, 1, 0,
       ];
 
-      const surface = Skia.Surface.MakeRasterDirect(
-        image.width(),
-        image.height(),
-        Skia.ColorType.RGBA_8888,
-        Skia.AlphaType.Premul
-      );
+      const originalW = image.width();
+      const originalH = image.height();
 
+      // Detect if the photo was captured in landscape sensor orientation
+      const isLandscape = originalW > originalH;
+      // Set target portrait dimensions
+      const imgW = isLandscape ? originalH : originalW;
+      const imgH = isLandscape ? originalW : originalH;
+
+      const surface = Skia.Surface.MakeOffscreen(imgW, imgH);
       if (!surface) {
-        // Fallback if Direct Raster fails
-        const offscreenSurface = Skia.Surface.MakeOffscreen(image.width(), image.height());
-        if (!offscreenSurface) return uri;
-
-        const canvas = offscreenSurface.getCanvas();
-        const paint = Skia.Paint();
-        paint.setColorFilter(Skia.ColorFilter.MakeMatrix(matrix));
-        canvas.drawImage(image, 0, 0, paint);
-
-        const snapshot = offscreenSurface.makeImageSnapshot();
-        const encoded = snapshot.encodeToData(Skia.ImageFormat.JPEG, 90);
-        const path = `${RNFS.TemporaryDirectoryPath}/processed_${Date.now()}.jpg`;
-        await RNFS.writeFile(path, encoded.getBase64(), 'base64');
-        return path;
+        console.error('❌ processImage: Failed to create Skia surface');
+        return uri;
       }
 
       const canvas = surface.getCanvas();
       const paint = Skia.Paint();
       paint.setColorFilter(Skia.ColorFilter.MakeMatrix(matrix));
+
+      if (isLandscape) {
+        canvas.save();
+        // Translate and rotate 90 degrees clockwise to fit the image perfectly within the portrait bounds
+        canvas.translate(imgW, 0);
+        canvas.rotate(90, 0, 0);
+      }
       canvas.drawImage(image, 0, 0, paint);
+      if (isLandscape) {
+        canvas.restore();
+      }
+
+      // --- Draw Millimeter Scale Watermark ---
+      try {
+        console.log('📏 processImage: Drawing scale watermark...');
+        const scaleX = imgW * 0.04;
+        const scaleTop = imgH * 0.1;
+        const scaleHeight = imgH * 0.8;
+        
+        const scalePaint = Skia.Paint();
+        scalePaint.setColor(Skia.Color('#ffffff'));
+        scalePaint.setStrokeWidth(Math.max(4, imgW / 300));
+        scalePaint.setAntiAlias(true);
+
+        canvas.drawLine(scaleX, scaleTop, scaleX, scaleTop + scaleHeight, scalePaint);
+
+        const maxMm = 15.0 / zoomVal;
+        
+        let font = null;
+        try {
+          const typeface = Skia.FontMgr.System().matchFamilyStyle("sans-serif", FontStyle.Normal);
+          font = Skia.Font(typeface, Math.max(30, imgH / 40));
+        } catch (fontErr) {
+          console.warn('⚠️ processImage: Font creation failed', fontErr);
+        }
+
+        const totalSteps = Math.floor(maxMm * 10);
+        for (let step = 0; step <= totalSteps; step++) {
+          const val = step / 10;
+          const valRounded = Math.round(val * 10);
+          const isMajor = valRounded % 10 === 0;
+          const isMedium = valRounded % 10 === 5;
+          
+          const y = scaleTop + ((maxMm - val) / maxMm) * scaleHeight;
+          
+          let tickWidth = imgW * 0.015; // minor tick (0.1 mm)
+          if (isMajor) {
+            tickWidth = imgW * 0.04;   // major tick (1.0 mm)
+          } else if (isMedium) {
+            tickWidth = imgW * 0.027;  // medium tick (0.5 mm)
+          }
+          
+          canvas.drawLine(scaleX, y, scaleX + tickWidth, y, scalePaint);
+          
+          if (isMajor && font) {
+            const text = val.toFixed(0);
+            const textX = scaleX + tickWidth + (imgW * 0.015);
+            canvas.drawText(text, textX, y + (font.getSize() / 3), scalePaint, font);
+          }
+        }
+        
+        if (font) {
+          canvas.drawText('mm', scaleX, scaleTop + scaleHeight + font.getSize() + 10, scalePaint, font);
+        }
+        console.log('✅ processImage: Scale watermark drawn successfully');
+      } catch (scaleDrawErr) {
+        console.error('❌ processImage: Scale watermark error:', scaleDrawErr);
+      }
+      
+      // --- Draw Patient Info Box ---
+      if (patientName || part) {
+        try {
+          console.log('📝 processImage: Drawing patient info box...');
+          const label = `Patient: ${patientName}${patientName && part ? ' | ' : ''}${part ? `Body Part: ${part}` : ''}`;
+          
+          const fontSize = Math.max(40, imgW / 25);
+          
+          const textPaint = Skia.Paint();
+          textPaint.setColor(Skia.Color('#ffffff'));
+          textPaint.setAntiAlias(true);
+          
+          const typeface = Skia.FontMgr.System().matchFamilyStyle("sans-serif", FontStyle.Bold);
+          const font = Skia.Font(typeface, fontSize);
+          
+          const textWidth = font.measureText(label).width;
+          
+          const paddingX = fontSize * 1.0;
+          const paddingY = fontSize * 0.6;
+          const boxWidth = textWidth + paddingX * 2;
+          const boxHeight = fontSize + paddingY * 2;
+          
+          const boxX = (imgW - boxWidth) / 2;
+          // const boxY = imgH * 0.12;
+          const boxY = imgH - boxHeight - (imgH * 0.01); 
+          
+          const boxPaint = Skia.Paint();
+          boxPaint.setColor(Skia.Color('rgba(0, 0, 0, 0.6)'));
+          boxPaint.setAntiAlias(true);
+          
+          canvas.drawRect({ x: boxX, y: boxY, width: boxWidth, height: boxHeight }, boxPaint);
+          
+          const textX = boxX + paddingX;
+          const textY = boxY + boxHeight / 2 + fontSize * 0.35; 
+          
+          canvas.drawText(label, textX, textY, textPaint, font);
+          console.log('✅ processImage: Patient info box drawn successfully');
+        } catch (infoDrawErr) {
+          console.error('❌ processImage: Patient info box error:', infoDrawErr);
+        }
+      }
 
       const snapshot = surface.makeImageSnapshot();
-      const encoded = snapshot.encodeToData(Skia.ImageFormat.JPEG, 90);
+      const encoded = snapshot.encodeToBase64(ImageFormat.JPEG, 90);
       const path = `${RNFS.TemporaryDirectoryPath}/processed_${Date.now()}.jpg`;
-      await RNFS.writeFile(path, encoded.getBase64(), 'base64');
-
-      console.log('✅ Image post-processing complete (Skia):', path);
+      await RNFS.writeFile(path, encoded, 'base64');
+      console.log('✅ processImage: Done, path:', path);
       return path;
     } catch (err) {
       console.error('❌ Skia processImage error:', err);
@@ -1837,6 +1981,14 @@ const CameraScreen = ({ navigation }) => {
     if (!isGuest && !currentBox?.id) {
       if (Platform.OS === 'android') {
         showInAppToast('Please select a patient to capture image', { durationMs: 2000, position: 'center' });
+      }
+      return;
+    }
+
+    // Also require a selected body part
+    if (!isGuest && !bodyPart) {
+      if (Platform.OS === 'android') {
+        showInAppToast('Please select Patients body part to capture image', { durationMs: 2000, position: 'center' });
       }
       return;
     }
@@ -1874,8 +2026,10 @@ const CameraScreen = ({ navigation }) => {
           enableShutterSound: false,
         });
 
-        // Apply White Balance Correction
-        const processedPath = await processImage(photo.path);
+        // Apply White Balance Correction & Watermarking
+        const patientName = currentBox?.name || '';
+        const processedPath = await processImage(photo.path, zoomBtnValue, patientName, bodyPart);
+        console.log('📸 handleCapturePress: processedPath =', processedPath);
         const finalPhotoPath = processedPath.startsWith('file://') ? processedPath.slice(7) : processedPath;
 
         const now = new Date();
@@ -1887,9 +2041,12 @@ const CameraScreen = ({ navigation }) => {
         const minutes = pad(now.getMinutes());
         const seconds = pad(now.getSeconds());
 
+        const cleanBodyPart = bodyPart ? sanitizeFolderName(bodyPart) : '';
+        const bodyPartSuffix = cleanBodyPart ? `_BP-${cleanBodyPart}` : '';
+
         const fileName = currentBox?.id
-          ? `Cutiscope_${currentBox.id}_${year}${month}${day}_${hours}${minutes}${seconds}.jpg`
-          : `Cutiscope_${year}${month}${day}_${hours}${minutes}${seconds}.jpg`;
+          ? `Cutiscope_${currentBox.id}${bodyPartSuffix}_${year}${month}${day}_${hours}${minutes}${seconds}.jpg`
+          : `Cutiscope${bodyPartSuffix}_${year}${month}${day}_${hours}${minutes}${seconds}.jpg`;
 
         const metadata = {
           zoom: zoomBtnValue,
@@ -2242,8 +2399,13 @@ const CameraScreen = ({ navigation }) => {
                     minZoom={minZoom}
                     maxZoom={maxZoom}
                     onZoomChange={setZoomBtnValue}
+                    disabled={!!cameraError}
                   />
                 </View>
+
+                {/* Millimeter Scale Overlay */}
+                <MillimeterScale zoom={zoomBtnValue} />
+
 
                 {showFocusStatus && (
                   <View style={styles.focusStatusContainer}>
@@ -2302,6 +2464,16 @@ const CameraScreen = ({ navigation }) => {
       <View style={styles.container}>
         <CustomStatusBar />
 
+        {!isGuest && (currentBox?.name || bodyPart) ? (
+          <View style={styles.patientNameTopBar}>
+            <Text style={styles.patientNameText} numberOfLines={1}>
+              {currentBox?.name ? <Text>Patient: <Text style={{fontFamily: 'ProductSans-Bold'}}>{currentBox.name}</Text></Text> : null}
+              {currentBox?.name && bodyPart ? ' | ' : ''}
+              {bodyPart ? <Text>Body Part: <Text style={{fontFamily: 'ProductSans-Bold'}}>{bodyPart}</Text></Text> : null}
+            </Text>
+          </View>
+        ) : null}
+
         {renderCamera()}
 
         <WifiSettingsModal
@@ -2332,6 +2504,18 @@ const CameraScreen = ({ navigation }) => {
             }
           }}
           onInteraction={resetInactivityTimer}
+        />
+
+        <BodyPartModal
+          visible={bodyPartModalVisible}
+          initialValue={bodyPart}
+          onClose={() => {
+            setBodyPartModalVisible(false);
+            resetInactivityTimer();
+          }}
+          onSave={(val) => {
+            setBodyPart(val);
+          }}
         />
 
         <ConfirmationModal
@@ -2379,7 +2563,8 @@ const CameraScreen = ({ navigation }) => {
           {/* ========== LIGHT TOGGLE BUTTON ========== */}
           {/* ========== LIGHT TOGGLE BUTTON ========== */}
           <Pressable
-            style={[styles.menuItemLight]}
+            style={[styles.menuItemLight, cameraError && { opacity: 0.5 }]}
+            disabled={!!cameraError}
             onPressIn={onLightButtonPressIn}
             onPressOut={onLightButtonPressOut}
             // onLongPress={onLightButtonLongPress}
@@ -2421,6 +2606,21 @@ const CameraScreen = ({ navigation }) => {
               />
             </TouchableOpacity>
           )}
+
+          {/* ========== BODY PART ICON ========== */}
+          {!isGuest && (
+            <TouchableOpacity
+              style={[styles.menuItemLight, styles.boxButtonWrapper]}
+              onPress={() => setBodyPartModalVisible(true)}
+              activeOpacity={0.7}
+            >
+              <MaterialCommunityIcons
+                name="human"
+                size={40}
+                color={bodyPart ? '#22B2A6' : '#fff'}
+              />
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* ========== UNIFIED BOTTOM CONTROLS ========== */}
@@ -2445,7 +2645,8 @@ const CameraScreen = ({ navigation }) => {
           {/* CENTER: Capture – enabled even when no patient selected (logged-in users only) to show toast */}
           <View style={styles.centerContainer}>
             <TouchableOpacity
-              style={styles.captureButtonWrapper}
+              style={[styles.captureButtonWrapper, cameraError && { opacity: 0.5 }]}
+              disabled={!!cameraError}
               onPress={handleCapturePress}
               onPressIn={() => setOnCapturePress(true)}
               onPressOut={() => setOnCapturePress(false)}
@@ -2475,6 +2676,7 @@ const CameraScreen = ({ navigation }) => {
                 }}
                 isCompact={true}
                 currentZoom={zoomBtnValue}
+                disabled={!!cameraError}
               />
             </View>
           </View>
@@ -2483,7 +2685,10 @@ const CameraScreen = ({ navigation }) => {
         {/* ========== CONTROLS ========== */}
         <>
           {showSlider && (
-            <View style={styles.scaleContainer}>
+            <View 
+              style={[styles.scaleContainer, cameraError && { opacity: 0.5 }]} 
+              pointerEvents={cameraError ? 'none' : 'auto'}
+            >
               <ScrollView
                 ref={scrollExposureViewRef}
                 horizontal
@@ -2512,7 +2717,10 @@ const CameraScreen = ({ navigation }) => {
           )}
 
           {showFocusScale && (
-            <View style={styles.scaleContainer}>
+            <View 
+              style={[styles.scaleContainer, cameraError && { opacity: 0.5 }]} 
+              pointerEvents={cameraError ? 'none' : 'auto'}
+            >
               <ScrollView
                 ref={focusScrollViewRef}
                 horizontal
@@ -2547,7 +2755,10 @@ const CameraScreen = ({ navigation }) => {
           )}
 
           {showScale && (
-            <View style={styles.scaleContainer}>
+            <View 
+              style={[styles.scaleContainer, cameraError && { opacity: 0.5 }]} 
+              pointerEvents={cameraError ? 'none' : 'auto'}
+            >
               <ScrollView
                 ref={scrollViewRef}
                 horizontal
@@ -2625,7 +2836,7 @@ const CameraScreen = ({ navigation }) => {
 
         {/* ========== STANDBY MODAL ========== */}
         <StandbyModal
-          visible={isStandby}
+          visible={isStandby && isFocused}
           onActivate={() => {
             setIsStandby(false);
             resetInactivityTimer();
@@ -2638,6 +2849,24 @@ const CameraScreen = ({ navigation }) => {
 
 // End of CameraScreen
 const styles = StyleSheet.create({
+  patientNameTopBar: {
+    position: 'absolute',
+    top: '6%',
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 100,
+  },
+  patientNameText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontFamily: 'ProductSans-Regular',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
   container: {
     justifyContent: 'flex-start',
     paddingTop: '12%',
@@ -2714,17 +2943,18 @@ const styles = StyleSheet.create({
     paddingRight: 30, // Extreme Right spacing
   },
   galleryButtonWrapper: {
-    width: 60,
-    height: 60,
+    width: 80,
+    height: 80,
     justifyContent: 'center',
     alignItems: 'center',
   },
   galleryIcon: {
-    width: 55,
-    height: 55,
-    borderRadius: 10,
+    width: 70,
+    height: 70,
+    borderRadius: 35,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.5)',
+    overflow: 'hidden',
   },
   captureButtonWrapper: {
     width: 100,
@@ -2748,7 +2978,7 @@ const styles = StyleSheet.create({
 
   // Legacy styles (keeping if needed but overrides prevent usage)
   captureButton: { width: 100, height: 100 },
-  galleryButton: { width: 50, height: 55 },
+  galleryButton: { width: 70, height: 70, borderRadius: 35, overflow: 'hidden' },
   focusStatusContainer: {
     position: 'absolute',
     top: '10%',
@@ -3400,6 +3630,84 @@ const styles = StyleSheet.create({
     borderTopWidth: 0,
     borderLeftWidth: 0,
   },
+  mmScaleContainer: {
+    position: 'absolute',
+    left: 15,
+    top: '10%',
+    height: '80%',
+    zIndex: 110,
+  },
+  mmScaleTickRow: {
+    position: 'absolute',
+    left: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    transform: [{ translateY: -10 }],
+    height: 20,
+  },
+  mmScaleTickMajor: {
+    width: 16,
+    height: 2,
+    backgroundColor: '#ffffff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.8,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  mmScaleTickMinor: {
+    width: 8,
+    height: 1.5,
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.8,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  mmScaleTickMedium: {
+    width: 12,
+    height: 2,
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.8,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  mmScaleText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontFamily: 'ProductSans-Bold',
+    marginLeft: 6,
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  mmScaleLine: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 2,
+    backgroundColor: '#ffffff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.8,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  mmScaleUnit: {
+    position: 'absolute',
+    bottom: -25,
+    left: 0,
+    color: '#ffffff',
+    fontSize: 12,
+    fontFamily: 'ProductSans-Bold',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  }
 });
 
 export default CameraScreen;

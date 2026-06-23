@@ -86,8 +86,8 @@ android {
         applicationId "com.dermascopeapp"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 16
-        versionName "7.9"
+        versionCode 18
+        versionName "7.10"
     }
     signingConfigs {
         debug {

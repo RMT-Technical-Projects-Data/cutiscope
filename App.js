@@ -21,13 +21,13 @@ import SerialNumberModal from './modals/SerialNumberModal';
 import UpdateModal from './modals/UpdateModal';
 import PowerOffModal from './modals/PowerOffModal';
 import KioskMode from './utils/KioskMode';
-import { IN_APP_TOAST_EVENT } from './utils/Helpers';
+import { IN_APP_TOAST_EVENT, showInAppToast } from './utils/Helpers';
 
 const Stack = createNativeStackNavigator();
 
-const KIOSK_EXIT_PIN = '2621';
+const KIOSK_EXIT_PIN = '2019';
 const TAP_RESET_MS = 2500;
-const TAPS_TO_SHOW_PIN = 100;
+const TAPS_TO_SHOW_PIN = 10;
 
 const navTheme = {
   ...DefaultTheme,
@@ -115,6 +115,13 @@ const App = () => {
   const kioskPinInputRef = useRef(null);
   const tapCountRef = useRef(0);
   const tapResetTimerRef = useRef(null);
+  const [isDeveloperUnlocked, setIsDeveloperUnlocked] = useState(false);
+  const [showSerialInput, setShowSerialInput] = useState(false);
+  const [serialInputValue, setSerialInputValue] = useState('');
+  const [serialInputError, setSerialInputError] = useState('');
+  const [currentSerialNumber, setCurrentSerialNumber] = useState('');
+  const [isKioskActive, setIsKioskActive] = useState(Platform.OS === 'android');
+  const serialInputRef = useRef(null);
 
   // Check initial auth state
   useEffect(() => {
@@ -159,6 +166,14 @@ const App = () => {
         const value = await AsyncStorage.getItem('serial_number');
         if (value === null) {
           setHasSerialNumber(false);
+        } else {
+          if (NativeModules.SystemTimeModule?.setBluetoothName) {
+            try {
+              await NativeModules.SystemTimeModule.setBluetoothName(value);
+            } catch (err) {
+              console.error('Failed to sync Bluetooth name on launch:', err);
+            }
+          }
         }
       } catch (e) {
         console.error('Error checking serial number:', e);
@@ -174,8 +189,10 @@ const App = () => {
       try {
         const result = await KioskMode.startKioskMode();
         console.log('Kiosk mode on launch:', result);
+        setIsKioskActive(true);
       } catch (e) {
         console.error('Kiosk mode on launch:', e);
+        setIsKioskActive(false);
       }
     };
     startKioskMode();
@@ -202,18 +219,62 @@ const App = () => {
     }
   };
 
+  const fetchCurrentSerialNumber = async () => {
+    try {
+      const sn = await AsyncStorage.getItem('serial_number');
+      setCurrentSerialNumber(sn || '');
+    } catch (e) {
+      console.error('Failed to fetch serial number:', e);
+    }
+  };
+
   const handleKioskPinSubmit = async () => {
     if (kioskPinValue !== KIOSK_EXIT_PIN) {
       setKioskPinError('Incorrect PIN');
       return;
     }
     setKioskPinError('');
+    await fetchCurrentSerialNumber();
+    setIsDeveloperUnlocked(true);
+  };
+
+  const handleToggleKioskMode = async () => {
     try {
-      await KioskMode.stopKioskMode();
-      setKioskPinModalVisible(false);
-      setKioskPinValue('');
+      if (isKioskActive) {
+        await KioskMode.stopKioskMode();
+        setIsKioskActive(false);
+      } else {
+        await KioskMode.startKioskMode();
+        setIsKioskActive(true);
+      }
+      setKioskPinError('');
     } catch (e) {
-      setKioskPinError(e?.message || 'Failed to exit kiosk mode');
+      setKioskPinError(e?.message || 'Failed to toggle kiosk mode');
+    }
+  };
+
+  const handleSaveSerialNumber = async () => {
+    if (!serialInputValue.trim()) {
+      setSerialInputError('Please enter a serial number');
+      return;
+    }
+    try {
+      const serialNum = serialInputValue.trim();
+      await AsyncStorage.setItem('serial_number', serialNum);
+      setCurrentSerialNumber(serialNum);
+      setHasSerialNumber(true);
+      setShowSerialInput(false);
+      setSerialInputError('');
+
+      if (NativeModules.SystemTimeModule?.setBluetoothName) {
+        try {
+          await NativeModules.SystemTimeModule.setBluetoothName(serialNum);
+        } catch (err) {
+          console.error('Failed to update Bluetooth name on save:', err);
+        }
+      }
+    } catch (e) {
+      setSerialInputError('Failed to save serial number');
     }
   };
 
@@ -221,7 +282,23 @@ const App = () => {
     setKioskPinModalVisible(false);
     setKioskPinValue('');
     setKioskPinError('');
+    setIsDeveloperUnlocked(false);
+    setShowSerialInput(false);
+    setSerialInputValue('');
+    setSerialInputError('');
   };
+
+  // Autofocus serial number input when shown
+  useEffect(() => {
+    if (showSerialInput) {
+      const t = setTimeout(() => {
+        try {
+          serialInputRef.current?.focus?.();
+        } catch (e) { }
+      }, 80);
+      return () => clearTimeout(t);
+    }
+  }, [showSerialInput]);
 
   // When kiosk PIN modal opens, auto-focus the input so CustomKeyboard shows.
   useEffect(() => {
@@ -234,14 +311,22 @@ const App = () => {
     return () => clearTimeout(t);
   }, [kioskPinModalVisible]);
 
+  const lastPowerPressRef = useRef(0);
+
   // Orientation lock: portrait only; re-lock when app becomes active
   useEffect(() => {
     Orientation.lockToPortrait();
 
     // Listen for power button events (Hardware or JS Request)
     const handleShowPowerMenu = () => {
-      console.log('🔌 Toggling Power Menu Modal');
-      setIsPowerModalVisible(prev => !prev);
+      const now = Date.now();
+      if (now - lastPowerPressRef.current < 500) {
+        console.log('🔌 Power Menu trigger debounced');
+        return;
+      }
+      lastPowerPressRef.current = now;
+      console.log('🔌 Showing Power Menu Modal');
+      setIsPowerModalVisible(true);
     };
 
     // Ensure native power module is instantiated and its receiver is registered.
@@ -258,14 +343,21 @@ const App = () => {
     const subPhysical = DeviceEventEmitter.addListener('onPowerButtonPressed', handleShowPowerMenu);
     const subRequest = DeviceEventEmitter.addListener('requestPowerMenu', handleShowPowerMenu);
 
+    const shareSub = DeviceEventEmitter.addListener('onBluetoothShareStatusChanged', (event) => {
+      if (event.status === 'accepted') {
+        showInAppToast("Device accepted, transfer has begun", { durationMs: 3000 });
+      }
+    });
+
     return () => {
       Orientation.unlockAllOrientations();
       subPhysical.remove();
       subRequest.remove();
+      shareSub.remove();
     };
   }, []);
 
-  // Re-lock orientation to portrait when app becomes active (e.g. after background)
+  // Orientation lock: portrait only; re-lock when app becomes active
   useEffect(() => {
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (nextAppState === 'active') {
@@ -273,20 +365,6 @@ const App = () => {
       }
     });
     return () => subscription.remove();
-  }, []);
-
-  // Close power modal when app goes to background
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', nextAppState => {
-      if (nextAppState === 'background' || nextAppState === 'inactive') {
-        console.log('📱 App going to background/inactive, hiding Power Modal');
-        setIsPowerModalVisible(false);
-      }
-    });
-
-    return () => {
-      subscription.remove();
-    };
   }, []);
 
   useEffect(() => {
@@ -426,7 +504,19 @@ const App = () => {
                 )}
                 <SerialNumberModal
                   visible={!hasSerialNumber}
-                  onComplete={() => setHasSerialNumber(true)}
+                  onComplete={async (sn) => {
+                    setHasSerialNumber(true);
+                    if (sn) {
+                      setCurrentSerialNumber(sn);
+                      if (NativeModules.SystemTimeModule?.setBluetoothName) {
+                        try {
+                          await NativeModules.SystemTimeModule.setBluetoothName(sn);
+                        } catch (e) {
+                          console.error('Failed to set bluetooth name on complete:', e);
+                        }
+                      }
+                    }
+                  }}
                 />
                 <PowerOffModal
                   visible={isPowerModalVisible}
@@ -443,27 +533,95 @@ const App = () => {
                   onRequestClose={handleKioskPinClose}
                 >
                   <View style={styles.kioskPinOverlay}>
-                    <View style={styles.kioskPinBox}>
-                      <Text style={styles.kioskPinTitle}>Enter Developer Mode</Text>
-                      <Text style={styles.kioskPinSubtitle}>Enter PIN</Text>
-                      <KioskTextInput
-                        ref={kioskPinInputRef}
-                        style={[styles.kioskPinInput, kioskPinError ? styles.kioskPinInputError : null]}
-                        value={kioskPinValue}
-                        onChangeText={(t) => { setKioskPinValue(t.replace(/\D/g, '').slice(0, 4)); setKioskPinError(''); }}
-                        maxLength={4}
-                        placeholder="••••"
-                        placeholderTextColor="#666"
-                        secureTextEntry
-                      />
-                      {kioskPinError ? <Text style={styles.kioskPinErrorText}>{kioskPinError}</Text> : null}
-                      <View style={styles.kioskPinButtons}>
-                        <TouchableOpacity style={styles.kioskPinCancelBtn} onPress={handleKioskPinClose}>
-                          <Text style={styles.kioskPinCancelText}>Cancel</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.kioskPinUnlockBtn} onPress={handleKioskPinSubmit}>
-                          <Text style={styles.kioskPinUnlockText}>Unlock</Text>
-                        </TouchableOpacity>
+                    <View style={styles.kioskPinContent}>
+                      <View style={styles.kioskPinBox}>
+                        {!isDeveloperUnlocked ? (
+                          <>
+                            <Text style={styles.kioskPinTitle}>Enter Developer Mode</Text>
+                            <Text style={styles.kioskPinSubtitle}>Enter PIN</Text>
+                            <KioskTextInput
+                              ref={kioskPinInputRef}
+                              style={[styles.kioskPinInput, kioskPinError ? styles.kioskPinInputError : null]}
+                              value={kioskPinValue}
+                              onChangeText={(t) => { setKioskPinValue(t.replace(/\D/g, '').slice(0, 4)); setKioskPinError(''); }}
+                              maxLength={4}
+                              placeholder="••••"
+                              placeholderTextColor="#666"
+                              secureTextEntry
+                              keyboardType="numeric"
+                            />
+                            {kioskPinError ? <Text style={styles.kioskPinErrorText}>{kioskPinError}</Text> : null}
+                            <View style={styles.kioskPinButtons}>
+                              <TouchableOpacity style={styles.kioskPinCancelBtn} onPress={handleKioskPinClose}>
+                                <Text style={styles.kioskPinCancelText}>Cancel</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity style={styles.kioskPinUnlockBtn} onPress={handleKioskPinSubmit}>
+                                <Text style={styles.kioskPinUnlockText}>Unlock</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </>
+                        ) : showSerialInput ? (
+                          <>
+                            <Text style={styles.kioskPinTitle}>Set Serial Number</Text>
+                            <Text style={styles.kioskPinSubtitle}>Enter device serial number</Text>
+                            <KioskTextInput
+                              ref={serialInputRef}
+                              style={[styles.kioskPinInput, serialInputError ? styles.kioskPinInputError : null]}
+                              value={serialInputValue}
+                              onChangeText={(t) => { setSerialInputValue(t); setSerialInputError(''); }}
+                              // placeholder="Serial Number"
+                              placeholderTextColor="#666"
+                              autoCapitalize="characters"
+                              autoCorrect={false}
+                            />
+                            {serialInputError ? <Text style={styles.kioskPinErrorText}>{serialInputError}</Text> : null}
+                            <View style={styles.kioskPinButtons}>
+                              <TouchableOpacity style={styles.kioskPinCancelBtn} onPress={() => { setShowSerialInput(false); setSerialInputError(''); }}>
+                                <Text style={styles.kioskPinCancelText}>Cancel</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity style={styles.kioskPinUnlockBtn} onPress={handleSaveSerialNumber}>
+                                <Text style={styles.kioskPinUnlockText}>Save</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </>
+                        ) : (
+                          <>
+                            <Text style={styles.kioskPinTitle}>Developer Options</Text>
+                            <Text style={styles.kioskPinSubtitle}>
+                              Serial Number: {currentSerialNumber || 'Not Set'}
+                            </Text>
+
+                            <TouchableOpacity
+                              style={styles.devMenuOptionBtn}
+                              onPress={() => {
+                                setSerialInputValue(currentSerialNumber);
+                                setShowSerialInput(true);
+                              }}
+                            >
+                              <Text style={styles.devMenuOptionText}>Set Serial Number</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              style={[
+                                styles.devMenuOptionBtn,
+                                isKioskActive ? styles.devMenuKioskOnBtn : styles.devMenuKioskOffBtn
+                              ]}
+                              onPress={handleToggleKioskMode}
+                            >
+                              <Text style={styles.devMenuOptionText}>
+                                {isKioskActive ? 'Turn Kiosk Mode OFF' : 'Turn Kiosk Mode ON'}
+                              </Text>
+                            </TouchableOpacity>
+
+                            {kioskPinError ? <Text style={styles.kioskPinErrorText}>{kioskPinError}</Text> : null}
+
+                            <View style={styles.kioskPinButtons}>
+                              <TouchableOpacity style={styles.kioskPinCancelBtn} onPress={handleKioskPinClose}>
+                                <Text style={styles.kioskPinCancelText}>Close</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </>
+                        )}
                       </View>
                     </View>
                     {/* Custom keyboard must be inside Modal on Android (Modal is separate window). */}
@@ -495,6 +653,10 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'flex-end',
+  },
+  kioskPinContent: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
   },
@@ -572,6 +734,29 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontFamily: 'ProductSans-Bold',
+  },
+  devMenuOptionBtn: {
+    width: '100%',
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#2a2a2a',
+    borderWidth: 1,
+    borderColor: '#444',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  devMenuOptionText: {
+    color: '#fff',
+    fontSize: 16,
+    fontFamily: 'ProductSans-Bold',
+  },
+  devMenuKioskOnBtn: {
+    borderColor: '#22B2A6',
+    backgroundColor: '#1b3a36',
+  },
+  devMenuKioskOffBtn: {
+    borderColor: '#ff5252',
+    backgroundColor: '#3a1b1b',
   },
 });
 

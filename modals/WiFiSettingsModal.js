@@ -21,6 +21,7 @@ import {
 import { showInAppToast } from '../utils/Helpers';
 import KioskTextInput from '../Components/KioskTextInput';
 import CustomKeyboard from '../Components/CustomKeyboard';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 import WifiManager from 'react-native-wifi-reborn';
 const { SystemTimeModule } = NativeModules;
@@ -1322,13 +1323,13 @@ const WifiSettingsModal = ({ visible, onClose }) => {
               <Image source={backIcon} style={styles.backButtonIcon} />
             </TouchableOpacity>
             <Text style={styles.title}>
-              {showSavedNetworks ? 'Saved Networks' : 'Wi-Fi Settings'}
+              {showSavedNetworks ? 'Saved Networks' : 'Wi-Fi'}
             </Text>
 
             {!showSavedNetworks && (
               <View style={styles.headerRight}>
                 <TouchableOpacity onPress={toggleDropdown}>
-                  <Image source={settingsIcon} style={styles.menuIcon} />
+                  <MaterialCommunityIcons name="dots-vertical" size={28} color="#FFFFFF" style={{ padding: 6, right: -30 }} />
                 </TouchableOpacity>
 
                 {/* Dropdown Menu */}

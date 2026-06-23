@@ -47,6 +47,7 @@ const WelcomeScreen = ({ onLoginSuccess, onGuestContinue }) => {
 
   // Add a ref to track if component is mounted
   const isMountedRef = useRef(true);
+  const passwordRef = useRef(null);
 
   // Custom Alert State
   const [alertVisible, setAlertVisible] = useState(false);
@@ -506,11 +507,14 @@ const WelcomeScreen = ({ onLoginSuccess, onGuestContinue }) => {
                   autoCapitalize="none"
                   contextMenuHidden
                   selectTextOnFocus={false}
+                  showDismiss={true}
+                  onSubmitEditing={() => passwordRef.current?.focus()}
                 />
 
                 {/* Password — in-app keyboard only */}
                 <View style={styles.passwordInputWrapper}>
                   <KioskTextInput
+                    ref={passwordRef}
                     style={[styles.input, styles.passwordInputWithBtn]}
                     placeholder="Password"
                     placeholderTextColor="#999"
@@ -519,6 +523,8 @@ const WelcomeScreen = ({ onLoginSuccess, onGuestContinue }) => {
                     secureTextEntry={!showPassword}
                     contextMenuHidden
                     selectTextOnFocus={false}
+                    showDismiss={true}
+                    onSubmitEditing={handleLogin}
                   />
                   <TouchableOpacity
                     style={styles.showHideBtnInside}

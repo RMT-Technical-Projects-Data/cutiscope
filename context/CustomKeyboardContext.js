@@ -9,6 +9,10 @@ const defaultDescriptor = {
   setValue: () => {},
   getSelection: () => ({ start: 0, end: 0 }),
   setSelection: () => {},
+  keyboardType: 'default',
+  showDismiss: false,
+  blur: () => {},
+  onSubmitEditing: undefined,
 };
 
 const CustomKeyboardContext = createContext({
@@ -16,21 +20,31 @@ const CustomKeyboardContext = createContext({
   unregisterFocusedInput: () => {},
   insertText: () => {},
   deleteBackward: () => {},
+  dismissKeyboard: () => {},
+  submitEditing: () => {},
   hasFocusedInput: false,
+  keyboardType: 'default',
+  showDismiss: false,
 });
 
 export function CustomKeyboardProvider({ children }) {
   const focusedRef = useRef(null);
   const [hasFocusedInput, setHasFocusedInput] = useState(false);
+  const [keyboardType, setKeyboardType] = useState('default');
+  const [showDismiss, setShowDismiss] = useState(false);
 
   const registerFocusedInput = useCallback((id, descriptor) => {
     focusedRef.current = { id, ...descriptor };
+    setKeyboardType(descriptor.keyboardType || 'default');
+    setShowDismiss(!!descriptor.showDismiss);
     setHasFocusedInput(true);
   }, []);
 
   const unregisterFocusedInput = useCallback((id) => {
     if (focusedRef.current?.id === id) {
       focusedRef.current = null;
+      setKeyboardType('default');
+      setShowDismiss(false);
       setHasFocusedInput(false);
     }
   }, []);
@@ -65,15 +79,36 @@ export function CustomKeyboardProvider({ children }) {
     cur.setSelection({ start: newCursor, end: newCursor });
   }, []);
 
+  const dismissKeyboard = useCallback(() => {
+    if (focusedRef.current && typeof focusedRef.current.blur === 'function') {
+      focusedRef.current.blur();
+    }
+  }, []);
+
+  const submitEditing = useCallback(() => {
+    const cur = focusedRef.current;
+    if (cur) {
+      if (typeof cur.onSubmitEditing === 'function') {
+        cur.onSubmitEditing();
+      } else {
+        dismissKeyboard();
+      }
+    }
+  }, [dismissKeyboard]);
+
   const value = useMemo(
     () => ({
       registerFocusedInput,
       unregisterFocusedInput,
       insertText,
       deleteBackward,
+      dismissKeyboard,
+      submitEditing,
       hasFocusedInput,
+      keyboardType,
+      showDismiss,
     }),
-    [hasFocusedInput, registerFocusedInput, unregisterFocusedInput, insertText, deleteBackward]
+    [hasFocusedInput, registerFocusedInput, unregisterFocusedInput, insertText, deleteBackward, dismissKeyboard, submitEditing, keyboardType, showDismiss]
   );
 
   return (

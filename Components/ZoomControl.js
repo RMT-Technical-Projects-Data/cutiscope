@@ -20,10 +20,11 @@ const MAX_RANGE = RULER_WIDTH - KNOB_SIZE;
 // ==========================================
 // ZOOM RULER COMPONENT (The Overlay Visual AND Interactive Slider)
 // ==========================================
-export const ZoomRuler = ({ zoom, minZoom, maxZoom, onZoomChange }) => {
+export const ZoomRuler = ({ zoom, minZoom, maxZoom, onZoomChange, disabled }) => {
     const startX = useSharedValue(0);
 
     const pan = Gesture.Pan()
+        .enabled(!disabled)
         .onStart(() => {
             const currentPos = ((zoom.value - minZoom) / (maxZoom - minZoom)) * MAX_RANGE;
             startX.value = currentPos;
@@ -70,7 +71,10 @@ export const ZoomRuler = ({ zoom, minZoom, maxZoom, onZoomChange }) => {
 
     return (
         <GestureDetector gesture={pan}>
-            <Animated.View style={[styles.rulerContainer, animatedContainerStyle]}>
+            <Animated.View 
+                style={[styles.rulerContainer, animatedContainerStyle, disabled && { opacity: 0.5 }]}
+                pointerEvents={disabled ? "none" : "auto"}
+            >
                 {/* Ruler Background Track */}
                 <View style={styles.trackBackground}>
                     <Animated.View style={[styles.trackProgress, animatedProgressStyle]} />
@@ -118,7 +122,7 @@ const ZOOM_SENSITIVITY = 150; // Pixels to cover full range
 // ZOOM CONTROL COMPONENT (The Interactive Button)
 // Vertical Drag for "One-Go" Handling
 // ==========================================
-const ZoomControl = ({ zoom, minZoom = 1, maxZoom = 5, onZoomChange, currentZoom }) => {
+const ZoomControl = ({ zoom, minZoom = 1, maxZoom = 5, onZoomChange, currentZoom, disabled }) => {
     const startY = useSharedValue(0);
     const startZoom = useSharedValue(minZoom);
     const [internalDisplayZoom, setInternalDisplayZoom] = useState(minZoom);
@@ -136,6 +140,7 @@ const ZoomControl = ({ zoom, minZoom = 1, maxZoom = 5, onZoomChange, currentZoom
     const displayZoom = currentZoom !== undefined ? (Math.round(currentZoom * 10) / 10) : internalDisplayZoom;
 
     const pan = Gesture.Pan()
+        .enabled(!disabled)
         .onStart(() => {
             startZoom.value = zoom.value;
             startY.value = 0;
@@ -180,7 +185,10 @@ const ZoomControl = ({ zoom, minZoom = 1, maxZoom = 5, onZoomChange, currentZoom
 
     return (
         <GestureDetector gesture={pan}>
-            <View style={styles.compactContainer}>
+            <View 
+                style={[styles.compactContainer, disabled && { opacity: 0.5 }]}
+                pointerEvents={disabled ? "none" : "auto"}
+            >
                 {/* Visual Feedback Circle (Static Background) */}
                 <View style={styles.zoomKnobBackground}>
                     {/* Dynamic Text – use state to avoid reading shared value during render */}

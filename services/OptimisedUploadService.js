@@ -256,6 +256,17 @@ const processUploadQueue = async () => {
       uploadQueue.shift();
       notifyQueueChange();
 
+      // CLEANUP: If this was a temporary watermarked file, delete it
+      if (item.metadata?.isTemp) {
+        try {
+          const tempPath = item.filePath.replace('file://', '');
+          await RNFS.unlink(tempPath);
+          console.log(`🧹 Cleaned up temporary watermarked file: ${item.fileName}`);
+        } catch (cleanupErr) {
+          console.warn('⚠️ Failed to clean up temp watermarked file:', cleanupErr.message);
+        }
+      }
+
       console.log(`✅ Uploaded to AWS – ${item.username}/${item.fileName} (key: ${result?.s3Key || 'n/a'})`);
       
     } catch (error) {

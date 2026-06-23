@@ -24,7 +24,7 @@ import RNFS from 'react-native-fs';
 import NetInfo from '@react-native-community/netinfo';
 import ImageViewer from 'react-native-image-zoom-viewer';
 import { GestureHandlerRootView, Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Reanimated, { useSharedValue, useAnimatedStyle, withTiming } from 'react-native-reanimated';
+import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from 'react-native-reanimated';
 import { requestStoragePermissionForGallery } from '../utils/Helpers';
 import { getGuestPhotosDir } from '../utils/guestPhotos';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -35,6 +35,7 @@ import { uploadToUserS3Folder, uploadWithImageRecord, buildS3PathFromImage, dele
 import OptimisedUploadService from '../services/OptimisedUploadService';
 import ImageDatabase from '../services/ImageDatabase';
 import ConfirmationModal from '../modals/ConfirmationModal';
+import BluetoothShareModal from '../modals/BluetoothShareModal';
 import { showInAppToast } from '../utils/Helpers';
 import CustomStatusBar from '../Components/CustomStatusBar';
 
@@ -42,6 +43,7 @@ import CustomStatusBar from '../Components/CustomStatusBar';
 import backIcon from '../assets/icon_back.png';
 import deleteIcon from '../assets/icon_delete.png';
 import uploadIcon from '../assets/icon_upload.png';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 const { width, height: screenHeight } = Dimensions.get('window');
 const HORIZONTAL_PADDING = 16;
@@ -70,7 +72,7 @@ const ACCENT_TEAL = '#22B2A6';
 const STATUS_BAR_HEIGHT = Platform.OS === 'ios' ? 44 : StatusBar.currentHeight || 0;
 const EXTRA_HEADER_PADDING = 40;
 
-const ZoomableImage = ({ uri }) => {
+const ZoomableImage = ({ uri, onTap }) => {
   const [imgDims, setImgDims] = useState({ w: width, h: screenHeight });
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -103,6 +105,16 @@ const ZoomableImage = ({ uri }) => {
     }
     return { displayedWidth: dWidth, displayedHeight: dHeight };
   }, [imgDims]);
+
+  const singleTap = Gesture.Tap()
+    .numberOfTaps(1)
+    .maxDeltaX(15)
+    .maxDeltaY(15)
+    .onEnd(() => {
+      if (onTap) {
+        runOnJS(onTap)();
+      }
+    });
 
   const pinch = Gesture.Pinch()
     .onUpdate((e) => {
@@ -162,7 +174,7 @@ const ZoomableImage = ({ uri }) => {
       }
     });
 
-  const composed = Gesture.Simultaneous(pinch, pan);
+  const composed = Gesture.Simultaneous(pinch, pan, singleTap);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
@@ -371,6 +383,16 @@ const GalleryScreen = ({ route, navigation }) => {
     isDestructive: false,
     onConfirm: () => { },
   });
+
+  // Bluetooth Custom Share Modal State
+  const [bluetoothShareVisible, setBluetoothShareVisible] = useState(false);
+  const [bluetoothShareFiles, setBluetoothShareFiles] = useState([]);
+  const [bluetoothShareLabels, setBluetoothShareLabels] = useState([]);
+
+  const handleBluetoothShareSuccess = useCallback(() => {
+    setSelectedPhotos([]);
+    setIsSelectionMode(false);
+  }, []);
 
   // Sync ref with state
   useEffect(() => {
@@ -1028,12 +1050,11 @@ const GalleryScreen = ({ route, navigation }) => {
   }, [isSelectionMode, togglePhotoSelection]);
 
   const handlePhotoLongPress = useCallback((photoId) => {
-    if (isGuest) return; // Disable selection mode for guests
     if (!isSelectionMode) {
       setIsSelectionMode(true);
     }
     togglePhotoSelection(photoId);
-  }, [isSelectionMode, togglePhotoSelection, isGuest]);
+  }, [isSelectionMode, togglePhotoSelection]);
 
   // Delete single image
   const handleDeleteCurrentImage = useCallback(async (photoObj) => {
@@ -1132,6 +1153,50 @@ const GalleryScreen = ({ route, navigation }) => {
     });
     setConfirmModalVisible(true);
   }, [selectedPhotos, fullScreenPhoto, deleteFileWithCleanup]);
+  
+  const getShareLabel = useCallback((photo) => {
+    if (!photo || !photo.name) return '';
+    let patientText = '';
+    let bodyPartText = '';
+    
+    const bpIndex = photo.name.indexOf('_BP-');
+    if (bpIndex !== -1) {
+      if (bpIndex > 9) {
+        patientText = photo.name.substring(10, bpIndex);
+      }
+      const matchBody = photo.name.match(/_BP-(.*?)_\d+_\d+\.jpg/);
+      if (matchBody) {
+        bodyPartText = matchBody[1].replace(/_/g, ' ');
+      }
+    } else {
+      const matchPatientNoBody = photo.name.match(/^Cutiscope_(.*?)_\d{8}_\d{6}\.jpg/);
+      if (matchPatientNoBody) {
+        patientText = matchPatientNoBody[1];
+      }
+    }
+
+    let label = '';
+    if (patientText) label += `Patient: ${patientText}`;
+    if (patientText && bodyPartText) label += ' | ';
+    if (bodyPartText) label += `Body Part: ${bodyPartText}`;
+    return label;
+  }, []);
+
+  const handleBluetoothShareSelected = useCallback(() => {
+    if (selectedPhotos.length === 0) {
+      showInAppToast("No images selected!", { durationMs: 2000, position: 'bottom' });
+      return;
+    }
+
+    const labels = selectedPhotos.map(path => {
+      const photo = activePhotos.find(p => p.path === path || p.absolutePath === path.replace('file://', ''));
+      return photo ? getShareLabel(photo) : '';
+    });
+
+    setBluetoothShareFiles(selectedPhotos);
+    setBluetoothShareLabels(labels);
+    setBluetoothShareVisible(true);
+  }, [selectedPhotos, activePhotos, getShareLabel]);
 
   // Core upload logic – uses image record when available so upload always goes to correct patient
   const uploadImageToAWS = useCallback(async (filePath, fileName) => {
@@ -1265,10 +1330,24 @@ const GalleryScreen = ({ route, navigation }) => {
       )
       ));
 
-      OptimisedUploadService.enqueueExistingFileUpload(cleanPath, fileName, username, {
+      let uploadPath = cleanPath;
+      const label = image ? getShareLabel(image) : '';
+      if (label) {
+        try {
+          const watermarkedPath = await NativeModules.SystemTimeModule.getWatermarkedImage(cleanPath, label);
+          if (watermarkedPath) {
+            uploadPath = watermarkedPath;
+          }
+        } catch (err) {
+          console.warn('Watermarking failed for upload, using original:', err);
+        }
+      }
+
+      OptimisedUploadService.enqueueExistingFileUpload(uploadPath, fileName, username, {
         source: 'gallery',
         imageId: image?.id,
         patientFolder,
+        isTemp: uploadPath !== cleanPath,
       });
 
     } catch (error) {
@@ -1361,10 +1440,24 @@ const GalleryScreen = ({ route, navigation }) => {
             const cleanPath = item.path.replace('file://', '');
             const image = await ImageDatabase.getImageByFilePath(cleanPath);
 
-            OptimisedUploadService.enqueueExistingFileUpload(cleanPath, item.fileName, username, {
+            const label = image ? getShareLabel(image) : '';
+            let uploadPath = cleanPath;
+            if (label) {
+              try {
+                const watermarkedPath = await NativeModules.SystemTimeModule.getWatermarkedImage(cleanPath, label);
+                if (watermarkedPath) {
+                  uploadPath = watermarkedPath;
+                }
+              } catch (err) {
+                console.warn('Watermarking failed for multi-upload, using original:', err);
+              }
+            }
+
+            OptimisedUploadService.enqueueExistingFileUpload(uploadPath, item.fileName, username, {
               source: 'gallery',
               imageId: image?.id,
               patientFolder: image ? null : globalPatientFolder,
+              isTemp: uploadPath !== cleanPath,
             });
           }
 
@@ -1559,7 +1652,7 @@ const GalleryScreen = ({ route, navigation }) => {
             </Text>
           </View>
 
-          {!isGuest && isSelectionMode && isPhotoLevel && activePhotos.length > 0 && (
+          {isSelectionMode && isPhotoLevel && activePhotos.length > 0 && (
             <TouchableOpacity
               style={[
                 styles.selectAllButton,
@@ -1572,7 +1665,7 @@ const GalleryScreen = ({ route, navigation }) => {
               </Text>
             </TouchableOpacity>
           )}
-          {!isGuest && isSelectionMode && isFolderLevel && albumItems.length > 0 && (
+          {isSelectionMode && isFolderLevel && albumItems.length > 0 && (
             <TouchableOpacity
               style={[
                 styles.selectAllButton,
@@ -1604,7 +1697,7 @@ const GalleryScreen = ({ route, navigation }) => {
         ) : !isFolderLevel && !isPhotoLevel ? (
           <View style={styles.emptyMemories}>
             <Text style={styles.emptyMemoriesText}>
-              {isGuest ? 'No photos in guest session' : 'No photos found'}
+              {isGuest ? 'No photos in guest mode' : 'No photos found'}
             </Text>
             <Text style={styles.emptyMemoriesSubText}>
               {isGuest
@@ -1657,6 +1750,13 @@ const GalleryScreen = ({ route, navigation }) => {
           onDelete={handleDeleteCurrentImage}
           onUpload={handleUploadImage}
           isGuest={isGuest}
+          getShareLabel={getShareLabel}
+          onBluetoothShare={(photo) => {
+            const label = getShareLabel ? getShareLabel(photo) : '';
+            setBluetoothShareFiles([photo.path]);
+            setBluetoothShareLabels([label]);
+            setBluetoothShareVisible(true);
+          }}
         />
 
         {/* Bottom Action Bar - Photo selection */}
@@ -1664,22 +1764,29 @@ const GalleryScreen = ({ route, navigation }) => {
           <View style={styles.actionContainer}>
             {!isGuest && canUploadSelection && (
               <TouchableOpacity
-                style={styles.uploadButton}
+                style={styles.actionButton}
                 onPress={handleUploadSelectedImages}
               >
                 <Image source={uploadIcon} style={[styles.actionIcon, { tintColor: ACCENT_TEAL }]} />
-                <Text style={styles.btnText}>Upload Selected</Text>
+                <Text style={styles.btnText}>Upload</Text>
               </TouchableOpacity>
             )}
-            {!isGuest && (
-              <TouchableOpacity
-                style={styles.deleteButton}
-                onPress={handleDeleteSelected}
-              >
-                <Image source={deleteIcon} style={[styles.actionIcon, { tintColor: ACCENT_TEAL }]} />
-                <Text style={styles.btnText}>Delete Selected</Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={handleDeleteSelected}
+            >
+              <Image source={deleteIcon} style={[styles.actionIcon, { tintColor: ACCENT_TEAL }]} />
+              <Text style={styles.btnText}>Delete</Text>
+            </TouchableOpacity>
+            
+            {/* Bluetooth Share Selected Button */}
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={handleBluetoothShareSelected}
+            >
+              <MaterialCommunityIcons name="bluetooth" size={30} color={ACCENT_TEAL} style={{ marginBottom: 4 }} />
+              <Text style={styles.btnText}>Share</Text>
+            </TouchableOpacity>
           </View>
         )}
         {/* Bottom Action Bar - Album selection (delete album and all images inside) */}
@@ -1712,6 +1819,14 @@ const GalleryScreen = ({ route, navigation }) => {
             setConfirmModalVisible(false);
           }}
         />
+
+        <BluetoothShareModal
+          visible={bluetoothShareVisible}
+          onClose={() => setBluetoothShareVisible(false)}
+          selectedFiles={bluetoothShareFiles}
+          selectedLabels={bluetoothShareLabels}
+          onShareSuccess={handleBluetoothShareSuccess}
+        />
       </View>
 
       {/* Deletion Modal — self-contained full-screen loader */}
@@ -1734,7 +1849,9 @@ const FullScreenGalleryModal = React.memo(({
   onClose,
   onDelete,
   onUpload,
-  isGuest
+  isGuest,
+  getShareLabel,
+  onBluetoothShare
 }) => {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [errorMsg, setErrorMsg] = useState(null);
@@ -1742,12 +1859,14 @@ const FullScreenGalleryModal = React.memo(({
   const flatListRef = useRef(null);
   const currentPhotoIdRef = useRef(photos[initialIndex]?.path);
   const wasVisibleRef = useRef(false);
+  const [showOverlays, setShowOverlays] = useState(true);
 
   // When opened, reset to initial
   useEffect(() => {
     if (visible && !wasVisibleRef.current && photos.length > 0) {
       setCurrentIndex(initialIndex);
       currentPhotoIdRef.current = photos[initialIndex]?.path;
+      setShowOverlays(true);
       // Scroll to the initial index, if flatList is mounted
       setTimeout(() => {
         if (flatListRef.current && photos.length > initialIndex) {
@@ -1829,9 +1948,13 @@ const FullScreenGalleryModal = React.memo(({
     { length: width, offset: width * index, index }
   ), []);
 
+  const toggleOverlays = useCallback(() => {
+    setShowOverlays(prev => !prev);
+  }, []);
+
   const renderItem = useCallback(({ item }) => (
-    <ZoomableImage uri={item.path} />
-  ), []);
+    <ZoomableImage uri={item.path} onTap={toggleOverlays} />
+  ), [toggleOverlays]);
 
   if (!visible || photos.length === 0) return null;
 
@@ -1847,7 +1970,7 @@ const FullScreenGalleryModal = React.memo(({
       statusBarTranslucent={true}
     >
       <GestureHandlerRootView style={styles.fullScreenModalBackground}>
-        <CustomStatusBar />
+        {showOverlays && <CustomStatusBar />}
 
         <View style={styles.gestureContainer}>
           <FlatList
@@ -1870,80 +1993,152 @@ const FullScreenGalleryModal = React.memo(({
         </View>
 
         {/* Header (Back button, Date and Index) */}
-        <View style={styles.fullscreenHeader}>
-          <TouchableOpacity
-            style={styles.backButtonContainer}
-            onPress={onClose}
-          >
-            <Image source={backIcon} style={[styles.backButtonIcon, { tintColor: PRIMARY_TEXT }]} />
-          </TouchableOpacity>
+        {showOverlays && (
+          <View style={styles.fullscreenHeader}>
+            <TouchableOpacity
+              style={styles.backButtonContainer}
+              onPress={onClose}
+            >
+              <Image source={backIcon} style={[styles.backButtonIcon, { tintColor: PRIMARY_TEXT }]} />
+            </TouchableOpacity>
 
-          <View style={styles.fullscreenHeaderCenter}>
-            <Text style={styles.fullscreenDateText}>
-              {currentPhoto.timestamp ? currentPhoto.timestamp.toLocaleString([], {
-                day: '2-digit', month: '2-digit', year: 'numeric',
-                hour: '2-digit', minute: '2-digit'
-              }) : ''}
+            <View style={styles.fullscreenHeaderCenter}>
+              <Text style={styles.fullscreenDateText}>
+                {currentPhoto.timestamp ? currentPhoto.timestamp.toLocaleString([], {
+                  day: '2-digit', month: '2-digit', year: 'numeric',
+                  hour: '2-digit', minute: '2-digit'
+                }) : ''}
+              </Text>
+            </View>
+
+            <Text style={styles.fullscreenIndexText}>
+              {currentIndex + 1} / {photos.length}
             </Text>
           </View>
+        )}
 
-          <Text style={styles.fullscreenIndexText}>
-            {currentIndex + 1} / {photos.length}
-          </Text>
-        </View>
+        {/* 
+        (() => {
+          let patientText = '';
+          let bodyPartText = '';
+          
+          const bpIndex = currentPhoto.name.indexOf('_BP-');
+          if (bpIndex !== -1) {
+            if (bpIndex > 9) {
+              patientText = currentPhoto.name.substring(10, bpIndex);
+            }
+            const matchBody = currentPhoto.name.match(/_BP-(.*?)_\d+_\d+\.jpg/);
+            if (matchBody) {
+              bodyPartText = matchBody[1].replace(/_/g, ' ');
+            }
+          } else {
+            const matchPatientNoBody = currentPhoto.name.match(/^Cutiscope_(.*?)_\d{8}_\d{6}\.jpg/);
+            if (matchPatientNoBody) {
+              patientText = matchPatientNoBody[1];
+            }
+          }
+
+          if (patientText || bodyPartText) {
+            return (
+              <View style={{
+                position: 'absolute',
+                top: '25%',
+                width: '100%',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 100,
+                pointerEvents: 'none',
+              }}>
+                <Text style={{
+                  color: '#ffffff',
+                  fontSize: 16,
+                  fontFamily: 'ProductSans-Regular',
+                  backgroundColor: 'rgba(0,0,0,0.6)',
+                  paddingHorizontal: 16,
+                  paddingVertical: 6,
+                  borderRadius: 4,
+                  overflow: 'hidden',
+                }} numberOfLines={1}>
+                  {patientText ? <Text>Patient: <Text style={{fontFamily: 'ProductSans-Bold'}}>{patientText}</Text></Text> : null}
+                  {patientText && bodyPartText ? ' | ' : ''}
+                  {bodyPartText ? <Text>Body Part: <Text style={{fontFamily: 'ProductSans-Bold'}}>{bodyPartText}</Text></Text> : null}
+                </Text>
+              </View>
+            );
+          }
+          return null;
+        })()
+        */}
 
         {/* Sub-header (Filename only) - Small, above the image */}
-        <View style={styles.fullscreenMetadataSubHeader}>
-          <Text style={styles.fullScreenPhotoNameSmall} numberOfLines={1}>
-            {currentPhoto.name}
-          </Text>
-        </View>
+        {showOverlays && (
+          <View style={styles.fullscreenMetadataSubHeader}>
+            <Text style={styles.fullScreenPhotoNameSmall} numberOfLines={1}>
+              {currentPhoto.name}
+            </Text>
+          </View>
+        )}
 
         {/* Action buttons (Footer Area) */}
-        <View style={styles.actionContainerFull}>
-          {/* Status Indicator / Loader */}
-          {(currentPhoto.uploadStatus === 'PENDING' || currentPhoto.uploadStatus === 'UPLOADING') ? (
-            <View style={styles.loaderContainerFull}>
-              <ActivityIndicator size="small" color={ACCENT_TEAL} />
-              <Text style={[styles.btnText, { marginLeft: 10 }]}>Uploading...</Text>
-            </View>
-          ) : (
-            <>
-              {/* Upload / Retry Button */}
-              {!isGuest && currentPhoto.uploadStatus !== 'UPLOADED' && (
+        {showOverlays && (
+          <View style={styles.actionContainerFull}>
+            {/* Status Indicator / Loader */}
+            {(currentPhoto.uploadStatus === 'PENDING' || currentPhoto.uploadStatus === 'UPLOADING') ? (
+              <View style={styles.loaderContainerFull}>
+                <ActivityIndicator size="small" color={ACCENT_TEAL} />
+                <Text style={[styles.btnText, { marginLeft: 10 }]}>Uploading...</Text>
+              </View>
+            ) : (
+              <>
+                {/* Upload / Retry Button */}
+                {!isGuest && currentPhoto.uploadStatus !== 'UPLOADED' && (
+                  <TouchableOpacity
+                    style={styles.uploadButtonFull}
+                    onPress={async () => {
+                      const result = await onUpload(currentPhoto.path, currentPhoto.name);
+                      if (result === false) {
+                        setErrorMsg('No internet connection');
+                        if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+                        errorTimerRef.current = setTimeout(() => setErrorMsg(null), 3500);
+                      } else {
+                        setErrorMsg(null);
+                      }
+                    }}
+                  >
+                    <Image source={uploadIcon} style={[styles.actionIconFull, { tintColor: ACCENT_TEAL }]} />
+                    <Text style={styles.btnText}>
+                      {currentPhoto.uploadStatus === 'FAILED' ? 'Retry' : 'Upload'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Bluetooth Share Button */}
                 <TouchableOpacity
                   style={styles.uploadButtonFull}
-                  onPress={async () => {
-                    const result = await onUpload(currentPhoto.path, currentPhoto.name);
-                    if (result === false) {
-                      setErrorMsg('No internet connection');
-                      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
-                      errorTimerRef.current = setTimeout(() => setErrorMsg(null), 3500);
-                    } else {
-                      setErrorMsg(null);
+                  onPress={() => {
+                    if (onBluetoothShare) {
+                      onBluetoothShare(currentPhoto);
                     }
                   }}
                 >
-                  <Image source={uploadIcon} style={[styles.actionIconFull, { tintColor: ACCENT_TEAL }]} />
-                  <Text style={styles.btnText}>
-                    {currentPhoto.uploadStatus === 'FAILED' ? 'Retry' : 'Upload'}
-                  </Text>
+                  <MaterialCommunityIcons name="bluetooth" size={30} color={ACCENT_TEAL} style={{ marginBottom: 4 }} />
+                  <Text style={styles.btnText}>Share</Text>
                 </TouchableOpacity>
-              )}
 
-              {/* Delete Button */}
-              <TouchableOpacity
-                style={styles.deleteButton}
-                onPress={() => {
-                  onDelete(currentPhoto);
-                }}
-              >
-                <Image source={deleteIcon} style={[styles.actionIconFull, { tintColor: ACCENT_TEAL }]} />
-                <Text style={styles.btnText}>Delete</Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
+                {/* Delete Button */}
+                <TouchableOpacity
+                  style={styles.deleteButton}
+                  onPress={() => {
+                    onDelete(currentPhoto);
+                  }}
+                >
+                  <Image source={deleteIcon} style={[styles.actionIconFull, { tintColor: ACCENT_TEAL }]} />
+                  <Text style={styles.btnText}>Delete</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        )}
 
         {/* Inline Error Message Overlay */}
         {errorMsg && (
@@ -2362,19 +2557,21 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
   },
-  uploadButton: {
-    paddingHorizontal: 20,
+  actionButton: {
+    flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   deleteButton: {
-    paddingHorizontal: 20,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   btnText: {
-    paddingVertical: 5,
-    fontSize: 16,
+    paddingVertical: 3,
+    fontSize: 14,
     fontWeight: '500',
     color: PRIMARY_TEXT,
+    textAlign: 'center',
   },
   actionIcon: {
     width: 30,

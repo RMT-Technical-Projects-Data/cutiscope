@@ -17,9 +17,22 @@ const KioskTextInput = forwardRef(function KioskTextInput({
   id: propId,
   ...rest
 }, ref) {
+  const localRef = useRef(null);
+  const setRef = useCallback((node) => {
+    localRef.current = node;
+    if (typeof ref === 'function') {
+      ref(node);
+    } else if (ref) {
+      ref.current = node;
+    }
+  }, [ref]);
+
   const idRef = useRef(propId ?? `kiosk_${++kioskInputId}`);
   const id = idRef.current;
-  const [selection, setSelectionState] = useState({ start: 0, end: 0 });
+  const [selection, setSelectionState] = useState(() => {
+    const len = value ? String(value).length : 0;
+    return { start: len, end: len };
+  });
   const { registerFocusedInput, unregisterFocusedInput } = useCustomKeyboard();
 
   const valueRef = useRef(value ?? '');
@@ -43,6 +56,13 @@ const KioskTextInput = forwardRef(function KioskTextInput({
     setSelectionState(s);
   }, []);
 
+  const onSubmitEditingRef = useRef(rest.onSubmitEditing);
+  onSubmitEditingRef.current = rest.onSubmitEditing;
+
+  const onSubmitEditing = useCallback(() => {
+    onSubmitEditingRef.current?.();
+  }, []);
+
   useEffect(() => {
     return () => unregisterFocusedInput(id);
   }, [id, unregisterFocusedInput]);
@@ -54,10 +74,14 @@ const KioskTextInput = forwardRef(function KioskTextInput({
         setValue,
         getSelection,
         setSelection,
+        keyboardType: rest.keyboardType || 'default',
+        showDismiss: rest.showDismiss ?? false,
+        blur: () => localRef.current?.blur?.(),
+        onSubmitEditing,
       });
       rest.onFocus?.(e);
     },
-    [id, getValue, setValue, getSelection, setSelection, registerFocusedInput, rest]
+    [id, getValue, setValue, getSelection, setSelection, registerFocusedInput, rest, onSubmitEditing]
   );
 
   const handleBlur = useCallback(
@@ -81,7 +105,7 @@ const KioskTextInput = forwardRef(function KioskTextInput({
 
   return (
     <TextInput
-      ref={ref}
+      ref={setRef}
       {...rest}
       value={value}
       onChangeText={onChangeText}

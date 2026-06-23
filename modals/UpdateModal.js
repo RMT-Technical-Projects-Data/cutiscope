@@ -45,7 +45,7 @@ const UpdateModal = ({ isVisible, updateInfo, onClose }) => {
         <Modal
             visible={isVisible}
             transparent={true}
-            animationType="slide"
+            animationType="fade"
             onRequestClose={() => {
                 if (!forceUpdate && onClose && !isDownloading) onClose();
             }}
@@ -78,15 +78,20 @@ const UpdateModal = ({ isVisible, updateInfo, onClose }) => {
                         </View>
                     ) : (
                         /* ── State 1: Ready to update ── */
-                        <TouchableOpacity style={styles.updateButton} onPress={handleUpdate}>
-                            <Text style={styles.buttonText}>Update Now</Text>
-                        </TouchableOpacity>
-                    )}
-
-                    {!forceUpdate && !isDownloading && !isDownloaded && (
-                        <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-                            <Text style={styles.closeText}>Later</Text>
-                        </TouchableOpacity>
+                        forceUpdate ? (
+                            <TouchableOpacity style={styles.installButton} onPress={handleUpdate}>
+                                <Text style={styles.buttonText}>Update Now</Text>
+                            </TouchableOpacity>
+                        ) : (
+                            <View style={styles.buttonRow}>
+                                <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
+                                    <Text style={styles.cancelText}>Later</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity style={styles.saveBtn} onPress={handleUpdate}>
+                                    <Text style={styles.saveText}>Update Now</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )
                     )}
                 </View>
             </View>
@@ -102,12 +107,10 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(0,0,0,0.6)'
     },
     modalView: {
-        width: '85%',
-        maxHeight: '80%',
-        backgroundColor: "white",
-        borderRadius: 20,
-        padding: 25,
-        alignItems: "center",
+        width: 300,
+        backgroundColor: '#1c1c1e',
+        borderRadius: 12,
+        padding: 20,
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.25,
@@ -115,55 +118,62 @@ const styles = StyleSheet.create({
         elevation: 5
     },
     title: {
-        fontSize: 22,
-        fontWeight: "bold",
+        color: '#fff',
+        fontSize: 18,
+        fontFamily: 'ProductSans-Bold',
         marginBottom: 5,
-        color: '#41403D'
+        textAlign: 'center'
     },
     version: {
-        fontSize: 16,
-        color: '#666',
-        marginBottom: 20
+        fontSize: 14,
+        color: '#999',
+        fontFamily: 'ProductSans-Regular',
+        marginBottom: 15,
+        textAlign: 'center'
     },
     sectionTitle: {
         alignSelf: 'flex-start',
-        fontSize: 16,
-        fontWeight: '600',
+        fontSize: 15,
+        fontFamily: 'ProductSans-Bold',
         marginBottom: 8,
-        color: '#333'
+        color: '#fff'
     },
     notesContainer: {
         width: '100%',
-        maxHeight: 200,
-        marginBottom: 25,
+        maxHeight: 150,
+        marginBottom: 20,
     },
     notes: {
         fontSize: 14,
-        color: '#555',
-        lineHeight: 22
+        color: '#ccc',
+        fontFamily: 'ProductSans-Regular',
+        lineHeight: 20
     },
-    updateButton: {
-        backgroundColor: "#007AFF",
-        borderRadius: 12,
-        paddingVertical: 14,
-        paddingHorizontal: 20,
-        elevation: 2,
+    buttonRow: {
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        gap: 10,
         width: '100%',
-        alignItems: 'center'
+        marginTop: 10
     },
-    buttonText: {
-        color: "white",
-        fontWeight: "bold",
-        fontSize: 16
-    },
-    closeButton: {
-        marginTop: 15,
+    cancelBtn: {
         padding: 10
     },
-    closeText: {
-        color: "#999",
+    cancelText: {
+        color: '#22B2A6',
         fontSize: 16,
-        fontWeight: '500'
+        fontFamily: 'ProductSans-Regular'
+    },
+    saveBtn: {
+        padding: 10,
+        backgroundColor: '#22B2A6',
+        borderRadius: 8,
+        paddingHorizontal: 15
+    },
+    saveText: {
+        color: '#000',
+        fontSize: 16,
+        fontFamily: 'ProductSans-Bold'
     },
     progressContainer: {
         width: '100%',
@@ -173,19 +183,20 @@ const styles = StyleSheet.create({
     progressBarBackground: {
         width: '100%',
         height: 8,
-        backgroundColor: '#E0E0E0',
+        backgroundColor: '#2c2c2e',
         borderRadius: 4,
         overflow: 'hidden',
         marginBottom: 12
     },
     progressBarFill: {
         height: '100%',
-        backgroundColor: '#007AFF',
+        backgroundColor: '#22B2A6',
     },
     progressText: {
         fontSize: 14,
-        color: '#007AFF',
-        fontWeight: '600'
+        color: '#22B2A6',
+        fontFamily: 'ProductSans-Bold',
+        textAlign: 'center'
     },
     downloadedContainer: {
         width: '100%',
@@ -193,18 +204,23 @@ const styles = StyleSheet.create({
     },
     downloadedText: {
         fontSize: 16,
-        color: '#4CAF50',
-        fontWeight: '600',
+        color: '#22B2A6',
+        fontFamily: 'ProductSans-Bold',
         marginBottom: 15,
+        textAlign: 'center'
     },
     installButton: {
-        backgroundColor: "#4CAF50",
-        borderRadius: 12,
-        paddingVertical: 14,
+        backgroundColor: '#22B2A6',
+        borderRadius: 8,
+        paddingVertical: 12,
         paddingHorizontal: 20,
-        elevation: 2,
-        width: '100%',
-        alignItems: 'center'
+        alignItems: 'center',
+        width: '100%'
+    },
+    buttonText: {
+        color: '#000',
+        fontSize: 16,
+        fontFamily: 'ProductSans-Bold'
     },
 });
 

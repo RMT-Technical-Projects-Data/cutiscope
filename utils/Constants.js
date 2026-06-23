@@ -4,7 +4,7 @@ import Config from 'react-native-config';
 
 // App Constants
 export const CAMERA_DIR = `${RNFS.ExternalStorageDirectoryPath}/DCIM/Camera`;
-const API_BASE = (Config.API_BASE_URL || 'http://35.154.32.201:3009').replace(/\/$/, '');
+const API_BASE = (Config.API_BASE_URL || 'http://35.154.32.201:4040').replace(/\/$/, '');
 export const SERVER_URL = `${API_BASE}/savefile`;
 export const DEVICE_ID = 'Dev 005';
 export const CHUNK_SIZE = 35000;
