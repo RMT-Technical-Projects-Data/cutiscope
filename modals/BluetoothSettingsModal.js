@@ -33,7 +33,6 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
   const [connectingAddress, setConnectingAddress] = useState(null);
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
-  const [pairingRequest, setPairingRequest] = useState(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showPairedDevicesScreen, setShowPairedDevicesScreen] = useState(false);
@@ -110,16 +109,11 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
       }
     });
 
-    const pairingSub = DeviceEventEmitter.addListener('onBluetoothPairingRequest', (event) => {
-      setPairingRequest(event);
-    });
-
     return () => {
       foundSub.remove();
       finishSub.remove();
       connectionSub.remove();
       bondSub.remove();
-      pairingSub.remove();
     };
   }, [pairedDevices, connectingAddress]);
 
@@ -315,19 +309,6 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
     }
   };
 
-  const handleConfirmPairing = async (confirm) => {
-    if (pairingRequest && SystemTimeModule && SystemTimeModule.confirmPairing) {
-      const address = pairingRequest.address;
-      setPairingRequest(null); // Close immediately
-      try {
-        await SystemTimeModule.confirmPairing(address, confirm);
-      } catch (e) {
-        console.warn('Error confirming pairing', e);
-        if (showInAppToast) showInAppToast('Failed to confirm pairing');
-      }
-    }
-  };
-
   const renderDevice = ({ item, isPaired }) => (
     <TouchableOpacity
       style={styles.deviceItem}
@@ -509,42 +490,6 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
           </View>
         </TouchableOpacity>
       </Modal>
-
-      <Modal
-        visible={pairingRequest !== null}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setPairingRequest(null)}
-      >
-        <View style={styles.pairingModalOverlay}>
-          <View style={styles.pairingModalContent}>
-            <Text style={styles.pairingTitle}>Bluetooth pairing request</Text>
-            <Text style={styles.pairingMessage}>
-              Pair with {pairingRequest?.name}? Confirm that this passkey is shown on {pairingRequest?.name}.
-            </Text>
-
-            {pairingRequest?.passkey >= 0 && (
-              <Text style={styles.passkeyText}>{pairingRequest?.passkey}</Text>
-            )}
-
-            <View style={styles.pairingButtonsRow}>
-              <TouchableOpacity
-                style={styles.pairingButton}
-                onPress={() => handleConfirmPairing(false)}
-              >
-                <Text style={styles.pairingCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <View style={styles.pairingDivider} />
-              <TouchableOpacity
-                style={styles.pairingButton}
-                onPress={() => handleConfirmPairing(true)}
-              >
-                <Text style={styles.pairingConfirmText}>Pair</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </Modal>
   );
 };
@@ -719,69 +664,6 @@ const styles = StyleSheet.create({
     color: '#a4b0be',
     fontSize: 16,
     fontFamily: 'ProductSans-Regular',
-  },
-  pairingModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.85)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  pairingModalContent: {
-    backgroundColor: '#1c1c1e',
-    width: '85%',
-    borderRadius: 25,
-    paddingTop: 30,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#2f3640',
-    overflow: 'hidden',
-  },
-  pairingTitle: {
-    color: '#ffffff',
-    fontSize: 20,
-    fontFamily: 'ProductSans-Bold',
-    marginBottom: 15,
-  },
-  pairingMessage: {
-    color: '#a4b0be',
-    fontSize: 16,
-    fontFamily: 'ProductSans-Regular',
-    textAlign: 'center',
-    paddingHorizontal: 20,
-    marginBottom: 20,
-    lineHeight: 22,
-  },
-  passkeyText: {
-    color: '#ffffff',
-    fontSize: 36,
-    fontFamily: 'ProductSans-Bold',
-    letterSpacing: 2,
-    marginBottom: 30,
-  },
-  pairingButtonsRow: {
-    flexDirection: 'row',
-    width: '100%',
-    borderTopWidth: 1,
-    borderTopColor: '#2f3640',
-  },
-  pairingButton: {
-    flex: 1,
-    paddingVertical: 20,
-    alignItems: 'center',
-  },
-  pairingDivider: {
-    width: 1,
-    backgroundColor: '#2f3640',
-  },
-  pairingCancelText: {
-    color: '#ffffff',
-    fontSize: 18,
-    fontFamily: 'ProductSans-Regular',
-  },
-  pairingConfirmText: {
-    color: '#ffffff',
-    fontSize: 18,
-    fontFamily: 'ProductSans-Bold',
   },
   kebabButton: {
     height: 44,

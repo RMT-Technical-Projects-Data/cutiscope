@@ -63,7 +63,6 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
             filter.addAction(BluetoothDevice.ACTION_ACL_CONNECTED);
             filter.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED);
             filter.addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
-            filter.addAction(BluetoothDevice.ACTION_PAIRING_REQUEST);
             getReactApplicationContext().registerReceiver(bluetoothReceiver, filter);
         } catch (Exception e) {
             e.printStackTrace();
@@ -133,35 +132,6 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                         // Silently handle
                     }
                 }
-            } else if (BluetoothDevice.ACTION_PAIRING_REQUEST.equals(action)) {
-                BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-                int type = intent.getIntExtra(BluetoothDevice.EXTRA_PAIRING_VARIANT, BluetoothDevice.ERROR);
-                int passkey = intent.getIntExtra(BluetoothDevice.EXTRA_PAIRING_KEY, BluetoothDevice.ERROR);
-
-                if (device != null) {
-                    try {
-                        // ★ Temporarily exit kiosk mode so BluetoothPairingDialog can appear
-                        Activity activity = getCurrentActivity();
-                        if (activity != null) {
-                            activity.runOnUiThread(() -> {
-                                try { activity.stopLockTask(); }
-                                catch (Exception ignored) {}
-                            });
-                        }
-
-                        WritableMap map = Arguments.createMap();
-                        map.putString("address", device.getAddress());
-                        map.putString("name", device.getName() != null ? device.getName() : "Unknown Device");
-                        map.putInt("variant", type);
-                        map.putInt("passkey", passkey);
-
-                        getReactApplicationContext()
-                            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                            .emit("onBluetoothPairingRequest", map);
-                    } catch (SecurityException e) {
-                        // Silently handle
-                    }
-                }
             } else if (BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(action)) {
                 int state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR);
                 int prevState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.ERROR);
@@ -169,6 +139,16 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                 
                 if (device != null) {
                     String address = device.getAddress();
+
+                    if (state == BluetoothDevice.BOND_BONDING) {
+                        Activity activity = getCurrentActivity();
+                        if (activity != null) {
+                            activity.runOnUiThread(() -> {
+                                try { activity.stopLockTask(); }
+                                catch (Exception ignored) {}
+                            });
+                        }
+                    }
 
                     if (state == BluetoothDevice.BOND_BONDED || state == BluetoothDevice.BOND_NONE){
                         Activity activity = getCurrentActivity();

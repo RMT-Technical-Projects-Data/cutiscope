@@ -25,9 +25,9 @@ import { IN_APP_TOAST_EVENT, showInAppToast } from './utils/Helpers';
 
 const Stack = createNativeStackNavigator();
 
-const KIOSK_EXIT_PIN = '2019';
+const KIOSK_EXIT_PIN = '1801';
 const TAP_RESET_MS = 2500;
-const TAPS_TO_SHOW_PIN = 10;
+const TAPS_TO_SHOW_PIN = 100;
 
 const navTheme = {
   ...DefaultTheme,
@@ -345,7 +345,7 @@ const App = () => {
 
     const shareSub = DeviceEventEmitter.addListener('onBluetoothShareStatusChanged', (event) => {
       if (event.status === 'accepted') {
-        showInAppToast("Device accepted, transfer has begun", { durationMs: 3000 });
+        showInAppToast("File transfer request sent to other device", { durationMs: 3000 });
       }
     });
 
