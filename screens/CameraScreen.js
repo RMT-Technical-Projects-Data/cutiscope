@@ -630,6 +630,7 @@ const CameraScreen = ({ navigation }) => {
   useEffect(() => {
     console.log('🔌 Setting up power button event listener');
     const subscription = DeviceEventEmitter.addListener('onPowerButtonPressed', () => {
+      
       console.log('🔌 Physical Power Button Pressed - Handling in JS');
       ignoreKeysRef.current = true;
       setIsLightOn(false); // Turn off torch for safety/logic
@@ -2603,7 +2604,11 @@ const CameraScreen = ({ navigation }) => {
           {!isGuest && (
             <TouchableOpacity
               style={[styles.menuItemLight, styles.boxButtonWrapper]}
-              onPress={() => setPatientBoxModalVisible(true)}
+              // onPress={() => setPatientBoxModalVisible(true)}
+              onPress={() => {
+                forceTorchOffUntilUserTaps();
+                setPatientBoxModalVisible(true);
+              }}
               activeOpacity={0.7}
             >
               <MaterialCommunityIcons
@@ -2618,7 +2623,11 @@ const CameraScreen = ({ navigation }) => {
           {!isGuest && (
             <TouchableOpacity
               style={[styles.menuItemLight, styles.boxButtonWrapper]}
-              onPress={() => setBodyPartModalVisible(true)}
+              // onPress={() => setBodyPartModalVisible(true)}
+              onPress={() => {
+                forceTorchOffUntilUserTaps();
+                setBodyPartModalVisible(true);
+              }}
               activeOpacity={0.7}
             >
               <MaterialCommunityIcons
