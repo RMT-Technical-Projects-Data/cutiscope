@@ -500,7 +500,7 @@ const WelcomeScreen = ({ onLoginSuccess, onGuestContinue }) => {
                 {/* Identifier: email OR username — in-app keyboard only */}
                 <KioskTextInput
                   style={styles.input}
-                  placeholder="Email or username"
+                  placeholder="Email"
                   placeholderTextColor="#999"
                   value={identifier}
                   onChangeText={setIdentifier}
