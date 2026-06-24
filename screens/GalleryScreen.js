@@ -2288,8 +2288,10 @@ const styles = StyleSheet.create({
   },
   galleryTitle: {
     color: PRIMARY_TEXT,
-    fontSize: 20,
-    fontWeight: '600',
+    fontSize: 26,
+    fontFamily: 'ProductSans-Bold',
+    letterSpacing: 1,
+    textAlign: 'center',
     marginRight: 30,
   },
   selectionTitle: {
