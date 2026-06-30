@@ -1833,9 +1833,188 @@ const CameraScreen = ({ navigation }) => {
   const CAPTURE_THROTTLE_MS_LOGGED_IN = 500;
   const CAPTURE_UNLOCK_DELAY_MS_LOGGED_IN = 100;
 
-  const processImage = async (uri, zoomVal = 1.0, patientName = '', part = '') => {
+  // const processImage = async (uri, zoomVal = 1.0, patientName = '', part = '') => {
+  //   try {
+  //     console.log('🖼️ processImage: Starting Skia processing for', uri, 'Zoom:', zoomVal);
+
+  //     const exists = await RNFS.exists(uri);
+  //     if (!exists) {
+  //       console.error('❌ processImage: Source file does not exist:', uri);
+  //       return uri;
+  //     }
+
+  //     const data = await RNFS.readFile(uri, 'base64');
+  //     const skData = Skia.Data.fromBase64(data);
+  //     const image = Skia.Image.MakeImageFromEncoded(skData);
+
+  //     if (!image) {
+  //       console.error('❌ processImage: Failed to decode image with Skia');
+  //       return uri;
+  //     }
+
+  //     // Calculate Color Matrix for White Balance
+  //     const temp = DEFAULT_TEMPERATURE || 6500;
+  //     const tint = DEFAULT_TINT || 0;
+
+  //     // Simple approximation for Temperature and Tint
+  //     // Temperature: scales Red and Blue
+  //     // Tint: scales Green
+  //     const tempRatio = temp / 6500;
+  //     const rScale = tempRatio < 1 ? 1 : 1 / tempRatio;
+  //     const bScale = tempRatio > 1 ? 1 : tempRatio;
+  //     const gScale = 1.0 - (tint * 0.1);
+
+  //     const matrix = [
+  //       rScale, 0, 0, 0, 0,
+  //       0, gScale, 0, 0, 0,
+  //       0, 0, bScale, 0, 0,
+  //       0, 0, 0, 1, 0,
+  //     ];
+
+  //     const originalW = image.width();
+  //     const originalH = image.height();
+
+  //     // Detect if the photo was captured in landscape sensor orientation
+  //     const isLandscape = originalW > originalH;
+  //     // Set target portrait dimensions
+  //     const imgW = isLandscape ? originalH : originalW;
+  //     const imgH = isLandscape ? originalW : originalH;
+
+  //     const surface = Skia.Surface.MakeOffscreen(imgW, imgH);
+  //     if (!surface) {
+  //       console.error('❌ processImage: Failed to create Skia surface');
+  //       return uri;
+  //     }
+
+  //     const canvas = surface.getCanvas();
+  //     const paint = Skia.Paint();
+  //     paint.setColorFilter(Skia.ColorFilter.MakeMatrix(matrix));
+
+  //     if (isLandscape) {
+  //       canvas.save();
+  //       // Translate and rotate 90 degrees clockwise to fit the image perfectly within the portrait bounds
+  //       canvas.translate(imgW, 0);
+  //       canvas.rotate(90, 0, 0);
+  //     }
+  //     canvas.drawImage(image, 0, 0, paint);
+  //     if (isLandscape) {
+  //       canvas.restore();
+  //     }
+
+  //     // --- Draw Millimeter Scale Watermark ---
+  //     try {
+  //       console.log('📏 processImage: Drawing scale watermark...');
+  //       const scaleX = imgW * 0.04;
+  //       const scaleTop = imgH * 0.1;
+  //       const scaleHeight = imgH * 0.8;
+
+  //       const scalePaint = Skia.Paint();
+  //       scalePaint.setColor(Skia.Color('#ffffff'));
+  //       scalePaint.setStrokeWidth(Math.max(4, imgW / 300));
+  //       scalePaint.setAntiAlias(true);
+
+  //       canvas.drawLine(scaleX, scaleTop, scaleX, scaleTop + scaleHeight, scalePaint);
+
+  //       const maxMm = 15.0 / zoomVal;
+
+  //       let font = null;
+  //       try {
+  //         const typeface = Skia.FontMgr.System().matchFamilyStyle("sans-serif", FontStyle.Normal);
+  //         font = Skia.Font(typeface, Math.max(30, imgH / 40));
+  //       } catch (fontErr) {
+  //         console.warn('⚠️ processImage: Font creation failed', fontErr);
+  //       }
+
+  //       const totalSteps = Math.floor(maxMm * 10);
+  //       for (let step = 0; step <= totalSteps; step++) {
+  //         const val = step / 10;
+  //         const valRounded = Math.round(val * 10);
+  //         const isMajor = valRounded % 10 === 0;
+  //         const isMedium = valRounded % 10 === 5;
+
+  //         const y = scaleTop + ((maxMm - val) / maxMm) * scaleHeight;
+
+  //         let tickWidth = imgW * 0.015; // minor tick (0.1 mm)
+  //         if (isMajor) {
+  //           tickWidth = imgW * 0.04;   // major tick (1.0 mm)
+  //         } else if (isMedium) {
+  //           tickWidth = imgW * 0.027;  // medium tick (0.5 mm)
+  //         }
+
+  //         canvas.drawLine(scaleX, y, scaleX + tickWidth, y, scalePaint);
+
+  //         if (isMajor && font) {
+  //           const text = val.toFixed(0);
+  //           const textX = scaleX + tickWidth + (imgW * 0.015);
+  //           canvas.drawText(text, textX, y + (font.getSize() / 3), scalePaint, font);
+  //         }
+  //       }
+
+  //       if (font) {
+  //         canvas.drawText('mm', scaleX, scaleTop + scaleHeight + font.getSize() + 10, scalePaint, font);
+  //       }
+  //       console.log('✅ processImage: Scale watermark drawn successfully');
+  //     } catch (scaleDrawErr) {
+  //       console.error('❌ processImage: Scale watermark error:', scaleDrawErr);
+  //     }
+
+  //     // --- Draw Patient Info Box ---
+  //     if (patientName || part) {
+  //       try {
+  //         console.log('📝 processImage: Drawing patient info box...');
+  //         const label = `Patient: ${patientName}${patientName && part ? ' | ' : ''}${part ? `Body Part: ${part}` : ''}`;
+
+  //         const fontSize = Math.max(40, imgW / 25);
+
+  //         const textPaint = Skia.Paint();
+  //         textPaint.setColor(Skia.Color('#ffffff'));
+  //         textPaint.setAntiAlias(true);
+
+  //         const typeface = Skia.FontMgr.System().matchFamilyStyle("sans-serif", FontStyle.Bold);
+  //         const font = Skia.Font(typeface, fontSize);
+
+  //         const textWidth = font.measureText(label).width;
+
+  //         const paddingX = fontSize * 1.0;
+  //         const paddingY = fontSize * 0.6;
+  //         const boxWidth = textWidth + paddingX * 2;
+  //         const boxHeight = fontSize + paddingY * 2;
+
+  //         const boxX = (imgW - boxWidth) / 2;
+  //         // const boxY = imgH * 0.12;
+  //         const boxY = imgH - boxHeight - (imgH * 0.01);
+
+  //         const boxPaint = Skia.Paint();
+  //         boxPaint.setColor(Skia.Color('rgba(0, 0, 0, 0.6)'));
+  //         boxPaint.setAntiAlias(true);
+
+  //         canvas.drawRect({ x: boxX, y: boxY, width: boxWidth, height: boxHeight }, boxPaint);
+
+  //         const textX = boxX + paddingX;
+  //         const textY = boxY + boxHeight / 2 + fontSize * 0.35;
+
+  //         canvas.drawText(label, textX, textY, textPaint, font);
+  //         console.log('✅ processImage: Patient info box drawn successfully');
+  //       } catch (infoDrawErr) {
+  //         console.error('❌ processImage: Patient info box error:', infoDrawErr);
+  //       }
+  //     }
+
+  //     const snapshot = surface.makeImageSnapshot();
+  //     const encoded = snapshot.encodeToBase64(ImageFormat.JPEG, 90);
+  //     const path = `${RNFS.TemporaryDirectoryPath}/processed_${Date.now()}.jpg`;
+  //     await RNFS.writeFile(path, encoded, 'base64');
+  //     console.log('✅ processImage: Done, path:', path);
+  //     return path;
+  //   } catch (err) {
+  //     console.error('❌ Skia processImage error:', err);
+  //     return uri;
+  //   }
+  // };
+
+  const processImage = async (uri, zoomVal = 1.0, patientName = '', part = '', orientation = null) => {
     try {
-      console.log('🖼️ processImage: Starting Skia processing for', uri, 'Zoom:', zoomVal);
+      console.log('🖼️ processImage: Starting Skia processing for', uri, 'Zoom:', zoomVal, 'Orientation:', orientation);
 
       const exists = await RNFS.exists(uri);
       if (!exists) {
@@ -1874,11 +2053,38 @@ const CameraScreen = ({ navigation }) => {
       const originalW = image.width();
       const originalH = image.height();
 
-      // Detect if the photo was captured in landscape sensor orientation
-      const isLandscape = originalW > originalH;
-      // Set target portrait dimensions
-      const imgW = isLandscape ? originalH : originalW;
-      const imgH = isLandscape ? originalW : originalH;
+      // --- Determine rotation from the camera's reported sensor orientation ---
+      // NOTE: Skia.Image.MakeImageFromEncoded does NOT read/apply EXIF orientation,
+      // it only gives raw pixel dimensions. We must rely on the orientation value
+      // reported directly by vision-camera's takePhoto() (hardware-accurate),
+      // instead of guessing from width > height, which is unreliable and was
+      // the cause of intermittent wrong-direction captures.
+      let rotationAngle = 0;
+      let isSideways = false;
+
+      if (orientation === 'landscape-left') {
+        rotationAngle = 90;
+        isSideways = true;
+      } else if (orientation === 'landscape-right') {
+        rotationAngle = -90;
+        isSideways = true;
+      } else if (orientation === 'portrait-upside-down') {
+        rotationAngle = 180;
+        isSideways = false;
+      } else if (orientation === 'portrait') {
+        rotationAngle = 0;
+        isSideways = false;
+      } else {
+        // Fallback (orientation not reported by this device): use the old
+        // pixel-dimension heuristic as a safety net rather than failing outright.
+        console.warn('⚠️ processImage: No orientation reported, falling back to dimension heuristic');
+        isSideways = originalW > originalH;
+        rotationAngle = isSideways ? 90 : 0;
+      }
+
+      // Set target portrait output dimensions
+      const imgW = isSideways ? originalH : originalW;
+      const imgH = isSideways ? originalW : originalH;
 
       const surface = Skia.Surface.MakeOffscreen(imgW, imgH);
       if (!surface) {
@@ -1890,14 +2096,21 @@ const CameraScreen = ({ navigation }) => {
       const paint = Skia.Paint();
       paint.setColorFilter(Skia.ColorFilter.MakeMatrix(matrix));
 
-      if (isLandscape) {
+      if (rotationAngle !== 0) {
         canvas.save();
-        // Translate and rotate 90 degrees clockwise to fit the image perfectly within the portrait bounds
-        canvas.translate(imgW, 0);
-        canvas.rotate(90, 0, 0);
+        if (rotationAngle === 90) {
+          canvas.translate(imgW, 0);
+          canvas.rotate(90, 0, 0);
+        } else if (rotationAngle === -90) {
+          canvas.translate(0, imgH);
+          canvas.rotate(-90, 0, 0);
+        } else if (rotationAngle === 180) {
+          canvas.translate(imgW, imgH);
+          canvas.rotate(180, 0, 0);
+        }
       }
       canvas.drawImage(image, 0, 0, paint);
-      if (isLandscape) {
+      if (rotationAngle !== 0) {
         canvas.restore();
       }
 
@@ -1981,7 +2194,6 @@ const CameraScreen = ({ navigation }) => {
           const boxHeight = fontSize + paddingY * 2;
 
           const boxX = (imgW - boxWidth) / 2;
-          // const boxY = imgH * 0.12;
           const boxY = imgH - boxHeight - (imgH * 0.01);
 
           const boxPaint = Skia.Paint();
