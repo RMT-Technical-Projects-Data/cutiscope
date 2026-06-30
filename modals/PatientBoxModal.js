@@ -546,6 +546,7 @@ const PatientBoxModal = ({
                     autoCapitalize="none"
                     contextMenuHidden
                     selectTextOnFocus={false}
+                    showDismiss={true}
                   />
                   {searchQuery.length > 0 && (
                     <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.searchClear}>
