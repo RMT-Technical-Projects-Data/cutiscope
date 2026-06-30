@@ -474,6 +474,7 @@ const GalleryScreen = ({ route, navigation }) => {
   const handleBluetoothShareSuccess = useCallback(() => {
     setSelectedPhotos([]);
     setIsSelectionMode(false);
+    setFullScreenPhoto(null);
   }, []);
 
   // Sync ref with state

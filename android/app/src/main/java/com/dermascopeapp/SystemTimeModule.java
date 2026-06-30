@@ -1136,7 +1136,7 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
             readObexPacket(in);
         } catch (Exception ignored) {
         }
-        socket.close();
+        // socket.close();
         Log.i("SystemTimeModule", "OBEX session complete");
     }
     // ─── OBEX header builders

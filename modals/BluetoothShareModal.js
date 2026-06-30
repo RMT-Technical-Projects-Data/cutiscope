@@ -240,7 +240,8 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
       await SystemTimeModule.sendFileDirectViaBluetooth(cleanPaths, device.address);
       showInAppToast("File transfer completed", { durationMs: 3000 });
       if (onShareSuccess) onShareSuccess();
-      onClose();
+      setTimeout(() => onClose(), 300);
+      // onClose();
     } catch (e) {
       console.warn('Sharing failed:', e);
       const msg = (e && e.message) || String(e);
@@ -261,6 +262,7 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
         }
         showInAppToast("Transfer canceled by receiver", { durationMs: 3000 });
       } else if (isConnectFailed) {
+
         
         showInAppToast(msg || "Make sure the receiving device is set to receive files via Bluetooth.", { durationMs: 4000 });
       }else {

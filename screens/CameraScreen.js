@@ -100,7 +100,7 @@ const MillimeterScale = ({ zoom }) => {
   for (let i = 0; i <= totalSteps; i++) {
     ticks.push(i / 10);
   }
-  
+
   return (
     <View style={styles.mmScaleContainer}>
       <View style={styles.mmScaleLine} />
@@ -109,14 +109,14 @@ const MillimeterScale = ({ zoom }) => {
         const isMajor = valRounded % 10 === 0;
         const isMedium = valRounded % 10 === 5;
         const topPosition = `${((maxMm - val) / maxMm) * 100}%`;
-        
+
         let tickStyle = styles.mmScaleTickMinor;
         if (isMajor) {
           tickStyle = styles.mmScaleTickMajor;
         } else if (isMedium) {
           tickStyle = styles.mmScaleTickMedium;
         }
-        
+
         return (
           <View key={index} style={[styles.mmScaleTickRow, { top: topPosition }]}>
             <View style={tickStyle} />
@@ -242,7 +242,7 @@ const CameraScreen = ({ navigation }) => {
         console.log('⏰ Inactivity timeout reached - Entering standby');
         setIsStandby(true);
         setIsLightOn(false); // Turn off torch on standby
-      }, 120000); // 30 seconds
+      }, 120000);
     }
   }, [isStandby]);
 
@@ -486,6 +486,30 @@ const CameraScreen = ({ navigation }) => {
   const vibrationInterval = useRef(null);
   const [cameraError, setCameraError] = useState(null);
 
+  useEffect(() => {
+    console.log(`[WakeUpDebug] [${Date.now()}] cameraError state changed to: ${cameraError}`);
+  }, [cameraError]);
+
+  useEffect(() => {
+    const calculatedIsActive = !!(
+      isScreenFocused
+      && !wifiMenuVisible
+      && !isStandby
+      && !patientBoxModalVisible
+      && !bodyPartModalVisible
+    );
+    console.log(`[WakeUpDebug] [${Date.now()}] Camera state variables status:`, {
+      calculatedIsActive,
+      isScreenFocused,
+      wifiMenuVisible,
+      isStandby,
+      patientBoxModalVisible,
+      bodyPartModalVisible,
+      hasDevice: !!device,
+      deviceModel: device?.name || 'unknown'
+    });
+  }, [isScreenFocused, wifiMenuVisible, isStandby, patientBoxModalVisible, bodyPartModalVisible, device]);
+
   // Vision Camera Hooks (Moved to top)
   // const { hasPermission, requestPermission } = useCameraPermission();
   // const device = useCameraDevice('back');
@@ -630,7 +654,7 @@ const CameraScreen = ({ navigation }) => {
   useEffect(() => {
     console.log('🔌 Setting up power button event listener');
     const subscription = DeviceEventEmitter.addListener('onPowerButtonPressed', () => {
-      
+
       console.log('🔌 Physical Power Button Pressed - Handling in JS');
       ignoreKeysRef.current = true;
       setIsLightOn(false); // Turn off torch for safety/logic
@@ -1547,6 +1571,7 @@ const CameraScreen = ({ navigation }) => {
   };
 
   const handleSingleTap = () => {
+    console.log(`[WakeUpDebug] [${Date.now()}] handleSingleTap executing. Clearing camera error.`);
     setCameraError(null);
   };
 
@@ -1765,10 +1790,12 @@ const CameraScreen = ({ navigation }) => {
   };
 
   const handleTap = () => {
+    console.log(`[WakeUpDebug] [${Date.now()}] handleTap (Wake Up button press) triggered. Current cameraError: ${cameraError}`);
     handleSingleTap();
   };
 
   const handleCameraMountError = (error) => {
+    console.log(`[WakeUpDebug] [${Date.now()}] handleCameraMountError triggered. Error:`, error);
     console.error('Camera mount error:', error);
     setCameraError('An error occurred while accessing the camera. Please restart the device.');
   };
@@ -1805,7 +1832,7 @@ const CameraScreen = ({ navigation }) => {
       const data = await RNFS.readFile(uri, 'base64');
       const skData = Skia.Data.fromBase64(data);
       const image = Skia.Image.MakeImageFromEncoded(skData);
-      
+
       if (!image) {
         console.error('❌ processImage: Failed to decode image with Skia');
         return uri;
@@ -1866,7 +1893,7 @@ const CameraScreen = ({ navigation }) => {
         const scaleX = imgW * 0.04;
         const scaleTop = imgH * 0.1;
         const scaleHeight = imgH * 0.8;
-        
+
         const scalePaint = Skia.Paint();
         scalePaint.setColor(Skia.Color('#ffffff'));
         scalePaint.setStrokeWidth(Math.max(4, imgW / 300));
@@ -1875,7 +1902,7 @@ const CameraScreen = ({ navigation }) => {
         canvas.drawLine(scaleX, scaleTop, scaleX, scaleTop + scaleHeight, scalePaint);
 
         const maxMm = 15.0 / zoomVal;
-        
+
         let font = null;
         try {
           const typeface = Skia.FontMgr.System().matchFamilyStyle("sans-serif", FontStyle.Normal);
@@ -1890,25 +1917,25 @@ const CameraScreen = ({ navigation }) => {
           const valRounded = Math.round(val * 10);
           const isMajor = valRounded % 10 === 0;
           const isMedium = valRounded % 10 === 5;
-          
+
           const y = scaleTop + ((maxMm - val) / maxMm) * scaleHeight;
-          
+
           let tickWidth = imgW * 0.015; // minor tick (0.1 mm)
           if (isMajor) {
             tickWidth = imgW * 0.04;   // major tick (1.0 mm)
           } else if (isMedium) {
             tickWidth = imgW * 0.027;  // medium tick (0.5 mm)
           }
-          
+
           canvas.drawLine(scaleX, y, scaleX + tickWidth, y, scalePaint);
-          
+
           if (isMajor && font) {
             const text = val.toFixed(0);
             const textX = scaleX + tickWidth + (imgW * 0.015);
             canvas.drawText(text, textX, y + (font.getSize() / 3), scalePaint, font);
           }
         }
-        
+
         if (font) {
           canvas.drawText('mm', scaleX, scaleTop + scaleHeight + font.getSize() + 10, scalePaint, font);
         }
@@ -1916,42 +1943,42 @@ const CameraScreen = ({ navigation }) => {
       } catch (scaleDrawErr) {
         console.error('❌ processImage: Scale watermark error:', scaleDrawErr);
       }
-      
+
       // --- Draw Patient Info Box ---
       if (patientName || part) {
         try {
           console.log('📝 processImage: Drawing patient info box...');
           const label = `Patient: ${patientName}${patientName && part ? ' | ' : ''}${part ? `Body Part: ${part}` : ''}`;
-          
+
           const fontSize = Math.max(40, imgW / 25);
-          
+
           const textPaint = Skia.Paint();
           textPaint.setColor(Skia.Color('#ffffff'));
           textPaint.setAntiAlias(true);
-          
+
           const typeface = Skia.FontMgr.System().matchFamilyStyle("sans-serif", FontStyle.Bold);
           const font = Skia.Font(typeface, fontSize);
-          
+
           const textWidth = font.measureText(label).width;
-          
+
           const paddingX = fontSize * 1.0;
           const paddingY = fontSize * 0.6;
           const boxWidth = textWidth + paddingX * 2;
           const boxHeight = fontSize + paddingY * 2;
-          
+
           const boxX = (imgW - boxWidth) / 2;
           // const boxY = imgH * 0.12;
-          const boxY = imgH - boxHeight - (imgH * 0.01); 
-          
+          const boxY = imgH - boxHeight - (imgH * 0.01);
+
           const boxPaint = Skia.Paint();
           boxPaint.setColor(Skia.Color('rgba(0, 0, 0, 0.6)'));
           boxPaint.setAntiAlias(true);
-          
+
           canvas.drawRect({ x: boxX, y: boxY, width: boxWidth, height: boxHeight }, boxPaint);
-          
+
           const textX = boxX + paddingX;
-          const textY = boxY + boxHeight / 2 + fontSize * 0.35; 
-          
+          const textY = boxY + boxHeight / 2 + fontSize * 0.35;
+
           canvas.drawText(label, textX, textY, textPaint, font);
           console.log('✅ processImage: Patient info box drawn successfully');
         } catch (infoDrawErr) {
@@ -2139,6 +2166,7 @@ const CameraScreen = ({ navigation }) => {
         resetInactivityTimer(); // Restart auto-lock timer
       }
     } else {
+      console.log(`[WakeUpDebug] [${Date.now()}] takePicture fallback: Camera not ready or device not available. Setting error.`);
       console.error('Camera not ready or device not available');
       setCameraError(UserMessages.cameraNotReady);
       isCapturingRef.current = false; // Reset lock
@@ -2390,9 +2418,11 @@ const CameraScreen = ({ navigation }) => {
                   {...(showSlider ? { focus: focusDepthValue } : {})}
 
                   onInitialized={() => {
+                    console.log(`[WakeUpDebug] [${Date.now()}] ReanimatedCamera onInitialized triggered. Flash state: ${isFlashOn ? 'ON' : 'OFF'}`);
                     console.log('📱 Camera initialized, flash state:', isFlashOn ? 'ON' : 'OFF');
                   }}
                   onError={(error) => {
+                    console.log(`[WakeUpDebug] [${Date.now()}] ReanimatedCamera onError triggered. Error:`, error);
                     console.error('Camera Error:', error);
                     setCameraError('Tap On the Button to Use Camera');
                   }}
@@ -2475,9 +2505,9 @@ const CameraScreen = ({ navigation }) => {
         {!isGuest && (currentBox?.name || bodyPart) ? (
           <View style={styles.patientNameTopBar}>
             <Text style={styles.patientNameText} numberOfLines={1}>
-              {currentBox?.name ? <Text>Patient: <Text style={{fontFamily: 'ProductSans-Bold'}}>{currentBox.name}</Text></Text> : null}
+              {currentBox?.name ? <Text>Patient: <Text style={{ fontFamily: 'ProductSans-Bold' }}>{currentBox.name}</Text></Text> : null}
               {currentBox?.name && bodyPart ? ' | ' : ''}
-              {bodyPart ? <Text>Body Part: <Text style={{fontFamily: 'ProductSans-Bold'}}>{bodyPart}</Text></Text> : null}
+              {bodyPart ? <Text>Body Part: <Text style={{ fontFamily: 'ProductSans-Bold' }}>{bodyPart}</Text></Text> : null}
             </Text>
           </View>
         ) : null}
@@ -2701,8 +2731,8 @@ const CameraScreen = ({ navigation }) => {
         {/* ========== CONTROLS ========== */}
         <>
           {showSlider && (
-            <View 
-              style={[styles.scaleContainer, cameraError && { opacity: 0.5 }]} 
+            <View
+              style={[styles.scaleContainer, cameraError && { opacity: 0.5 }]}
               pointerEvents={cameraError ? 'none' : 'auto'}
             >
               <ScrollView
@@ -2733,8 +2763,8 @@ const CameraScreen = ({ navigation }) => {
           )}
 
           {showFocusScale && (
-            <View 
-              style={[styles.scaleContainer, cameraError && { opacity: 0.5 }]} 
+            <View
+              style={[styles.scaleContainer, cameraError && { opacity: 0.5 }]}
               pointerEvents={cameraError ? 'none' : 'auto'}
             >
               <ScrollView
@@ -2771,8 +2801,8 @@ const CameraScreen = ({ navigation }) => {
           )}
 
           {showScale && (
-            <View 
-              style={[styles.scaleContainer, cameraError && { opacity: 0.5 }]} 
+            <View
+              style={[styles.scaleContainer, cameraError && { opacity: 0.5 }]}
               pointerEvents={cameraError ? 'none' : 'auto'}
             >
               <ScrollView
@@ -2852,7 +2882,7 @@ const CameraScreen = ({ navigation }) => {
 
         {/* ========== STANDBY MODAL ========== */}
         <StandbyModal
-          visible={isStandby && isFocused}
+          visible={isStandby && isScreenFocused}
           onActivate={() => {
             setIsStandby(false);
             resetInactivityTimer();
