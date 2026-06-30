@@ -495,8 +495,6 @@ const CameraScreen = ({ navigation }) => {
       isScreenFocused
       && !wifiMenuVisible
       && !isStandby
-      && !patientBoxModalVisible
-      && !bodyPartModalVisible
     );
     console.log(`[WakeUpDebug] [${Date.now()}] Camera state variables status:`, {
       calculatedIsActive,
@@ -2627,8 +2625,6 @@ const CameraScreen = ({ navigation }) => {
                     isScreenFocused
                     && !wifiMenuVisible
                     && !isStandby
-                    && !patientBoxModalVisible
-                    && !bodyPartModalVisible
                   }
                   photo={true}
                   animatedProps={animatedCameraProps}
