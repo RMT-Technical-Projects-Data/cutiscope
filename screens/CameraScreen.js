@@ -590,6 +590,15 @@ const CameraScreen = ({ navigation }) => {
       setIsScreenFocused(true);
       handleReturnToCamera();
 
+      // Stop any active Bluetooth discovery scan to prevent CameraX configuration timeout
+      if (Platform.OS === 'android' && NativeModules.SystemTimeModule && NativeModules.SystemTimeModule.stopBluetoothScan) {
+        try {
+          NativeModules.SystemTimeModule.stopBluetoothScan();
+        } catch (e) {
+          console.warn('Failed to stop bluetooth scan on focus:', e);
+        }
+      }
+
       // Hide volume UI when screen comes into focus
       if (Platform.OS === 'android' && VolumeManager?.showNativeVolumeUI) {
         VolumeManager.showNativeVolumeUI({ enabled: false }).catch(() => { });
@@ -641,14 +650,19 @@ const CameraScreen = ({ navigation }) => {
         setIsScreenFocused(false);
         setIsLightOn(false);
       } else if (nextAppState === 'active') {
-        // Only restore focus, don't auto-turn light back on for safety
-        setIsScreenFocused(true);
+        // Only restore focus if this screen is actually focused in the navigation stack
+        if (navigation.isFocused()) {
+          console.log('📸 AppState active: CameraScreen is focused, restoring screen focus state');
+          setIsScreenFocused(true);
+        } else {
+          console.log('📸 AppState active: CameraScreen is NOT focused, keeping screen focus state false');
+        }
       }
     };
 
     const subscription = AppState.addEventListener('change', handleAppStateChange);
     return () => subscription.remove();
-  }, []);
+  }, [navigation]);
 
   // Effect 1c: Handle Physical Power Button Event
   useEffect(() => {

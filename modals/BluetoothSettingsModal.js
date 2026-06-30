@@ -200,7 +200,7 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
           setTimeout(() => {
             loadPairedDevices();
             loadConnectedDevices();
-            startScan();
+            // startScan();
           }, 1500);
         } else {
           stopScan();
@@ -397,9 +397,9 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
                   </TouchableOpacity>
                 )}
               </View>
-              {scannedDevices.length > 0 ? (
+              {scannedDevices.filter(d => !pairedDevices.find(p => p.address === d.address)).length > 0 ? (
                 <FlatList
-                  data={scannedDevices}
+                  data={scannedDevices.filter(d => !pairedDevices.find(p => p.address === d.address))}
                   keyExtractor={(item) => item.address}
                   renderItem={(props) => renderDevice({ ...props, isPaired: false })}
                   style={styles.list}
@@ -419,14 +419,14 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
       </View>
 
       {showMenu && (
-        <TouchableOpacity 
-          style={styles.menuOverlay} 
-          activeOpacity={1} 
+        <TouchableOpacity
+          style={styles.menuOverlay}
+          activeOpacity={1}
           onPress={() => setShowMenu(false)}
         >
           <View style={styles.dropdownMenu}>
-            <TouchableOpacity 
-              style={styles.menuItem} 
+            <TouchableOpacity
+              style={styles.menuItem}
               onPress={() => {
                 setShowMenu(false);
                 setShowPairedDevicesScreen(true);

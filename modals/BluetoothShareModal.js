@@ -246,7 +246,7 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
       console.warn('Sharing failed:', e);
       const msg = (e && e.message) || String(e);
       const isCancelled =
-          (e && e.code === 'BT_TRANSFER_FAILED') || msg.includes('0xc3');
+        (e && e.code === 'BT_TRANSFER_FAILED') || msg.includes('0xc3');
 
       const isPairingCancelled = e && e.code === 'BT_PAIRING_CANCELLED';
       const isConnectFailed = e && e.code === 'BT_CONNECT_FAILED';
@@ -263,9 +263,9 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
         showInAppToast("Transfer canceled by receiver", { durationMs: 3000 });
       } else if (isConnectFailed) {
 
-        
+
         showInAppToast(msg || "Make sure the receiving device is set to receive files via Bluetooth.", { durationMs: 4000 });
-      }else {
+      } else {
         if (Platform.OS === 'android') {
           ToastAndroid.show('Failed to send file', ToastAndroid.LONG);
         }
@@ -409,9 +409,9 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
                 )}
               </View>
 
-              {scannedDevices.length > 0 ? (
+              {scannedDevices.filter(d => !pairedDevices.find(p => p.address === d.address)).length > 0 ? (
                 <FlatList
-                  data={scannedDevices}
+                  data={scannedDevices.filter(d => !pairedDevices.find(p => p.address === d.address))}
                   keyExtractor={(item) => item.address}
                   renderItem={(props) => renderDevice({ ...props, isPaired: false })}
                   showsVerticalScrollIndicator={false}
@@ -438,14 +438,14 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
         </View>
 
         {showMenu && (
-          <TouchableOpacity 
-            style={styles.menuOverlay} 
-            activeOpacity={1} 
+          <TouchableOpacity
+            style={styles.menuOverlay}
+            activeOpacity={1}
             onPress={() => setShowMenu(false)}
           >
             <View style={styles.dropdownMenu}>
-              <TouchableOpacity 
-                style={styles.menuItem} 
+              <TouchableOpacity
+                style={styles.menuItem}
                 onPress={() => {
                   setShowMenu(false);
                   setShowPairedDevicesScreen(true);
