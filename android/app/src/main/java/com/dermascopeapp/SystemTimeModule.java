@@ -58,11 +58,13 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
         super.initialize();
         try {
             IntentFilter filter = new IntentFilter();
+            // filter.setPriority(IntentFilter.SYSTEM_HIGH_PRIORITY);
             filter.addAction(BluetoothDevice.ACTION_FOUND);
             filter.addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
             filter.addAction(BluetoothDevice.ACTION_ACL_CONNECTED);
             filter.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED);
             filter.addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
+            // filter.addAction(BluetoothDevice.ACTION_PAIRING_REQUEST);
             getReactApplicationContext().registerReceiver(bluetoothReceiver, filter);
         } catch (Exception e) {
             e.printStackTrace();
@@ -136,7 +138,7 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                 int state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR);
                 int prevState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.ERROR);
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-                
+
                 if (device != null) {
                     String address = device.getAddress();
 
@@ -144,18 +146,22 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                         Activity activity = getCurrentActivity();
                         if (activity != null) {
                             activity.runOnUiThread(() -> {
-                                try { activity.stopLockTask(); }
-                                catch (Exception ignored) {}
+                                try {
+                                    activity.stopLockTask();
+                                } catch (Exception ignored) {
+                                }
                             });
                         }
                     }
 
-                    if (state == BluetoothDevice.BOND_BONDED || state == BluetoothDevice.BOND_NONE){
+                    if (state == BluetoothDevice.BOND_BONDED || state == BluetoothDevice.BOND_NONE) {
                         Activity activity = getCurrentActivity();
                         if (activity != null) {
                             activity.runOnUiThread(() -> {
-                            try { activity.startLockTask(); }
-                            catch (Exception ignored) {}
+                                try {
+                                    activity.startLockTask();
+                                } catch (Exception ignored) {
+                                }
 
                             });
 
@@ -168,14 +174,16 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                         WritableMap map = Arguments.createMap();
                         map.putString("address", address);
                         map.putBoolean("bonded", true);
-                        getReactApplicationContext().getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class).emit("onBluetoothBondStateChanged", map);
+                        getReactApplicationContext().getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                                .emit("onBluetoothBondStateChanged", map);
                     } else if (state == BluetoothDevice.BOND_NONE && prevState == BluetoothDevice.BOND_BONDING) {
                         completeBondWait(address, false);
                         WritableMap map = Arguments.createMap();
                         map.putString("address", address);
                         map.putBoolean("bonded", false);
                         map.putBoolean("cancelled", true);
-                        getReactApplicationContext().getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class).emit("onBluetoothBondStateChanged", map);
+                        getReactApplicationContext().getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                                .emit("onBluetoothBondStateChanged", map);
                     }
                 }
             }
@@ -898,30 +906,41 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                         socket.connect();
                         Log.i("SystemTimeModule", "Insecure RFCOMM connected");
                     } catch (Exception e2) {
-                        Log.w("SystemTimeModule", "UUID-based RFCOMM failed, trying fixed channels (PC fallback): " + e2.getMessage());
-                        try { if (socket != null) socket.close(); } catch (Exception ignored) {}
+                        Log.w("SystemTimeModule",
+                                "UUID-based RFCOMM failed, trying fixed channels (PC fallback): " + e2.getMessage());
+                        try {
+                            if (socket != null)
+                                socket.close();
+                        } catch (Exception ignored) {
+                        }
                         socket = null;
-                        int[] channelsToTry = {12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+                        int[] channelsToTry = { 12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
                         BluetoothSocket connectedSocket = null;
-                        for (int ch : channelsToTry){
+                        for (int ch : channelsToTry) {
                             BluetoothSocket candidate = null;
                             try {
 
-                                java.lang.reflect.Method m = device.getClass().getMethod("createInsecureRfcommSocket", int.class);
+                                java.lang.reflect.Method m = device.getClass().getMethod("createInsecureRfcommSocket",
+                                        int.class);
                                 candidate = (BluetoothSocket) m.invoke(device, ch);
                                 candidate.connect();
                                 Log.i("SystemTimeModule", "Fixed channel RFCOMM connected on channel " + ch);
                                 connectedSocket = candidate;
                                 break;
-                            } catch (Exception eCh){
+                            } catch (Exception eCh) {
                                 Log.w("SystemTimeModule", "Channel " + ch + " failed: " + eCh.getMessage());
-                                try { if (candidate != null) candidate.close(); } catch (Exception ignored) {}
+                                try {
+                                    if (candidate != null)
+                                        candidate.close();
+                                } catch (Exception ignored) {
+                                }
                             }
                         }
 
                         if (connectedSocket == null) {
                             Log.e("SystemTimeModule", "All RFCOMM attempts failed: " + e2.getMessage());
-                            promise.reject("BT_CONNECT_FAILED", "Make sure the receiving device is set to receive files via Bluetooth.");
+                            promise.reject("BT_CONNECT_FAILED",
+                                    "Make sure the receiving device is set to receive files via Bluetooth.");
                             return;
                         }
                         socket = connectedSocket;
@@ -936,8 +955,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                     WritableMap statusMap = Arguments.createMap();
                     statusMap.putString("status", "completed");
                     getReactApplicationContext()
-                        .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                        .emit("onBluetoothShareStatusChanged", statusMap);
+                            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                            .emit("onBluetoothShareStatusChanged", statusMap);
                 } catch (Exception ex) {
                     Log.e("SystemTimeModule", "Failed to emit completed status: " + ex.getMessage());
                 }
@@ -949,7 +968,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                 if (!rfcommConnected) {
                     // Should not reach here (handled above) but guard anyway
                     // launchSystemShare(filePaths, null, promise);
-                    promise.reject("BT_CONNECT_FAILED","Make sure the receiving device is set to receive files via Bluetooth.");
+                    promise.reject("BT_CONNECT_FAILED",
+                            "Make sure the receiving device is set to receive files via Bluetooth.");
                 } else {
                     // ★ OBEX was rejected or cancelled by remote device
                     // Do NOT launch system share — just reject cleanly, stay in kiosk mode
@@ -957,8 +977,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                         WritableMap statusMap = Arguments.createMap();
                         statusMap.putString("status", "cancelled");
                         getReactApplicationContext()
-                            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                            .emit("onBluetoothShareStatusChanged", statusMap);
+                                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                                .emit("onBluetoothShareStatusChanged", statusMap);
                     } catch (Exception ex) {
                         Log.e("SystemTimeModule", "Failed to emit cancelled status: " + ex.getMessage());
                     }
@@ -1032,8 +1052,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
             WritableMap map = Arguments.createMap();
             map.putString("status", "accepted");
             getReactApplicationContext()
-                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                .emit("onBluetoothShareStatusChanged", map);
+                    .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                    .emit("onBluetoothShareStatusChanged", map);
         } catch (Exception e) {
             Log.e("SystemTimeModule", "Failed to emit accepted status: " + e.getMessage());
         }

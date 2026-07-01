@@ -89,6 +89,13 @@ class MainActivity : ReactActivity() {
             WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
             WindowManager.LayoutParams.FLAG_SECURE
         )
+
+        // ★ Modern API equivalent — more reliable on Android O+ for preventing
+        // the keyguard race during stopLockTask() windows (e.g. Bluetooth pairing)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        }
        
         // ========== ADD THIS: Acquire wake lock ==========
         acquireWakeLock()

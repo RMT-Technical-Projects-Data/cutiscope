@@ -89,6 +89,8 @@ const ZoomableImage = ({ uri, onTap }) => {
   const translateYStart = useSharedValue(0);
   const focalXStart = useSharedValue(0);
   const focalYStart = useSharedValue(0);
+  const lastFocalX = useSharedValue(0);
+  const lastFocalY = useSharedValue(0);
 
   // Track incremental pan translation
   const prevTranslationX = useSharedValue(0);
@@ -171,8 +173,21 @@ const ZoomableImage = ({ uri, onTap }) => {
       translateYStart.value = translateY.value;
       focalXStart.value = e.focalX - width / 2;
       focalYStart.value = e.focalY - screenHeight / 2;
+      lastFocalX.value = e.focalX;
+      lastFocalY.value = e.focalY;
     })
     .onUpdate((e) => {
+      const dfx = e.focalX - lastFocalX.value;
+      const dfy = e.focalY - lastFocalY.value;
+      lastFocalX.value = e.focalX;
+      lastFocalY.value = e.focalY;
+
+      // Ignore updates if the pointer count is not 2 OR if there is an abrupt jump in focal point
+      // (a jump > 40px in a single frame indicates a finger release/addition transition)
+      if (e.numberOfPointers !== 2 || Math.abs(dfx) > 40 || Math.abs(dfy) > 40) {
+        return;
+      }
+
       const newScale = Math.min(Math.max(1, scaleStart.value * e.scale), 6);
       scale.value = newScale;
 
@@ -1236,12 +1251,12 @@ const GalleryScreen = ({ route, navigation }) => {
     });
     setConfirmModalVisible(true);
   }, [selectedPhotos, fullScreenPhoto, deleteFileWithCleanup]);
-  
+
   const getShareLabel = useCallback((photo) => {
     if (!photo || !photo.name) return '';
     let patientText = '';
     let bodyPartText = '';
-    
+
     const bpIndex = photo.name.indexOf('_BP-');
     if (bpIndex !== -1) {
       if (bpIndex > 9) {
@@ -1861,7 +1876,7 @@ const GalleryScreen = ({ route, navigation }) => {
               <Image source={deleteIcon} style={[styles.actionIcon, { tintColor: ACCENT_TEAL }]} />
               <Text style={styles.btnText}>Delete</Text>
             </TouchableOpacity>
-            
+
             {/* Bluetooth Share Selected Button */}
             <TouchableOpacity
               style={styles.actionButton}
@@ -1980,7 +1995,7 @@ const FullScreenGalleryModal = React.memo(({
       // The currently viewed item WAS DELETED.
       // Show the NEXT image instead of PREV to prevent the instant flash, since arrays naturally shift left.
       const fallbackIndex = Math.min(currentIndex, photos.length - 1);
-      
+
       // Update state
       setCurrentIndex(fallbackIndex);
       const nextPhoto = photos[fallbackIndex];
@@ -1994,7 +2009,7 @@ const FullScreenGalleryModal = React.memo(({
         if (flatListRef.current && photos.length > fallbackIndex) {
           try {
             flatListRef.current.scrollToIndex({ index: fallbackIndex, animated: false });
-          } catch (e) { 
+          } catch (e) {
             console.warn('scrollToIndex failed in deletion sync:', e);
           }
         }
