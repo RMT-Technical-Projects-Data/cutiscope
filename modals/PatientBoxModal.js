@@ -235,7 +235,7 @@ const PatientBoxModal = ({
         name: trimmedName,
         dob: (dob || '').trim(),
         gender: (gender || '').trim(),
-        age: (age || '').trim(),
+        // age: (age || '').trim(),
         mr_no: (mrNo || '').trim() ? `${MR_NO_PREFIX}${(mrNo || '').trim()}` : '',
       });
       onSet({
@@ -417,7 +417,7 @@ const PatientBoxModal = ({
                     </View>
 
                     <View style={styles.row}>
-                      <View style={{ flex: 1.2, marginRight: 8 }}>
+                      <View style={{ flex: 1 }}>
                         <Text style={styles.label} selectable={false}>DOB</Text>
                         <TouchableOpacity 
                           style={[styles.pickerTrigger, { marginBottom: 16 }]} 
@@ -433,6 +433,7 @@ const PatientBoxModal = ({
                           <MaterialCommunityIcons name="calendar" size={20} color="#666" />
                         </TouchableOpacity>
                       </View>
+                      {/* Commented out Age input field
                       <View style={{ flex: 0.8 }}>
                         <Text style={styles.label} selectable={false}>Age</Text>
                         <KioskTextInput
@@ -447,6 +448,7 @@ const PatientBoxModal = ({
                           showDismiss={true}
                         />
                       </View>
+                      */}
                     </View>
 
                     <Text style={styles.label} selectable={false}>Gender</Text>

@@ -94,7 +94,7 @@ export async function createPatient({ id, name, dob, gender, age, mr_no }) {
     }
   }
   if (gender != null) body.gender = String(gender).trim();
-  if (age != null) body.age = String(age).trim();
+  // if (age != null) body.age = String(age).trim();
   if (mr_no != null) body.mr_no = String(mr_no).trim();
 
   const response = await axios.post(
