@@ -1733,7 +1733,7 @@ const GalleryScreen = ({ route, navigation }) => {
           </TouchableOpacity>
 
           <View style={styles.titleContainer}>
-            <Text style={[styles.galleryTitle, isSelectionMode && styles.selectionTitle]}>
+            <Text style={styles.galleryTitle}>
               {albumPath.length === 0
                 ? 'Gallery'
                 : isSelectionMode && activePhotos.length > 0
@@ -2309,9 +2309,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     textAlign: 'center',
     marginRight: 30,
-  },
-  selectionTitle: {
-    fontSize: 16,
   },
   selectAllButton: {
     marginLeft: 'auto',
