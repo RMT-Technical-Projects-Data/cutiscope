@@ -8,14 +8,25 @@ const PATIENTS_URL = `${BASE_URL}/api/patients`;
 const PATIENTS_V2_URL = `${BASE_URL}/api/v2/patients`;
 const AXIOS_TIMEOUT = 15000;
 
+async function buildMobileApiHeaders(token) {
+  const headers = { 'Content-Type': 'application/json', 'X-Client': 'mobile-app' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  try {
+    const serialNumber = await AsyncStorage.getItem('serial_number');
+    if (serialNumber) headers['X-Device-ID'] = serialNumber;
+  } catch (e) {
+    console.warn('Failed to retrieve serial number for patient API headers:', e);
+  }
+  return headers;
+}
+
 /**
  * GET /api/patients/next-id – next available patient id for this clinician.
  * Returns { id: "001" }.
  */
 export async function getNextPatientId() {
   const token = await authService.getToken();
-  const headers = { 'Content-Type': 'application/json' };
-  if (token) headers.Authorization = `Bearer ${token}`;
+  const headers = await buildMobileApiHeaders(token);
   const response = await axios.get(`${PATIENTS_URL}/next-id`, {
     timeout: AXIOS_TIMEOUT,
     headers,
@@ -35,8 +46,7 @@ export async function getNextPatientId() {
  */
 export async function getPatients() {
   const token = await authService.getToken();
-  const headers = { 'Content-Type': 'application/json' };
-  if (token) headers.Authorization = `Bearer ${token}`;
+  const headers = await buildMobileApiHeaders(token);
 
   const response = await axios.get(PATIENTS_URL, {
     timeout: AXIOS_TIMEOUT,
@@ -71,17 +81,7 @@ export async function getPatients() {
  */
 export async function createPatient({ id, name, dob, gender, age, mr_no }) {
   const token = await authService.getToken();
-  const headers = { 'Content-Type': 'application/json' };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  try {
-    const serialNumber = await AsyncStorage.getItem('serial_number');
-    if (serialNumber) {
-      headers['X-Device-ID'] = serialNumber;
-    }
-  } catch (e) {
-    console.error('Failed to retrieve serial number for patient creation:', e);
-  }
+  const headers = await buildMobileApiHeaders(token);
   const body = name != null && String(name).trim() ? { name: String(name).trim() } : {};
   if (id != null && String(id).trim()) body.id = String(id).trim();
   if (dob != null) {
@@ -139,7 +139,7 @@ export async function recordPhotoCapture(patientNumber) {
   try {
     const token = await authService.getToken();
     if (!token) return;
-    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+    const headers = await buildMobileApiHeaders(token);
     await axios.post(
       `${PATIENTS_URL}/record-photo`,
       { patient_number: String(patientNumber).trim() },

@@ -338,8 +338,23 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
         }
     }
 
+    private String normalizeSsid(String ssid) {
+        if (ssid == null) {
+            return "";
+        }
+        String value = ssid.trim();
+        if (value.startsWith("\"") && value.endsWith("\"") && value.length() >= 2) {
+            return value.substring(1, value.length() - 1);
+        }
+        return value;
+    }
+
     private void forgetNetworkInternal(String ssid) {
         try {
+            String normalizedSsid = normalizeSsid(ssid);
+            if (normalizedSsid.isEmpty()) {
+                return;
+            }
             // 1. List networks
             Process process = Runtime.getRuntime().exec("su");
             DataOutputStream os = new DataOutputStream(process.getOutputStream());
@@ -355,11 +370,11 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
 
             // 2. Parse output to find Network ID
             while ((line = reader.readLine()) != null) {
-                if (line.contains(ssid)) {
+                if (line.contains(normalizedSsid)) {
                     String[] parts = line.trim().split("\\s+");
                     if (parts.length > 0) {
                         // Check if this line actually matches the SSID
-                        if (line.contains("\"" + ssid + "\"") || line.contains(ssid)) {
+                        if (line.contains("\"" + normalizedSsid + "\"") || line.contains(normalizedSsid)) {
                             networkId = parts[0];
                             break;
                         }

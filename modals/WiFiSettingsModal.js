@@ -62,6 +62,38 @@ const useDebounce = (value, delay) => {
   return debouncedValue;
 };
 
+function normalizeSSID(ssid) {
+  if (!ssid) return '';
+  const value = String(ssid).trim();
+  if (value.startsWith('"') && value.endsWith('"')) {
+    return value.substring(1, value.length - 1);
+  }
+  return value;
+}
+
+function ssidsMatch(a, b) {
+  return normalizeSSID(a) === normalizeSSID(b);
+}
+
+function getPasswordForSSID(passwords, ssid) {
+  const normalized = normalizeSSID(ssid);
+  if (!normalized) return undefined;
+  if (passwords[normalized] != null) return passwords[normalized];
+  const matchedKey = Object.keys(passwords).find((key) => ssidsMatch(key, normalized));
+  return matchedKey != null ? passwords[matchedKey] : undefined;
+}
+
+function removeAllPasswordVariants(passwords, ssid) {
+  const normalized = normalizeSSID(ssid);
+  const updated = { ...passwords };
+  Object.keys(updated).forEach((key) => {
+    if (ssidsMatch(key, normalized)) {
+      delete updated[key];
+    }
+  });
+  return updated;
+}
+
 const WifiSettingsModal = ({ visible, onClose }) => {
   const [wifiEnabled, setWifiEnabled] = useState(true);
   const [networks, setNetworks] = useState([]);
@@ -117,8 +149,13 @@ const WifiSettingsModal = ({ visible, onClose }) => {
       const saved = await AsyncStorage.getItem('@wifi_passwords');
       if (saved) {
         const parsedPasswords = JSON.parse(saved);
-        setNetworkPasswords(parsedPasswords);
-        console.log('Loaded saved passwords:', Object.keys(parsedPasswords).length);
+        const normalizedPasswords = {};
+        Object.entries(parsedPasswords).forEach(([ssid, password]) => {
+          const key = normalizeSSID(ssid);
+          if (key) normalizedPasswords[key] = password;
+        });
+        setNetworkPasswords(normalizedPasswords);
+        console.log('Loaded saved passwords:', Object.keys(normalizedPasswords).length);
       }
     } catch (error) {
       console.warn('Error loading saved passwords:', error);
@@ -127,13 +164,15 @@ const WifiSettingsModal = ({ visible, onClose }) => {
 
   const savePasswordToStorage = async (ssid, password) => {
     try {
+      const normalizedSSID = normalizeSSID(ssid);
+      if (!normalizedSSID) return;
       setNetworkPasswords(prev => {
-        const updated = { ...prev, [ssid]: password };
+        const updated = { ...prev, [normalizedSSID]: password };
         AsyncStorage.setItem('@wifi_passwords', JSON.stringify(updated))
           .catch(err => console.warn('Error saving to AsyncStorage:', err));
         return updated;
       });
-      console.log('Password updated in state and storage for:', ssid);
+      console.log('Password updated in state and storage for:', normalizedSSID);
     } catch (error) {
       console.warn('Error in savePasswordToStorage:', error);
     }
@@ -142,13 +181,12 @@ const WifiSettingsModal = ({ visible, onClose }) => {
   const removePasswordFromStorage = async (ssid) => {
     try {
       setNetworkPasswords(prev => {
-        const updated = { ...prev };
-        delete updated[ssid];
+        const updated = removeAllPasswordVariants(prev, ssid);
         AsyncStorage.setItem('@wifi_passwords', JSON.stringify(updated))
           .catch(err => console.warn('Error saving to AsyncStorage:', err));
         return updated;
       });
-      console.log('Password removed from state and storage for:', ssid);
+      console.log('Password removed from state and storage for:', normalizeSSID(ssid));
     } catch (error) {
       console.warn('Error in removePasswordFromStorage:', error);
     }
@@ -177,8 +215,8 @@ const WifiSettingsModal = ({ visible, onClose }) => {
 
       // Find saved networks that are currently available
       const availableSavedNetworks = networks.filter(network =>
-        networkPasswords[network.SSID] &&
-        network.SSID !== currentSSID
+        getPasswordForSSID(networkPasswords, network.SSID) &&
+        !ssidsMatch(network.SSID, currentSSID)
       );
 
       if (availableSavedNetworks.length > 0) {
@@ -186,7 +224,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
         availableSavedNetworks.sort((a, b) => Math.abs(b.level) - Math.abs(a.level));
 
         const bestNetwork = availableSavedNetworks[0];
-        const savedPassword = networkPasswords[bestNetwork.SSID];
+        const savedPassword = getPasswordForSSID(networkPasswords, bestNetwork.SSID);
 
         console.log(`Auto-connecting to saved network: ${bestNetwork.SSID}`);
 
@@ -607,8 +645,6 @@ const WifiSettingsModal = ({ visible, onClose }) => {
   // Disconnect from network
   const disconnectFromNetwork = async () => {
     try {
-      const ssidToForget = currentNetwork?.SSID;
-
       // Release system-wide WiFi binding
       try {
         await WifiManager.forceWifiUsage(false);
@@ -618,18 +654,10 @@ const WifiSettingsModal = ({ visible, onClose }) => {
 
       await WifiManager.disconnect();
 
-      if (ssidToForget) {
-        try {
-          await SystemTimeModule.forgetNetwork(ssidToForget);
-          console.log("Forgot network from OS:", ssidToForget);
-        } catch (e) {
-          console.warn("Error forgetting network from OS:", e);
-        }
-      }
-
       showInAppToast("Disconnected", { durationMs: 2000 });
 
       setCurrentNetwork(null);
+      setConnectionStatus('disconnected');
       setSavedPasswordModalVisible(false);
       scanNetworks();
     } catch (error) {
@@ -875,10 +903,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
   const handleNetworkPress = async (network) => {
     if (isConnecting) return;
 
-    const isConnected =
-      currentNetwork?.SSID === network.SSID ||
-      currentNetwork?.SSID === `"${network.SSID}"` ||
-      `"${currentNetwork?.SSID}"` === network.SSID;
+    const isConnected = ssidsMatch(currentNetwork?.SSID, network.SSID);
 
     // Do nothing when tapping the currently connected network
     if (isConnected && connectionStatus === 'connected') {
@@ -888,11 +913,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
     setSelectedNetwork(network);
     setConnectionStatus('connecting');
 
-    // Normalize string so we can look up saved password
-    let lookupSSID = network.SSID;
-    if (lookupSSID.startsWith('"') && lookupSSID.endsWith('"')) {
-      lookupSSID = lookupSSID.substring(1, lookupSSID.length - 1);
-    }
+    const lookupSSID = normalizeSSID(network.SSID);
 
     const requiresPassword =
       network.capabilities &&
@@ -901,7 +922,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
         network.capabilities.includes('WEP'));
 
     if (requiresPassword) {
-      const savedPwd = networkPasswords[lookupSSID] || networkPasswords[`"${lookupSSID}"`];
+      const savedPwd = getPasswordForSSID(networkPasswords, lookupSSID);
 
       if (savedPwd) {
         showInAppToast(`Connecting to ${lookupSSID}...`, { durationMs: 2500 });
@@ -924,34 +945,45 @@ const WifiSettingsModal = ({ visible, onClose }) => {
     }
   };
 
-  // Get saved networks (networks we have passwords for)
+  // Get saved networks (networks we have passwords for, plus any active connection)
   const getSavedNetworks = () => {
-    const savedNetworks = Object.keys(networkPasswords).map(ssid => {
-      const isConnected = currentNetwork?.SSID === ssid || currentNetwork?.SSID === `"${ssid}"` || `"${currentNetwork?.SSID}"` === ssid;
-      const isAvailable = networks.some(net =>
-        net.SSID === ssid || net.SSID === `"${ssid}"` || `"${net.SSID}"` === ssid
-      );
-      return {
-        SSID: ssid,
+    const savedBySSID = new Map();
+
+    Object.entries(networkPasswords).forEach(([ssid, password]) => {
+      const normalized = normalizeSSID(ssid);
+      if (!normalized) return;
+      savedBySSID.set(normalized, {
+        SSID: normalized,
         isSaved: true,
-        hasPassword: true,
-        isConnected: isConnected,
-        isAvailable: isAvailable
-      };
+        hasPassword: password != null && String(password).length > 0,
+        isConnected: ssidsMatch(currentNetwork?.SSID, normalized) && connectionStatus === 'connected',
+        isAvailable: networks.some((net) => ssidsMatch(net.SSID, normalized)),
+      });
     });
 
-    // Also include currently connected network even if no password is saved
-    if (currentNetwork && !networkPasswords[currentNetwork.SSID]) {
-      savedNetworks.push({
-        SSID: currentNetwork.SSID,
-        isSaved: true,
-        hasPassword: false,
-        isConnected: true,
-        isAvailable: true
-      });
+    if (currentNetwork?.SSID) {
+      const normalized = normalizeSSID(currentNetwork.SSID);
+      if (normalized && !savedBySSID.has(normalized)) {
+        savedBySSID.set(normalized, {
+          SSID: normalized,
+          isSaved: true,
+          hasPassword: Boolean(getPasswordForSSID(networkPasswords, normalized)),
+          isConnected: connectionStatus === 'connected',
+          isAvailable: networks.some((net) => ssidsMatch(net.SSID, normalized)),
+        });
+      }
     }
 
-    return savedNetworks;
+    return Array.from(savedBySSID.values());
+  };
+
+  const getSavedNetworksForMainList = () => {
+    return getSavedNetworks()
+      .filter((item) => !(item.isConnected && connectionStatus === 'connected'))
+      .map((item) => {
+        const scanned = networks.find((net) => ssidsMatch(net.SSID, item.SSID));
+        return scanned || { SSID: item.SSID, level: -100, capabilities: '[ESS]' };
+      });
   };
 
   // Handle saved network press
@@ -960,18 +992,13 @@ const WifiSettingsModal = ({ visible, onClose }) => {
 
     // If this saved network is already the current one, do nothing on tap
     const isCurrentlyConnected =
-      (currentNetwork?.SSID === savedNetwork.SSID ||
-        currentNetwork?.SSID === `"${savedNetwork.SSID}"` ||
-        `"${currentNetwork?.SSID}"` === savedNetwork.SSID) && connectionStatus === 'connected';
+      ssidsMatch(currentNetwork?.SSID, savedNetwork.SSID) && connectionStatus === 'connected';
 
     if (isCurrentlyConnected) {
       return;
     }
 
-    let lookupSSID = savedNetwork.SSID;
-    if (lookupSSID.startsWith('"') && lookupSSID.endsWith('"')) {
-      lookupSSID = lookupSSID.substring(1, lookupSSID.length - 1);
-    }
+    const lookupSSID = normalizeSSID(savedNetwork.SSID);
 
     setIsConnecting(true);
     setConnectionStatus('connecting');
@@ -993,13 +1020,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
           const freshResults = await WifiManager.loadWifiList();
 
           if (Array.isArray(freshResults)) {
-            const matches = freshResults.filter(net =>
-              net.SSID === savedNetwork.SSID ||
-              net.SSID === `"${savedNetwork.SSID}"` ||
-              `"${net.SSID}"` === savedNetwork.SSID ||
-              net.SSID === lookupSSID ||
-              `"${net.SSID}"` === lookupSSID
-            );
+            const matches = freshResults.filter(net => ssidsMatch(net.SSID, savedNetwork.SSID));
 
             if (matches.length > 0) {
               matches.sort((a, b) => Math.abs(a.level || -100) - Math.abs(b.level || -100));
@@ -1019,7 +1040,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
 
       if (availableNetwork) {
         // Network found, proceed to connect
-        const savedPwd = networkPasswords[lookupSSID] || networkPasswords[`"${lookupSSID}"`];
+        const savedPwd = getPasswordForSSID(networkPasswords, lookupSSID);
         setSelectedNetwork(availableNetwork);
         showInAppToast(`Connecting to ${lookupSSID}...`, { durationMs: 2500 });
 
@@ -1042,19 +1063,26 @@ const WifiSettingsModal = ({ visible, onClose }) => {
   // Forget saved network
   const forgetSavedNetwork = async (ssid) => {
     try {
-      // 1. Remove from app storage
-      await removePasswordFromStorage(ssid);
+      const normalizedSSID = normalizeSSID(ssid);
+      if (!normalizedSSID) return;
 
-      // 2. Remove from OS in background
+      // 1. Remove from app storage (all SSID variants)
+      await removePasswordFromStorage(normalizedSSID);
+
+      // 2. Remove from OS
       try {
-        SystemTimeModule.forgetNetwork(ssid)
-          .then(() => console.log("Forgot network from OS via saved list:", ssid))
-          .catch(e => console.warn("Error forgetting network from OS via saved list:", e));
+        await SystemTimeModule.forgetNetwork(normalizedSSID);
+        console.log('Forgot network from OS via saved list:', normalizedSSID);
       } catch (e) {
-        console.warn("Background error triggering forget network from OS via saved list:", e);
+        console.warn('Error forgetting network from OS via saved list:', e);
       }
 
-      showInAppToast(`Forgot network: ${ssid}`, { durationMs: 2000 });
+      if (ssidsMatch(currentNetwork?.SSID, normalizedSSID)) {
+        setCurrentNetwork(null);
+        setConnectionStatus('disconnected');
+      }
+
+      showInAppToast(`Forgot network: ${normalizedSSID}`, { durationMs: 2000 });
     } catch (error) {
       console.warn('Error forgetting network:', error);
       showInAppToast('Failed to forget network', { durationMs: 2000 });
@@ -1066,8 +1094,8 @@ const WifiSettingsModal = ({ visible, onClose }) => {
     const activeNetworks = debouncedNetworks.length > 0 ? debouncedNetworks : networks;
     if (!activeNetworks.length) return [];
 
-    const connectedNetwork = activeNetworks.find(net => currentNetwork?.SSID === net.SSID);
-    const otherNetworks = activeNetworks.filter(net => currentNetwork?.SSID !== net.SSID);
+    const connectedNetwork = activeNetworks.find(net => ssidsMatch(currentNetwork?.SSID, net.SSID));
+    const otherNetworks = activeNetworks.filter(net => !ssidsMatch(currentNetwork?.SSID, net.SSID));
 
     if (connectedNetwork) {
       return [connectedNetwork, ...otherNetworks];
@@ -1078,14 +1106,14 @@ const WifiSettingsModal = ({ visible, onClose }) => {
 
   // Render network item
   const renderNetworkItem = ({ item }) => {
-    const isActuallyConnected = currentNetwork?.SSID === item.SSID && connectionStatus === 'connected';
-    const isConnectingToThis = selectedNetwork?.SSID === item.SSID && isConnecting;
+    const isActuallyConnected = ssidsMatch(currentNetwork?.SSID, item.SSID) && connectionStatus === 'connected';
+    const isConnectingToThis = ssidsMatch(selectedNetwork?.SSID, item.SSID) && isConnecting;
 
     const isSecure = item.capabilities &&
       (item.capabilities.includes('PSK') ||
         item.capabilities.includes('RSN') ||
         item.capabilities.includes('WEP'));
-    const isSaved = networkPasswords[item.SSID] && !isActuallyConnected;
+    const isSaved = getPasswordForSSID(networkPasswords, item.SSID) && !isActuallyConnected;
 
     // Signal strength label from onboarding logic
     const getSignalStrengthLabel = (level) => {
@@ -1156,11 +1184,9 @@ const WifiSettingsModal = ({ visible, onClose }) => {
 
   // Render saved network item (for saved networks view)
   const renderSavedNetworkItem = ({ item }) => {
-    const isActuallyConnected = (currentNetwork?.SSID === item.SSID || currentNetwork?.SSID === `"${item.SSID}"` || `"${currentNetwork?.SSID}"` === item.SSID) && connectionStatus === 'connected';
-    const isConnectingToThis = selectedNetwork?.SSID === item.SSID && isConnecting;
-    const isAvailable = networks.some(net =>
-      net.SSID === item.SSID || net.SSID === `"${item.SSID}"` || `"${net.SSID}"` === item.SSID
-    );
+    const isActuallyConnected = ssidsMatch(currentNetwork?.SSID, item.SSID) && connectionStatus === 'connected';
+    const isConnectingToThis = ssidsMatch(selectedNetwork?.SSID, item.SSID) && isConnecting;
+    const isAvailable = networks.some((net) => ssidsMatch(net.SSID, item.SSID));
 
     return (
       <TouchableOpacity
@@ -1172,12 +1198,6 @@ const WifiSettingsModal = ({ visible, onClose }) => {
         ]}
         onPress={() => handleSavedNetworkPress(item)}
         disabled={isConnecting}
-        onLongPress={() => {
-          if (item.hasPassword) {
-            // Show option to forget network on long press
-            showInAppToast(`Long press to forget ${item.SSID}`, { durationMs: 2000 });
-          }
-        }}
       >
         <Image
           source={WIFI_ICON}
@@ -1213,17 +1233,13 @@ const WifiSettingsModal = ({ visible, onClose }) => {
             )}
             <VerticalDivider />
             <Text style={styles.savedText}>Saved</Text>
-            {item.hasPassword && (
-              <>
-                <VerticalDivider />
-                <TouchableOpacity
-                  onPress={() => forgetSavedNetwork(item.SSID)}
-                  style={styles.forgetButton}
-                >
-                  <Text style={styles.forgetText}>Forget</Text>
-                </TouchableOpacity>
-              </>
-            )}
+            <VerticalDivider />
+            <TouchableOpacity
+              onPress={() => forgetSavedNetwork(item.SSID)}
+              style={styles.forgetButton}
+            >
+              <Text style={styles.forgetText}>Forget</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </TouchableOpacity>
@@ -1284,9 +1300,13 @@ const WifiSettingsModal = ({ visible, onClose }) => {
   useEffect(() => {
     const handleStateChange = (nextState) => {
       if (appState.match(/inactive|background/) && nextState === 'active') {
-        if (visible && wifiEnabled) {
-          shouldForceScanRef.current = true;
-          scanNetworks(true);
+        if (visible) {
+          loadSavedPasswords();
+          if (wifiEnabled) {
+            shouldForceScanRef.current = true;
+            scanNetworks(true);
+            fetchCurrentNetwork();
+          }
         }
       }
       setAppState(nextState);
@@ -1400,15 +1420,18 @@ const WifiSettingsModal = ({ visible, onClose }) => {
                   sections={[
                     {
                       title: 'Connected Network',
-                      data: networks.filter(net => currentNetwork?.SSID === net.SSID)
+                      data: networks.filter(net => ssidsMatch(currentNetwork?.SSID, net.SSID))
                     },
                     {
                       title: 'Saved Networks',
-                      data: networks.filter(net => networkPasswords[net.SSID] && currentNetwork?.SSID !== net.SSID)
+                      data: getSavedNetworksForMainList()
                     },
                     {
                       title: 'Available Networks',
-                      data: networks.filter(net => !networkPasswords[net.SSID] && currentNetwork?.SSID !== net.SSID)
+                      data: networks.filter(net =>
+                        !getPasswordForSSID(networkPasswords, net.SSID) &&
+                        !ssidsMatch(currentNetwork?.SSID, net.SSID)
+                      )
                     }
                   ].filter(section => section.data.length > 0 || section.title === 'Available Networks')}
                   keyExtractor={(item) => item.BSSID + item.SSID}

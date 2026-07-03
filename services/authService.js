@@ -13,6 +13,19 @@ if (__DEV__) {
 const AXIOS_TIMEOUT = 15000;
 const HEALTH_TIMEOUT = 8000;
 
+async function getMobileClientHeaders(extra = {}) {
+    const headers = { 'X-Client': 'mobile-app', ...extra };
+    try {
+        const serialNumber = await AsyncStorage.getItem('serial_number');
+        if (serialNumber) {
+            headers['X-Device-ID'] = serialNumber;
+        }
+    } catch (e) {
+        console.warn('Failed to retrieve serial number for API headers:', e);
+    }
+    return headers;
+}
+
 /** Get the backend base URL (no trailing slash). */
 export function getBaseUrl() {
     return BASE_URL;
@@ -57,7 +70,11 @@ function getMessage(err) {
 class AuthService {
     async sendOTP(email) {
         try {
-            const response = await axios.post(`${API_URL}/send-otp`, { email: (email || '').trim().toLowerCase() }, { timeout: AXIOS_TIMEOUT });
+            const response = await axios.post(
+                `${API_URL}/send-otp`,
+                { email: (email || '').trim().toLowerCase() },
+                { timeout: AXIOS_TIMEOUT, headers: await getMobileClientHeaders({ 'Content-Type': 'application/json' }) }
+            );
             return response.data;
         } catch (error) {
             throw new Error(getMessage(error));
@@ -70,7 +87,10 @@ class AuthService {
                 email: (email || '').trim().toLowerCase(),
                 password,
                 otp: (otp || '').trim(),
-            }, { timeout: AXIOS_TIMEOUT });
+            }, {
+                timeout: AXIOS_TIMEOUT,
+                headers: await getMobileClientHeaders({ 'Content-Type': 'application/json' }),
+            });
 
             if (response.data && response.data.token) {
                 await AsyncStorage.setItem('userToken', response.data.token);
@@ -92,7 +112,7 @@ class AuthService {
             };
             const response = await axios.post(`${API_URL}/login`, body, {
                 timeout: AXIOS_TIMEOUT,
-                headers: { 'Content-Type': 'application/json' },
+                headers: await getMobileClientHeaders({ 'Content-Type': 'application/json' }),
                 validateStatus: () => true,
             });
 
@@ -120,7 +140,10 @@ class AuthService {
                 { oldPassword, newPassword },
                 {
                     timeout: AXIOS_TIMEOUT,
-                    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    headers: await getMobileClientHeaders({
+                        Authorization: `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                    }),
                     validateStatus: () => true,
                 }
             );
@@ -138,7 +161,11 @@ class AuthService {
             const response = await axios.post(
                 `${API_URL}/verify-otp`,
                 { email: (email || '').trim().toLowerCase(), otp: (otp || '').trim() },
-                { timeout: AXIOS_TIMEOUT, validateStatus: () => true }
+                {
+                    timeout: AXIOS_TIMEOUT,
+                    headers: await getMobileClientHeaders({ 'Content-Type': 'application/json' }),
+                    validateStatus: () => true,
+                }
             );
             if (response.status === 200 && response.data && response.data.valid) return response.data;
             throw new Error((response.data && response.data.message) || 'Invalid or expired OTP');
@@ -156,7 +183,10 @@ class AuthService {
                 { otp: (otp || '').trim() },
                 {
                     timeout: AXIOS_TIMEOUT,
-                    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    headers: await getMobileClientHeaders({
+                        Authorization: `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                    }),
                     validateStatus: () => true,
                 }
             );
@@ -176,7 +206,10 @@ class AuthService {
                 {},
                 {
                     timeout: AXIOS_TIMEOUT,
-                    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    headers: await getMobileClientHeaders({
+                        Authorization: `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                    }),
                     validateStatus: () => true,
                 }
             );
@@ -196,7 +229,10 @@ class AuthService {
                 { otp: (otp || '').trim(), newPassword: newPassword || '' },
                 {
                     timeout: AXIOS_TIMEOUT,
-                    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    headers: await getMobileClientHeaders({
+                        Authorization: `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                    }),
                     validateStatus: () => true,
                 }
             );
@@ -214,7 +250,11 @@ class AuthService {
             const response = await axios.post(
                 `${API_URL}/forgot-password`,
                 { email: (email || '').trim().toLowerCase() },
-                { timeout: AXIOS_TIMEOUT, validateStatus: () => true }
+                {
+                    timeout: AXIOS_TIMEOUT,
+                    headers: await getMobileClientHeaders({ 'Content-Type': 'application/json' }),
+                    validateStatus: () => true,
+                }
             );
             if (response.status === 200) return response.data;
             throw new Error((response.data && response.data.message) || 'Failed to send reset code');
@@ -232,7 +272,11 @@ class AuthService {
                     otp: (otp || '').trim(),
                     newPassword: newPassword || '',
                 },
-                { timeout: AXIOS_TIMEOUT, validateStatus: () => true }
+                {
+                    timeout: AXIOS_TIMEOUT,
+                    headers: await getMobileClientHeaders({ 'Content-Type': 'application/json' }),
+                    validateStatus: () => true,
+                }
             );
             if (response.status === 200) return response.data;
             throw new Error((response.data && response.data.message) || 'Failed to reset password');
