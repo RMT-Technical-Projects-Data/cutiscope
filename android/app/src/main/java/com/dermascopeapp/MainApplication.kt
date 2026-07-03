@@ -38,6 +38,7 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
+    BluetoothOppCleanup.scheduleBootCleanup(this)
     loadReactNative(this)
   }
 }

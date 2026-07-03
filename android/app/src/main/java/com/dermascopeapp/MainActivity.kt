@@ -121,6 +121,8 @@ class MainActivity : ReactActivity() {
 
         checkAccessibilityService()
 
+        BluetoothOppCleanup.scheduleBootCleanup(applicationContext)
+
         // Listen for screen off (standby) so we turn off torch and notify JS
         registerScreenOffReceiver()
 

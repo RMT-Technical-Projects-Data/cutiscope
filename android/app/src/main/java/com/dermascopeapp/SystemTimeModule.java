@@ -951,6 +951,13 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                 rfcommConnected = true;
 
                 sendObexFiles(socket, filePaths);
+
+                try {
+                    BluetoothOppCleanup.clearCompletedTransfers(getReactApplicationContext());
+                } catch (Exception cleanupEx) {
+                    Log.w("SystemTimeModule", "Bluetooth OPP cleanup failed: " + cleanupEx.getMessage());
+                }
+
                 try {
                     WritableMap statusMap = Arguments.createMap();
                     statusMap.putString("status", "completed");

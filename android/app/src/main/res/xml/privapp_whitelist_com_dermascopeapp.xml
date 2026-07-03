@@ -18,6 +18,7 @@
         <permission name="android.permission.STATUS_BAR" />
         <permission name="android.permission.EXPAND_STATUS_BAR" />
         <permission name="android.permission.CONTROL_KEYGUARD_SECURE_NOTIFICATIONS" />
+        <permission name="android.permission.ACCESS_BLUETOOTH_SHARE" />
         <permission name="android.permission.DISABLE_KEYGUARD" />
         <permission name="android.permission.DEVICE_POWER" />
         <permission name="android.permission.CHANGE_CONFIGURATION" />

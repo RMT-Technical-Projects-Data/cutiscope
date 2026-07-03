@@ -3,7 +3,6 @@ package com.dermascopeapp
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.util.Log
 
 /**
@@ -13,12 +12,19 @@ import android.util.Log
 class BootCompletedReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED &&
-            intent.action != Intent.ACTION_LOCKED_BOOT_COMPLETED
+        val action = intent.action
+        if (action != Intent.ACTION_BOOT_COMPLETED &&
+            action != Intent.ACTION_LOCKED_BOOT_COMPLETED &&
+            action != "android.intent.action.QUICKBOOT_POWERON"
         ) {
             return
         }
-        Log.i(TAG, "Boot completed - launching ${context.packageName}")
+
+        Log.i(TAG, "Boot/power-on completed ($action) - launching ${context.packageName}")
+
+        // Bluetooth OPP re-posts "share successfully" notifications on reboot/power-on.
+        BluetoothOppCleanup.scheduleBootCleanup(context)
+
         val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
             ?: Intent(context, MainActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NO_HISTORY)
