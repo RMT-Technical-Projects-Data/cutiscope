@@ -552,6 +552,7 @@ const App = () => {
                               placeholderTextColor="#666"
                               secureTextEntry
                               keyboardType="numeric"
+                              hostKeyboardLocally
                             />
                             {kioskPinError ? <Text style={styles.kioskPinErrorText}>{kioskPinError}</Text> : null}
                             <View style={styles.kioskPinButtons}>
@@ -576,6 +577,7 @@ const App = () => {
                               placeholderTextColor="#666"
                               autoCapitalize="characters"
                               autoCorrect={false}
+                              hostKeyboardLocally
                             />
                             {serialInputError ? <Text style={styles.kioskPinErrorText}>{serialInputError}</Text> : null}
                             <View style={styles.kioskPinButtons}>
@@ -628,7 +630,7 @@ const App = () => {
                       </View>
                     </View>
                     {/* Custom keyboard must be inside Modal on Android (Modal is separate window). */}
-                    <CustomKeyboard />
+                    <CustomKeyboard localHost />
                   </View>
                 </Modal>
                 <CustomKeyboard />

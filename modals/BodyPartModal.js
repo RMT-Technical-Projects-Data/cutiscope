@@ -18,7 +18,7 @@ const H_PAD = 24;
 const BodyPartModal = ({ visible, onClose, onSave, initialValue = '' }) => {
   const [value, setValue] = useState(initialValue);
   const inputRef = useRef(null);
-  const { dismissKeyboard, hasFocusedInput } = useCustomKeyboard();
+  const { dismissKeyboard } = useCustomKeyboard();
 
   useEffect(() => {
     if (visible) {
@@ -57,12 +57,7 @@ const BodyPartModal = ({ visible, onClose, onSave, initialValue = '' }) => {
     >
       <View style={styles.root}>
         <CustomStatusBar />
-        <View
-          style={[
-            styles.contentArea,
-            hasFocusedInput ? styles.contentAreaAboveKeyboard : styles.contentAreaCentered,
-          ]}
-        >
+        <View style={[styles.contentArea, styles.contentAreaCentered]}>
           <View style={styles.modalView}>
             <Text style={styles.title}>Enter Body Part</Text>
             <KioskTextInput
@@ -77,6 +72,7 @@ const BodyPartModal = ({ visible, onClose, onSave, initialValue = '' }) => {
               contextMenuHidden
               selectTextOnFocus={false}
               showDismiss
+              hostKeyboardLocally
             />
             <View style={styles.buttonRow}>
               <TouchableOpacity style={styles.cancelBtn} onPress={handleClose}>
@@ -88,7 +84,7 @@ const BodyPartModal = ({ visible, onClose, onSave, initialValue = '' }) => {
             </View>
           </View>
         </View>
-        <CustomKeyboard />
+        <CustomKeyboard localHost />
       </View>
     </Modal>
   );
@@ -107,11 +103,6 @@ const styles = StyleSheet.create({
   contentAreaCentered: {
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  contentAreaAboveKeyboard: {
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    paddingBottom: 6,
   },
   modalView: {
     width: SCREEN_WIDTH * 0.92,

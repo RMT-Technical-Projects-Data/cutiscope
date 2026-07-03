@@ -2747,24 +2747,6 @@ const CameraScreen = ({ navigation }) => {
           visible={powerOffModalVisible}
           onClose={() => setPowerOffModalVisible(false)}
         />
-        <PatientBoxModal
-          visible={patientBoxModalVisible}
-          onClose={() => {
-            setPatientBoxModalVisible(false);
-            resetInactivityTimer();
-          }}
-          initialId={currentBox?.id || ''}
-          initialName={currentBox?.name || ''}
-          onSet={async (box) => {
-            setCurrentBox(box);
-            try {
-              await AsyncStorage.setItem('@patient_box', JSON.stringify(box));
-            } catch (e) {
-              console.warn('Save patient box:', e);
-            }
-          }}
-          onInteraction={resetInactivityTimer}
-        />
 
         <BodyPartModal
           visible={bodyPartModalVisible}

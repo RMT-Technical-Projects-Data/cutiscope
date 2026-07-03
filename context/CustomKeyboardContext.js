@@ -13,6 +13,7 @@ const defaultDescriptor = {
   showDismiss: false,
   blur: () => {},
   onSubmitEditing: undefined,
+  hostKeyboardLocally: false,
 };
 
 const CustomKeyboardContext = createContext({
@@ -23,6 +24,7 @@ const CustomKeyboardContext = createContext({
   dismissKeyboard: () => {},
   submitEditing: () => {},
   hasFocusedInput: false,
+  hostKeyboardLocally: false,
   keyboardType: 'default',
   showDismiss: false,
 });
@@ -30,6 +32,7 @@ const CustomKeyboardContext = createContext({
 export function CustomKeyboardProvider({ children }) {
   const focusedRef = useRef(null);
   const [hasFocusedInput, setHasFocusedInput] = useState(false);
+  const [hostKeyboardLocally, setHostKeyboardLocally] = useState(false);
   const [keyboardType, setKeyboardType] = useState('default');
   const [showDismiss, setShowDismiss] = useState(false);
 
@@ -37,6 +40,7 @@ export function CustomKeyboardProvider({ children }) {
     focusedRef.current = { id, ...descriptor };
     setKeyboardType(descriptor.keyboardType || 'default');
     setShowDismiss(!!descriptor.showDismiss);
+    setHostKeyboardLocally(!!descriptor.hostKeyboardLocally);
     setHasFocusedInput(true);
   }, []);
 
@@ -45,6 +49,7 @@ export function CustomKeyboardProvider({ children }) {
       focusedRef.current = null;
       setKeyboardType('default');
       setShowDismiss(false);
+      setHostKeyboardLocally(false);
       setHasFocusedInput(false);
     }
   }, []);
@@ -105,10 +110,11 @@ export function CustomKeyboardProvider({ children }) {
       dismissKeyboard,
       submitEditing,
       hasFocusedInput,
+      hostKeyboardLocally,
       keyboardType,
       showDismiss,
     }),
-    [hasFocusedInput, registerFocusedInput, unregisterFocusedInput, insertText, deleteBackward, dismissKeyboard, submitEditing, keyboardType, showDismiss]
+    [hasFocusedInput, hostKeyboardLocally, registerFocusedInput, unregisterFocusedInput, insertText, deleteBackward, dismissKeyboard, submitEditing, keyboardType, showDismiss]
   );
 
   return (

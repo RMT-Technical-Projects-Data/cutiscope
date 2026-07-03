@@ -143,8 +143,8 @@ const KeyRow = memo(function KeyRow({ keys, onKeyPress }) {
 });
 
 // ─── Main keyboard ─────────────────────────────────────────────────────────────
-function CustomKeyboard({ onKeyPressFeedback }) {
-  const { insertText, deleteBackward, dismissKeyboard, submitEditing, hasFocusedInput, keyboardType, showDismiss } = useCustomKeyboard();
+function CustomKeyboard({ onKeyPressFeedback, localHost = false }) {
+  const { insertText, deleteBackward, dismissKeyboard, submitEditing, hasFocusedInput, hostKeyboardLocally, keyboardType, showDismiss } = useCustomKeyboard();
   const [layout, setLayout] = useState(LAYOUT_ALPHA);
   const [capsState, setCapsState] = useState(CAPS_OFF);
 
@@ -181,6 +181,7 @@ function CustomKeyboard({ onKeyPressFeedback }) {
   }, [deleteBackward, onKeyPressFeedback]);
 
   if (!hasFocusedInput) return null;
+  if (localHost !== hostKeyboardLocally) return null;
 
   const isUpperCase = capsState !== CAPS_OFF && layout === LAYOUT_ALPHA;
   const char = (c) => (isUpperCase ? c : c.toLowerCase());

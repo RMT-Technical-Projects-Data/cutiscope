@@ -37,6 +37,27 @@ const TAB_EXISTING_SET = 'Existing patients';
 
 const GENDER_OPTIONS = ['Male', 'Female', 'Other'];
 const MR_NO_PREFIX = 'MRI-';
+const PATIENT_NAME_VALID = /^[a-zA-Z\s]+$/;
+
+function sanitizePatientName(text) {
+  return String(text).replace(/[^a-zA-Z\s]/g, '');
+}
+
+function isNewPatientFormReady({ name, mrNo, dob, gender, nextId, loadingNextId }) {
+  const trimmedName = (name || '').trim();
+  const trimmedMrNo = (mrNo || '').trim();
+  return (
+    trimmedName.length > 0 &&
+    PATIENT_NAME_VALID.test(trimmedName) &&
+    /[a-zA-Z]/.test(trimmedName) &&
+    trimmedMrNo.length === 4 &&
+    (dob || '').trim().length > 0 &&
+    (gender || '').trim().length > 0 &&
+    !loadingNextId &&
+    Boolean(nextId) &&
+    nextId !== '--'
+  );
+}
 
 const PatientBoxModal = ({
   visible,
@@ -228,9 +249,24 @@ const PatientBoxModal = ({
       return;
     }
 
+    if (!PATIENT_NAME_VALID.test(trimmedName) || !/[a-zA-Z]/.test(trimmedName)) {
+      setFormError('Patient name must contain only letters.');
+      return;
+    }
+
     const trimmedMrNo = (mrNo || '').trim();
-    if (trimmedMrNo && trimmedMrNo.length !== 4) {
+    if (trimmedMrNo.length !== 4) {
       setFormError('MRI number must be exactly 4 digits.');
+      return;
+    }
+
+    if (!(dob || '').trim()) {
+      setFormError('Date of birth is required.');
+      return;
+    }
+
+    if (!(gender || '').trim()) {
+      setFormError('Gender is required.');
       return;
     }
 
@@ -243,7 +279,7 @@ const PatientBoxModal = ({
         dob: (dob || '').trim(),
         gender: (gender || '').trim(),
         // age: (age || '').trim(),
-        mr_no: (mrNo || '').trim() ? `${MR_NO_PREFIX}${(mrNo || '').trim()}` : '',
+        mr_no: `${MR_NO_PREFIX}${trimmedMrNo}`,
       });
       onSet({
         id: String(created.id ?? nextId),
@@ -275,6 +311,8 @@ const PatientBoxModal = ({
         String(p.name || '').toLowerCase().includes(q)
     );
   }, [existingList, searchQuery]);
+
+  const canSaveNewPatient = isNewPatientFormReady({ name, mrNo, dob, gender, nextId, loadingNextId });
 
   const renderPatientItem = useCallback(({ item }) => {
     const isSelected = String(item.id) === String(initialId);
@@ -394,7 +432,7 @@ const PatientBoxModal = ({
                       style={styles.input}
                       value={name}
                       onChangeText={(text) => {
-                        setName(text);
+                        setName(sanitizePatientName(text));
                         if (formError) setFormError('');
                       }}
                       placeholder="Patient"
@@ -403,6 +441,7 @@ const PatientBoxModal = ({
                       contextMenuHidden
                       selectTextOnFocus={false}
                       showDismiss={true}
+                      hostKeyboardLocally
                     />
 
                     <Text style={styles.label} selectable={false}>MR. NO.</Text>
@@ -423,6 +462,7 @@ const PatientBoxModal = ({
                         contextMenuHidden
                         selectTextOnFocus={false}
                         showDismiss={true}
+                      hostKeyboardLocally
                       />
                     </View>
 
@@ -456,6 +496,7 @@ const PatientBoxModal = ({
                           contextMenuHidden
                           selectTextOnFocus={false}
                           showDismiss={true}
+                      hostKeyboardLocally
                         />
                       </View>
                       */}
@@ -520,10 +561,10 @@ const PatientBoxModal = ({
                     <TouchableOpacity
                       style={[
                         styles.setButton,
-                        (saving || !(name || '').trim()) && styles.setButtonDisabled
+                        (saving || !canSaveNewPatient) && styles.setButtonDisabled
                       ]}
                       onPress={handleSetNew}
-                      disabled={saving || !(name || '').trim()}
+                      disabled={saving || !canSaveNewPatient}
                     >
                       {saving ? (
                         <ActivityIndicator color="#fff" size="small" />
@@ -559,6 +600,7 @@ const PatientBoxModal = ({
                     contextMenuHidden
                     selectTextOnFocus={false}
                     showDismiss={true}
+                    hostKeyboardLocally
                   />
                   {searchQuery.length > 0 && (
                     <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.searchClear}>
@@ -599,7 +641,7 @@ const PatientBoxModal = ({
           </View>
         </View>
       </View>
-      <CustomKeyboard />
+      <CustomKeyboard localHost />
     </Modal>
   );
 };

@@ -15,6 +15,7 @@ const KioskTextInput = forwardRef(function KioskTextInput({
   onChangeText,
   onSelectionChange,
   id: propId,
+  hostKeyboardLocally = false,
   ...rest
 }, ref) {
   const localRef = useRef(null);
@@ -76,12 +77,13 @@ const KioskTextInput = forwardRef(function KioskTextInput({
         setSelection,
         keyboardType: rest.keyboardType || 'default',
         showDismiss: rest.showDismiss ?? false,
+        hostKeyboardLocally,
         blur: () => localRef.current?.blur?.(),
         onSubmitEditing,
       });
       rest.onFocus?.(e);
     },
-    [id, getValue, setValue, getSelection, setSelection, registerFocusedInput, rest, onSubmitEditing]
+    [id, getValue, setValue, getSelection, setSelection, registerFocusedInput, hostKeyboardLocally, rest, onSubmitEditing]
   );
 
   const handleBlur = useCallback(
