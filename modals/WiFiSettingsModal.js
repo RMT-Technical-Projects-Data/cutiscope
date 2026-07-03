@@ -274,6 +274,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
           autoCorrect={false}
           returnKeyType="done"
           blurOnSubmit={false}
+          showDismiss={true}
         />
 
         <TouchableOpacity
@@ -1527,6 +1528,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
                         autoCorrect={false}
                         returnKeyType="done"
                         onSubmitEditing={() => (password || '').trim().length >= 8 && connectToNetwork(selectedNetwork, password)}
+                        showDismiss={true}
                       />
                       <TouchableOpacity
                         style={styles.eyeIconContainer}
@@ -1614,6 +1616,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
                       editable={false}
                       autoCapitalize="none"
                       autoCorrect={false}
+                      showDismiss={true}
                     />
                     <TouchableOpacity
                       style={styles.eyeIcon}

@@ -269,6 +269,7 @@ const WifiMenu = ({ onClose }) => {
             placeholder="Password"
             value={password}
             onChangeText={setPassword}
+            showDismiss={true}
           />
           <TouchableOpacity style={styles.submitButton} onPress={handlePasswordSubmit}>
             <Text style={styles.submitButtonText}>Connect</Text>

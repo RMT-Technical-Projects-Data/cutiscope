@@ -227,6 +227,13 @@ const PatientBoxModal = ({
       onClose();
       return;
     }
+
+    const trimmedMrNo = (mrNo || '').trim();
+    if (trimmedMrNo && trimmedMrNo.length !== 4) {
+      setFormError('MRI number must be exactly 4 digits.');
+      return;
+    }
+
     setSaving(true);
     setFormError('');
     try {
@@ -248,7 +255,7 @@ const PatientBoxModal = ({
     } finally {
       setSaving(false);
     }
-  }, [name, dob, gender, age, mrNo, nextId, onSet, onClose]);
+  }, [name, dob, gender, age, mrNo, nextId, onSet, onClose, formError]);
 
   const handleClearSelection = useCallback(() => {
     onSet({ id: '', name: '' });
@@ -406,7 +413,10 @@ const PatientBoxModal = ({
                       <KioskTextInput
                         style={[styles.input, styles.mrNoInput]}
                         value={mrNo}
-                        onChangeText={(text) => setMrNo(String(text).replace(/^MRI-/i, '').replace(/\D/g, ''))}
+                        onChangeText={(text) => {
+                          setMrNo(String(text).replace(/^MRI-/i, '').replace(/\D/g, ''));
+                          if (formError) setFormError('');
+                        }}
                         placeholder="1234"
                         placeholderTextColor="#666"
                         keyboardType="numeric"

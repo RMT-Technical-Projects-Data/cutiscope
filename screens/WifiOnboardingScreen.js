@@ -1097,6 +1097,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
                       autoCapitalize="none"
                       autoCorrect={false}
                       autoFocus={true}
+                      showDismiss={true}
                     />
                     <TouchableOpacity
                       style={styles.eyeIconContainer}
