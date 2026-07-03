@@ -12,8 +12,25 @@ import CustomKeyboard from '../Components/CustomKeyboard';
 import { useCustomKeyboard } from '../context/CustomKeyboardContext';
 import CustomStatusBar from '../Components/CustomStatusBar';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const H_PAD = 24;
+const BODY_PART_MAX_LENGTH = 20;
+const BODY_PART_VALID = /^[a-zA-Z\s]+$/;
+// Reserve space for the in-app keyboard so the form sits above it on open.
+const MODAL_BOTTOM_OFFSET = Math.min(300, Math.round(SCREEN_HEIGHT * 0.34));
+
+function sanitizeBodyPart(text) {
+  return String(text).replace(/[^a-zA-Z\s]/g, '').slice(0, BODY_PART_MAX_LENGTH);
+}
+
+function isBodyPartReady(value) {
+  const trimmed = (value || '').trim();
+  return (
+    trimmed.length > 0 &&
+    BODY_PART_VALID.test(trimmed) &&
+    /[a-zA-Z]/.test(trimmed)
+  );
+}
 
 const BodyPartModal = ({ visible, onClose, onSave, initialValue = '' }) => {
   const [value, setValue] = useState(initialValue);
@@ -22,7 +39,7 @@ const BodyPartModal = ({ visible, onClose, onSave, initialValue = '' }) => {
 
   useEffect(() => {
     if (visible) {
-      setValue(initialValue);
+      setValue(sanitizeBodyPart(initialValue));
     }
   }, [visible, initialValue]);
 
@@ -42,10 +59,14 @@ const BodyPartModal = ({ visible, onClose, onSave, initialValue = '' }) => {
   };
 
   const handleSave = () => {
+    const trimmed = sanitizeBodyPart(value).trim();
+    if (!isBodyPartReady(trimmed)) return;
     dismissKeyboard();
-    onSave(value.trim());
+    onSave(trimmed);
     onClose();
   };
+
+  const canSave = isBodyPartReady(value);
 
   return (
     <Modal
@@ -57,18 +78,19 @@ const BodyPartModal = ({ visible, onClose, onSave, initialValue = '' }) => {
     >
       <View style={styles.root}>
         <CustomStatusBar />
-        <View style={[styles.contentArea, styles.contentAreaCentered]}>
+        <View style={styles.modalLayer}>
           <View style={styles.modalView}>
             <Text style={styles.title}>Enter Body Part</Text>
             <KioskTextInput
               ref={inputRef}
               style={styles.input}
               value={value}
-              onChangeText={setValue}
+              onChangeText={(text) => setValue(sanitizeBodyPart(text))}
               placeholder="e.g. Left Arm, Back"
               placeholderTextColor="#666"
               autoCapitalize="words"
               autoCorrect={false}
+              maxLength={BODY_PART_MAX_LENGTH}
               contextMenuHidden
               selectTextOnFocus={false}
               showDismiss
@@ -78,13 +100,19 @@ const BodyPartModal = ({ visible, onClose, onSave, initialValue = '' }) => {
               <TouchableOpacity style={styles.cancelBtn} onPress={handleClose}>
                 <Text style={styles.cancelText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
+              <TouchableOpacity
+                style={[styles.saveBtn, !canSave && styles.saveBtnDisabled]}
+                onPress={handleSave}
+                disabled={!canSave}
+              >
                 <Text style={styles.saveText}>Save</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
-        <CustomKeyboard localHost />
+        <View style={styles.keyboardLayer} pointerEvents="box-none">
+          <CustomKeyboard localHost />
+        </View>
       </View>
     </Modal>
   );
@@ -95,14 +123,18 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.85)',
   },
-  contentArea: {
-    flex: 1,
-    width: '100%',
-    paddingHorizontal: H_PAD,
-  },
-  contentAreaCentered: {
+  modalLayer: {
+    ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: H_PAD,
+    paddingBottom: MODAL_BOTTOM_OFFSET,
+  },
+  keyboardLayer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   modalView: {
     width: SCREEN_WIDTH * 0.92,
@@ -136,6 +168,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'flex-end',
     gap: 10,
+    marginTop: 8,
   },
   cancelBtn: {
     padding: 10,
@@ -150,6 +183,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     backgroundColor: '#22B2A6',
     borderRadius: 8,
+  },
+  saveBtnDisabled: {
+    backgroundColor: '#444',
+    opacity: 0.8,
   },
   saveText: {
     color: '#000',

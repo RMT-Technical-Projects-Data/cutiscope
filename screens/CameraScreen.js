@@ -2727,9 +2727,7 @@ const CameraScreen = ({ navigation }) => {
         {!isGuest && (currentBox?.name || bodyPart) ? (
           <View style={styles.patientNameTopBar}>
             <Text style={styles.patientNameText} numberOfLines={1}>
-              {currentBox?.name ? <Text>Patient: <Text style={{ fontFamily: 'ProductSans-Bold' }}>{currentBox.name}</Text></Text> : null}
-              {currentBox?.name && bodyPart ? ' | ' : ''}
-              {bodyPart ? <Text>Body Part: <Text style={{ fontFamily: 'ProductSans-Bold' }}>{bodyPart}</Text></Text> : null}
+              {[currentBox?.name, bodyPart].filter(Boolean).join(' / ')}
             </Text>
           </View>
         ) : null}
@@ -3110,7 +3108,7 @@ const styles = StyleSheet.create({
   patientNameText: {
     color: '#ffffff',
     fontSize: 16,
-    fontFamily: 'ProductSans-Regular',
+    fontFamily: 'ProductSans-Bold',
     backgroundColor: 'rgba(0,0,0,0.6)',
     paddingHorizontal: 16,
     paddingVertical: 6,

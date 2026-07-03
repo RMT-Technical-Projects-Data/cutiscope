@@ -38,9 +38,10 @@ const TAB_EXISTING_SET = 'Existing patients';
 const GENDER_OPTIONS = ['Male', 'Female', 'Other'];
 const MR_NO_PREFIX = 'MRI-';
 const PATIENT_NAME_VALID = /^[a-zA-Z\s]+$/;
+const PATIENT_NAME_MAX_LENGTH = 20;
 
 function sanitizePatientName(text) {
-  return String(text).replace(/[^a-zA-Z\s]/g, '');
+  return String(text).replace(/[^a-zA-Z\s]/g, '').slice(0, PATIENT_NAME_MAX_LENGTH);
 }
 
 function isNewPatientFormReady({ name, mrNo, dob, gender, nextId, loadingNextId }) {
@@ -438,6 +439,7 @@ const PatientBoxModal = ({
                       placeholder="Patient"
                       placeholderTextColor="#666"
                       autoCapitalize="words"
+                      maxLength={PATIENT_NAME_MAX_LENGTH}
                       contextMenuHidden
                       selectTextOnFocus={false}
                       showDismiss={true}
