@@ -81,14 +81,20 @@ class MainActivity : ReactActivity() {
         // Lock to portrait always (kiosk); overrides any rotation
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
 
-        // Keep screen on and show when locked
+        // Keep screen on, show when locked, and set window to fullscreen
         window.addFlags(
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
             WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
             WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
             WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-            WindowManager.LayoutParams.FLAG_SECURE
+            WindowManager.LayoutParams.FLAG_SECURE or
+            WindowManager.LayoutParams.FLAG_FULLSCREEN
         )
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
 
         // ★ Modern API equivalent — more reliable on Android O+ for preventing
         // the keyguard race during stopLockTask() windows (e.g. Bluetooth pairing)
@@ -347,7 +353,7 @@ class MainActivity : ReactActivity() {
                     turnOffTorchAtSystemLevel()
                     
                     // 2. Wake the screen back up immediately
-                    wakeUpScreen()
+                    // wakeUpScreen()
                     
                     // 3. Release old wake lock
                     releaseWakeLock()

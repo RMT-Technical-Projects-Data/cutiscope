@@ -473,6 +473,9 @@ const App = () => {
                         headerShown: false,
                         contentStyle: { backgroundColor: '#000' },
                         screenOrientation: 'portrait',
+                        statusBarHidden: true,
+                        statusBarTranslucent: true,
+                        statusBarBackgroundColor: 'transparent',
                       }}
                     >
                       <Stack.Screen name="Welcome">

@@ -2722,7 +2722,7 @@ const CameraScreen = ({ navigation }) => {
   return (
     <>
       <View style={styles.container}>
-        <CustomStatusBar />
+        {/* <CustomStatusBar /> */}
 
         {!isGuest && (currentBox?.name || bodyPart) ? (
           <View style={styles.patientNameTopBar}>
