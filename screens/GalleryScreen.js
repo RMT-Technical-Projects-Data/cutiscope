@@ -1273,10 +1273,7 @@ const GalleryScreen = ({ route, navigation }) => {
       }
     }
 
-    let label = '';
-    if (patientText) label += `Patient: ${patientText}`;
-    if (patientText && bodyPartText) label += ' | ';
-    if (bodyPartText) label += `Body Part: ${bodyPartText}`;
+    const label = [patientText, bodyPartText].filter(Boolean).join(' | ');
     return label;
   }, []);
 
@@ -2157,9 +2154,9 @@ const FullScreenGalleryModal = React.memo(({
                   borderRadius: 4,
                   overflow: 'hidden',
                 }} numberOfLines={1}>
-                  {patientText ? <Text>Patient: <Text style={{fontFamily: 'ProductSans-Bold'}}>{patientText}</Text></Text> : null}
+                  {patientText ? <Text style={{fontFamily: 'ProductSans-Bold'}}>{patientText}</Text> : null}
                   {patientText && bodyPartText ? ' | ' : ''}
-                  {bodyPartText ? <Text>Body Part: <Text style={{fontFamily: 'ProductSans-Bold'}}>{bodyPartText}</Text></Text> : null}
+                  {bodyPartText ? <Text style={{fontFamily: 'ProductSans-Bold'}}>{bodyPartText}</Text> : null}
                 </Text>
               </View>
             );

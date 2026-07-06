@@ -1960,7 +1960,7 @@ const CameraScreen = ({ navigation }) => {
   //     if (patientName || part) {
   //       try {
   //         console.log('📝 processImage: Drawing patient info box...');
-  //         const label = `Patient: ${patientName}${patientName && part ? ' | ' : ''}${part ? `Body Part: ${part}` : ''}`;
+  //         const label = [patientName, part].filter(Boolean).join(' | ');
 
   //         const fontSize = Math.max(40, imgW / 25);
 
@@ -2173,7 +2173,7 @@ const CameraScreen = ({ navigation }) => {
       if (patientName || part) {
         try {
           console.log('📝 processImage: Drawing patient info box...');
-          const label = `Patient: ${patientName}${patientName && part ? ' | ' : ''}${part ? `Body Part: ${part}` : ''}`;
+          const label = [patientName, part].filter(Boolean).join(' | ');
 
           const fontSize = Math.max(40, imgW / 25);
 
@@ -2727,7 +2727,7 @@ const CameraScreen = ({ navigation }) => {
         {!isGuest && (currentBox?.name || bodyPart) ? (
           <View style={styles.patientNameTopBar}>
             <Text style={styles.patientNameText} numberOfLines={1}>
-              {[currentBox?.name, bodyPart].filter(Boolean).join(' / ')}
+              {[currentBox?.name, bodyPart].filter(Boolean).join(' | ')}
             </Text>
           </View>
         ) : null}
