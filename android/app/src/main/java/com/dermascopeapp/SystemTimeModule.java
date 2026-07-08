@@ -560,7 +560,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                         public void run() {
                             try {
                                 activity.stopLockTask();
-                            } catch (Exception ignored) {}
+                            } catch (Exception ignored) {
+                            }
 
                             // Discovery Hack to refresh Bluetooth stack state
                             try {
@@ -569,7 +570,8 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                                 }
                                 adapter.startDiscovery();
                                 adapter.cancelDiscovery();
-                            } catch (SecurityException ignored) {}
+                            } catch (SecurityException ignored) {
+                            }
 
                             try {
                                 boolean success = device.createBond();

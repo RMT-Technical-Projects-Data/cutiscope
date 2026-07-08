@@ -1729,8 +1729,19 @@ const GalleryScreen = ({ route, navigation }) => {
             <Image source={backIcon} style={styles.backButtonIcon} />
           </TouchableOpacity>
 
-          <View style={styles.titleContainer}>
-            <Text style={styles.galleryTitle}>
+          <View style={[
+            styles.titleContainer,
+            {
+              left: 75,
+              right: isSelectionMode ? 125 : 75
+            }
+          ]}>
+            <Text
+              style={styles.galleryTitle}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}
+            >
               {albumPath.length === 0
                 ? 'Gallery'
                 : isSelectionMode && activePhotos.length > 0
@@ -2305,7 +2316,7 @@ const styles = StyleSheet.create({
     fontFamily: 'ProductSans-Bold',
     letterSpacing: 1,
     textAlign: 'center',
-    marginRight: 30,
+    marginRight: 0,
   },
   selectAllButton: {
     marginLeft: 'auto',
