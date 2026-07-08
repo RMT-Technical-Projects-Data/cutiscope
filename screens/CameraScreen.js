@@ -2294,12 +2294,10 @@ const CameraScreen = ({ navigation }) => {
         const minutes = pad(now.getMinutes());
         const seconds = pad(now.getSeconds());
 
-        const cleanBodyPart = bodyPart ? sanitizeFolderName(bodyPart) : '';
-        const bodyPartSuffix = cleanBodyPart ? `_BP-${cleanBodyPart}` : '';
 
         const fileName = currentBox?.id
-          ? `Cutiscope_${currentBox.id}${bodyPartSuffix}_${year}${month}${day}_${hours}${minutes}${seconds}.jpg`
-          : `Cutiscope${bodyPartSuffix}_${year}${month}${day}_${hours}${minutes}${seconds}.jpg`;
+          ? `Cutiscope_${currentBox.id}_${year}${month}${day}_${hours}${minutes}${seconds}.jpg`
+          : `Cutiscope_${year}${month}${day}_${hours}${minutes}${seconds}.jpg`;
 
         const metadata = {
           zoom: zoomBtnValue,
