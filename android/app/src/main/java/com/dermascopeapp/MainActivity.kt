@@ -187,7 +187,7 @@ class MainActivity : ReactActivity() {
                 return
             }
             // Allow only this app and bluetooth packages in lock task mode
-            dpm.setLockTaskPackages(adminName, arrayOf(packageName, "com.android.bluetooth", "com.google.android.bluetooth"))
+            dpm.setLockTaskPackages(adminName, arrayOf(packageName, "com.android.bluetooth", "com.google.android.bluetooth", "com.android.settings"))
             // No lock screen - go straight to app
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 dpm.setKeyguardDisabled(adminName, true)

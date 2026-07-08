@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Modal,
   View,
@@ -12,7 +12,8 @@ import {
   DeviceEventEmitter,
   ActivityIndicator,
   PermissionsAndroid,
-  Platform
+  Platform,
+  Animated
 } from 'react-native';
 import ToggleSwitch from 'toggle-switch-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -34,6 +35,52 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
   const [showPairedDevicesScreen, setShowPairedDevicesScreen] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [serialNumber, setSerialNumber] = useState('');
+  const [toast, setToast] = useState(null);
+  const toastOpacity = useRef(new Animated.Value(0)).current;
+  const toastTranslateY = useRef(new Animated.Value(6)).current;
+  const toastHideTimerRef = useRef(null);
+
+  useEffect(() => {
+    if (!visible) {
+      setToast(null);
+      return;
+    }
+
+    const sub = DeviceEventEmitter.addListener('in_app_toast_show', (payload) => {
+      const next = {
+        message: payload?.message ?? '',
+        durationMs: payload?.durationMs ?? 1400,
+      };
+
+      setToast(next);
+
+      if (toastHideTimerRef.current) clearTimeout(toastHideTimerRef.current);
+
+      toastOpacity.stopAnimation();
+      toastTranslateY.stopAnimation();
+      toastOpacity.setValue(0);
+      toastTranslateY.setValue(6);
+
+      Animated.parallel([
+        Animated.timing(toastOpacity, { toValue: 1, duration: 120, useNativeDriver: true }),
+        Animated.timing(toastTranslateY, { toValue: 0, duration: 120, useNativeDriver: true }),
+      ]).start();
+
+      toastHideTimerRef.current = setTimeout(() => {
+        Animated.parallel([
+          Animated.timing(toastOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
+          Animated.timing(toastTranslateY, { toValue: 6, duration: 180, useNativeDriver: true }),
+        ]).start(({ finished }) => {
+          if (finished) setToast(null);
+        });
+      }, Math.max(600, Number(next.durationMs) || 1400));
+    });
+
+    return () => {
+      if (toastHideTimerRef.current) clearTimeout(toastHideTimerRef.current);
+      sub.remove();
+    };
+  }, [visible, toastOpacity, toastTranslateY]);
 
   // Load Bluetooth State and check permissions on open
   useEffect(() => {
@@ -258,9 +305,9 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
         showInAppToast("Bluetooth pairing was cancelled", { durationMs: 3000 });
       } else if (isCancelled) {
         if (Platform.OS === 'android') {
-          ToastAndroid.show('Transfer canceled by receiver', ToastAndroid.LONG);
+          ToastAndroid.show('transfer cancelled by device', ToastAndroid.LONG);
         }
-        showInAppToast("Transfer canceled by receiver", { durationMs: 3000 });
+        showInAppToast("transfer cancelled by device", { durationMs: 3000 });
       } else if (isConnectFailed) {
 
 
@@ -484,6 +531,13 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
           </View>
         )}
       </View>
+      {toast && (
+        <View pointerEvents="none" style={styles.toastContainer}>
+          <Animated.View style={[styles.toast, { opacity: toastOpacity, transform: [{ translateY: toastTranslateY }] }]}>
+            <Text style={styles.toastText}>{toast.message}</Text>
+          </Animated.View>
+        </View>
+      )}
     </Modal>
   );
 };
@@ -697,6 +751,30 @@ const styles = StyleSheet.create({
     fontFamily: 'ProductSans-Regular',
     marginTop: 2,
     textAlign: 'center',
+  },
+  toastContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 80,
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    zIndex: 9999,
+  },
+  toast: {
+    maxWidth: 360,
+    backgroundColor: 'rgba(20,20,20,0.92)',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  toastText: {
+    color: '#fff',
+    fontSize: 16,
+    textAlign: 'center',
+    fontFamily: 'ProductSans-Regular',
   },
 });
 

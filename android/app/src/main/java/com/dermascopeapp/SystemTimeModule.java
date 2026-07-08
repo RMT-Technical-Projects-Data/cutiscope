@@ -142,8 +142,7 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                 if (device != null) {
                     String address = device.getAddress();
 
-                    if (state == BluetoothDevice.BOND_BONDING
-                            || state == BluetoothDevice.BOND_BONDED
+                    if (state == BluetoothDevice.BOND_BONDED
                             || state == BluetoothDevice.BOND_NONE) {
                         Activity activity = getCurrentActivity();
                         if (activity != null) {
@@ -545,17 +544,50 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
     }
 
     @ReactMethod
-    public void pairDevice(String address, com.facebook.react.bridge.Promise promise) {
+    public void pairDevice(final String address, final com.facebook.react.bridge.Promise promise) {
         try {
-            BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+            final BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
             if (adapter == null) {
                 promise.reject("BLUETOOTH_ERROR", "Bluetooth not supported");
                 return;
             }
-            BluetoothDevice device = adapter.getRemoteDevice(address);
+            final BluetoothDevice device = adapter.getRemoteDevice(address);
             if (device != null) {
-                device.createBond();
-                promise.resolve(true);
+                final Activity activity = getCurrentActivity();
+                if (activity != null) {
+                    activity.runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                activity.stopLockTask();
+                            } catch (Exception ignored) {}
+
+                            // Discovery Hack to refresh Bluetooth stack state
+                            try {
+                                if (adapter.isDiscovering()) {
+                                    adapter.cancelDiscovery();
+                                }
+                                adapter.startDiscovery();
+                                adapter.cancelDiscovery();
+                            } catch (SecurityException ignored) {}
+
+                            try {
+                                boolean success = device.createBond();
+                                if (success) {
+                                    promise.resolve(true);
+                                } else {
+                                    MainActivity.reapplyFullKiosk(activity);
+                                    promise.reject("PAIR_ERROR", "Failed to start bonding");
+                                }
+                            } catch (Exception e) {
+                                MainActivity.reapplyFullKiosk(activity);
+                                promise.reject("PAIR_ERROR", e.getMessage());
+                            }
+                        }
+                    });
+                } else {
+                    promise.reject("ACTIVITY_NULL", "Activity is null");
+                }
             } else {
                 promise.reject("PAIR_ERROR", "Device not found");
             }
