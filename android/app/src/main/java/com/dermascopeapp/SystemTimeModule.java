@@ -142,31 +142,13 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
                 if (device != null) {
                     String address = device.getAddress();
 
-                    if (state == BluetoothDevice.BOND_BONDING) {
+                    if (state == BluetoothDevice.BOND_BONDING
+                            || state == BluetoothDevice.BOND_BONDED
+                            || state == BluetoothDevice.BOND_NONE) {
                         Activity activity = getCurrentActivity();
                         if (activity != null) {
-                            activity.runOnUiThread(() -> {
-                                try {
-                                    activity.stopLockTask();
-                                } catch (Exception ignored) {
-                                }
-                            });
+                            MainActivity.reapplyFullKiosk(activity);
                         }
-                    }
-
-                    if (state == BluetoothDevice.BOND_BONDED || state == BluetoothDevice.BOND_NONE) {
-                        Activity activity = getCurrentActivity();
-                        if (activity != null) {
-                            activity.runOnUiThread(() -> {
-                                try {
-                                    activity.startLockTask();
-                                } catch (Exception ignored) {
-                                }
-
-                            });
-
-                        }
-
                     }
 
                     if (state == BluetoothDevice.BOND_BONDED) {

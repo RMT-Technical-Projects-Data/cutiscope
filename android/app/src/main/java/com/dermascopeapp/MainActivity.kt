@@ -6,7 +6,9 @@ import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnable
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 import android.view.KeyEvent
 import android.os.Bundle
+import android.app.Activity
 import android.view.WindowManager
+import android.view.View
 import android.widget.Toast
 import com.github.kevinejohn.keyevent.KeyEventModule
 import android.media.AudioManager
@@ -36,6 +38,25 @@ class MainActivity : ReactActivity() {
         @JvmStatic
         @Volatile
         var isDeliberateLock = false
+
+        @JvmStatic
+        @Volatile
+        private var instance: MainActivity? = null
+
+        @JvmStatic
+        fun getInstance(): MainActivity? = instance
+
+        @JvmStatic
+        fun reapplyFullKiosk(activity: Activity?) {
+            val act = activity as? MainActivity ?: return
+            act.runOnUiThread {
+                act.applyImmersiveUi()
+                try {
+                    act.startLockTask()
+                } catch (_: Exception) {
+                }
+            }
+        }
     }
 
     // Add these fields with your existing ones
@@ -77,6 +98,7 @@ class MainActivity : ReactActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         Log.i("MainActivity", "!!! onCreate START !!!")
         super.onCreate(savedInstanceState)
+        instance = this
 
         // Lock to portrait always (kiosk); overrides any rotation
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
@@ -141,7 +163,15 @@ class MainActivity : ReactActivity() {
     override fun onResume() {
         super.onResume()
         isDeliberateLock = false
+        applyImmersiveUi()
         Log.d("MainActivity", "onResume: reset isDeliberateLock to false")
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            applyImmersiveUi()
+        }
     }
 
     /**
@@ -187,6 +217,17 @@ class MainActivity : ReactActivity() {
         }
     }
 
+    private fun applyImmersiveUi() {
+        @Suppress("DEPRECATION")
+        val flags = (View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
+        window.decorView.systemUiVisibility = flags
+    }
+
     private fun tryEnableAccessibilityService() {
         try {
             val service = "${packageName}/${PowerMenuAccessibilityService::class.java.canonicalName}"
@@ -219,6 +260,9 @@ class MainActivity : ReactActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (instance === this) {
+            instance = null
+        }
         
         // ========== ADD THIS: Release wake lock ==========
         releaseWakeLock()
