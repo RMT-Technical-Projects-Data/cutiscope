@@ -25,6 +25,16 @@ const { SystemTimeModule } = NativeModules;
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import VerticalDivider from '../Components/VerticalDivider';
+import {
+  normalizeSSID,
+  getPasswordForSSID,
+  normalizePasswordMap,
+  getAdaptiveScanInterval,
+  getScanFailureBackoffMs,
+  getNetworkListFingerprint,
+  persistSavedNetworkSSID,
+  removePersistedSavedNetworkSSID,
+} from '../utils/wifiHelpers';
 
 const WIFI_ICON = require('../assets/icon_wifi.png');
 
@@ -87,6 +97,10 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
   const lastNetworkCountRef = useRef(0);
   const scanInProgressRef = useRef(false);
   const lastNetworksUpdateRef = useRef(0);
+  const scanSessionStartRef = useRef(0);
+  const isConnectingRef = useRef(false);
+  const lastNetworkFingerprintRef = useRef('');
+  const scanNetworksRef = useRef(null);
 
   // Debounced networks to prevent flickering
   const debouncedNetworks = useDebounce(networks, 500);
@@ -97,8 +111,8 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
       const saved = await AsyncStorage.getItem('@wifi_passwords');
       if (saved) {
         const parsedPasswords = JSON.parse(saved);
-        setNetworkPasswords(parsedPasswords);
-        console.log('Loaded saved passwords:', Object.keys(parsedPasswords).length);
+        setNetworkPasswords(normalizePasswordMap(parsedPasswords));
+        console.log('Loaded saved passwords:', Object.keys(normalizePasswordMap(parsedPasswords)).length);
       }
     } catch (error) {
       console.warn('Error loading saved passwords:', error);
@@ -107,13 +121,16 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
 
   const savePasswordToStorage = async (ssid, password) => {
     try {
+      const normalizedSSID = normalizeSSID(ssid);
+      if (!normalizedSSID) return;
+      await persistSavedNetworkSSID(normalizedSSID);
       setNetworkPasswords(prev => {
-        const updated = { ...prev, [ssid]: password };
+        const updated = { ...prev, [normalizedSSID]: password };
         AsyncStorage.setItem('@wifi_passwords', JSON.stringify(updated))
           .catch(err => console.warn('Error saving to AsyncStorage:', err));
         return updated;
       });
-      console.log('Password updated in state and storage for:', ssid);
+      console.log('Password updated in state and storage for:', normalizedSSID);
     } catch (error) {
       console.warn('Error in savePasswordToStorage:', error);
     }
@@ -121,6 +138,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
 
   const removePasswordFromStorage = async (ssid) => {
     try {
+      await removePersistedSavedNetworkSSID(ssid);
       setNetworkPasswords(prev => {
         const updated = { ...prev };
         delete updated[ssid];
@@ -166,7 +184,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
       setScanAttemptCount(0);
       scanRetryCountRef.current = 0;
       if (wifiEnabled) {
-        scanNetworks(true);
+        scanNetworksRef.current?.(true);
       }
     }
   }, [wifiEnabled]);
@@ -178,6 +196,48 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
       scanTimeoutRef.current = null;
     }
   };
+
+  const pauseScanning = useCallback(() => {
+    clearAllTimeouts();
+  }, []);
+
+  const scheduleNextScan = useCallback((options = {}) => {
+    const {
+      resetAdaptive = false,
+      useFailureBackoff = false,
+    } = options;
+
+    clearAllTimeouts();
+
+    if (!isMountedRef.current || isConnectingRef.current || !wifiEnabled) {
+      return;
+    }
+
+    if (resetAdaptive) {
+      scanSessionStartRef.current = Date.now();
+      scanRetryCountRef.current = 0;
+    }
+
+    if (scanRetryCountRef.current >= 3 && useFailureBackoff) {
+      console.log('Too many scan failures, stopping auto-scan');
+      showInAppToast('WiFi scanning stopped due to failures', { durationMs: 3500 });
+      return;
+    }
+
+    const interval = useFailureBackoff && scanRetryCountRef.current > 0
+      ? getScanFailureBackoffMs(scanRetryCountRef.current)
+      : getAdaptiveScanInterval(scanSessionStartRef.current, false);
+
+    scanTimeoutRef.current = setTimeout(() => {
+      if (isMountedRef.current && !isConnectingRef.current) {
+        scanNetworksRef.current?.();
+      }
+    }, interval);
+  }, [wifiEnabled]);
+
+  const resumeScanning = useCallback((resetAdaptive = false) => {
+    scheduleNextScan({ resetAdaptive });
+  }, [scheduleNextScan]);
 
   // Check internet connection
   const checkInternetConnection = useCallback(async () => {
@@ -379,6 +439,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
           if (isMountedRef.current) {
             setConnectionStatus('connected');
           }
+          await persistSavedNetworkSSID(cleanSSID);
         } else {
           // Associated with AP but not yet authenticated/DHCP assigned
           if (isMountedRef.current) {
@@ -445,9 +506,15 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
           return;
         }
 
+        isConnectingRef.current = true;
+        pauseScanning();
         setPasswordModalVisible(false);
         setIsConnecting(true);
         setConnectionStatus('connecting');
+
+        if (isProtected && finalPassword && finalPassword.trim() !== '') {
+          await savePasswordToStorage(network.SSID, finalPassword);
+        }
 
         try {
           const securityType = getSecurityType(network.capabilities);
@@ -458,39 +525,24 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
             console.log("Root WiFi Connection Successful");
           } catch (rootError) {
             console.warn("Root WiFi Connection failed, falling back to standard:", rootError);
-            // Fallback to standard connection
             await WifiManager.connectToProtectedSSID(network.SSID, finalPassword || '', false, false);
           }
 
           setConnectionStatus('verifying');
           showInAppToast(`Verifying connection to ${network.SSID}...`, { durationMs: 3500 });
 
-          // Verify connection actually succeeded
           const isConnected = await verifyConnection(network.SSID);
 
           if (isConnected) {
             setConnectionStatus('connected');
             showInAppToast(`Successfully connected to ${network.SSID}`, { durationMs: 2000 });
             setHasUserSuccessfullyConnected(true);
-
-            // Save password to AsyncStorage
-            if (finalPassword && finalPassword.trim() !== '') {
-              await savePasswordToStorage(network.SSID, finalPassword);
-            }
-
             setPasswordError(false);
             await fetchCurrentNetwork();
             setIsConnected(true);
-
-            // Force refresh networks after connection
             shouldForceScanRef.current = true;
-            setTimeout(() => {
-              if (isMountedRef.current) {
-                scanNetworks(true);
-              }
-            }, 3000);
+            scheduleNextScan({ resetAdaptive: true });
           } else {
-            // Specifically check if security was required to provide a better error message
             const securityType = getSecurityType(network.capabilities);
             if (securityType === 'Secured') {
               throw new Error('AUTHENTICATION_FAILED: Incorrect password or authentication error.');
@@ -517,46 +569,45 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
 
           showInAppToast(errorMessage, { durationMs: 3500, position: 'center' });
           setSelectedNetwork(network);
-          // Note: We don't automatically re-open the password modal here for consistency
+          resumeScanning(true);
         }
       } catch (processError) {
         console.error('Connection process error:', processError);
         showInAppToast('Connection failed', { durationMs: 3500 });
         setConnectionStatus('disconnected');
+        resumeScanning(true);
       } finally {
         setIsConnecting(false);
-        // Don't reset connectionStatus here - let it stay 'connected' for auto-navigation
+        isConnectingRef.current = false;
       }
     },
-    [password, fetchCurrentNetwork, verifyConnection, savePasswordToStorage, scanNetworks]
+    [password, fetchCurrentNetwork, verifyConnection, savePasswordToStorage, pauseScanning, scheduleNextScan, resumeScanning]
   );
 
   // Improved scanNetworks function
   const scanNetworks = useCallback(async (forceScan = false) => {
-    // Prevent multiple simultaneous scans
     if (scanInProgressRef.current) {
       console.log('Scan already in progress, skipping');
       return;
     }
 
-    if (!isMountedRef.current) {
+    if (!isMountedRef.current || isConnectingRef.current) {
       return;
     }
 
-    // Clear any pending scan timeouts
     clearAllTimeouts();
 
-    // Check if we should force scan or if it's time for next scan
     const now = Date.now();
     const timeSinceLastScan = now - lastScanTime;
-    const minScanInterval = isManualRefresh ? 3000 : 10000; // 3s for manual, 10s for auto
+    const minScanInterval = forceScan || shouldForceScanRef.current || isManualRefresh
+      ? (isManualRefresh ? 3000 : 0)
+      : getAdaptiveScanInterval(scanSessionStartRef.current, false);
 
     if (!forceScan && !shouldForceScanRef.current && timeSinceLastScan < minScanInterval) {
       console.log(`Skipping scan - ${Math.ceil((minScanInterval - timeSinceLastScan) / 1000)}s remaining`);
 
-      // Schedule next scan
       scanTimeoutRef.current = setTimeout(() => {
-        if (isMountedRef.current) {
+        if (isMountedRef.current && !isConnectingRef.current) {
           scanNetworks();
         }
       }, minScanInterval - timeSinceLastScan);
@@ -668,6 +719,10 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
           });
 
           if (isMountedRef.current) {
+            const nextFingerprint = getNetworkListFingerprint(uniqueNetworks);
+            const networksChanged = nextFingerprint !== lastNetworkFingerprintRef.current;
+            lastNetworkFingerprintRef.current = nextFingerprint;
+
             setNetworks(uniqueNetworks);
             setLastScanTime(Date.now());
             scanRetryCountRef.current = 0;
@@ -677,6 +732,10 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
 
             if (uniqueNetworks.length > 0 && (forceScan || isManualRefresh)) {
               showInAppToast(`Found ${uniqueNetworks.length} networks`, { durationMs: 2000 });
+            }
+
+            if (!isConnectingRef.current) {
+              scheduleNextScan({ resetAdaptive: networksChanged });
             }
           }
         } else {
@@ -695,37 +754,46 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
                 showInAppToast('No networks found, retrying...', { durationMs: 2000 });
               }
             }
+
+            if (!isConnectingRef.current) {
+              scheduleNextScan({ useFailureBackoff: scanRetryCountRef.current > 0 });
+            }
           }
         }
       } else {
         console.log('No networks found in scan results');
         if (isMountedRef.current) {
-          // Only clear if we really have no networks at all
           if (networksCacheRef.current.length === 0) {
             setNetworks([]);
           }
           setLastScanTime(Date.now());
 
-          // Retry logic for failed scans
           scanRetryCountRef.current++;
           if (scanRetryCountRef.current <= 3) {
             showInAppToast('Scan failed, retrying...', { durationMs: 2000 });
           }
+
+          if (!isConnectingRef.current) {
+            scheduleNextScan({ useFailureBackoff: true });
+          }
         }
       }
 
-      // Update current network
       await fetchCurrentNetwork();
 
     } catch (error) {
       console.warn('Scan error:', error);
       showInAppToast('Failed to scan networks', { durationMs: 2000 });
+      scanRetryCountRef.current++;
 
-      // Use cached networks if available
       if (networksCacheRef.current.length > 0 && isMountedRef.current) {
         setNetworks(networksCacheRef.current);
       } else if (isMountedRef.current) {
         setNetworks([]);
+      }
+
+      if (isMountedRef.current && !isConnectingRef.current) {
+        scheduleNextScan({ useFailureBackoff: true });
       }
     } finally {
       if (isMountedRef.current) {
@@ -733,22 +801,11 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
         setIsRefreshing(false);
         setIsManualRefresh(false);
         scanInProgressRef.current = false;
-
-        // Schedule next scan (only if we have less than 3 retries)
-        if (scanRetryCountRef.current < 3) {
-          scanTimeoutRef.current = setTimeout(() => {
-            if (isMountedRef.current) {
-              scanNetworks();
-            }
-          }, 15000); // Scan every 15 seconds
-        } else {
-          // Too many failures, stop auto-scanning
-          console.log('Too many scan failures, stopping auto-scan');
-          showInAppToast('WiFi scanning stopped due to failures', { durationMs: 3500 });
-        }
       }
     }
-  }, [lastScanTime, scanAttemptCount, isManualRefresh, fetchCurrentNetwork, networks]);
+  }, [lastScanTime, scanAttemptCount, isManualRefresh, fetchCurrentNetwork, networks, scheduleNextScan]);
+
+  scanNetworksRef.current = scanNetworks;
 
   const handleRefresh = useCallback(async () => {
     if (isRefreshing || isScanning) return;
@@ -775,7 +832,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
 
   // Setup initial scan when component mounts
   useEffect(() => {
-    // Initial scan after a short delay
+    scanSessionStartRef.current = Date.now();
     const initialScanTimeout = setTimeout(() => {
       if (isMountedRef.current) {
         scanNetworks(true);
@@ -809,7 +866,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
     const securityType = getSecurityType(network.capabilities);
 
     // Check for saved password first (from AsyncStorage)
-    const savedPassword = networkPasswords[network.SSID];
+    const savedPassword = getPasswordForSSID(networkPasswords, network.SSID);
 
     if (securityType === 'Secured' && savedPassword) {
       // Auto-connect with saved password
@@ -832,7 +889,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
     const isConnectingToThis = selectedNetwork?.SSID === item.SSID && isConnecting;
     const signalStrengthLabel = getSignalStrengthLabel(item.level);
     const securityType = getSecurityType(item.capabilities);
-    const isSaved = networkPasswords[item.SSID] && !isActuallyConnected;
+    const isSaved = getPasswordForSSID(networkPasswords, item.SSID) && !isActuallyConnected;
 
     return (
       <TouchableOpacity
@@ -959,7 +1016,10 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
   }
 
   // Calculate time until next scan
-  const timeUntilNextScan = Math.max(0, Math.ceil((10000 - (Date.now() - lastScanTime)) / 1000));
+  const timeUntilNextScan = Math.max(
+    0,
+    Math.ceil((getAdaptiveScanInterval(scanSessionStartRef.current, false) - (Date.now() - lastScanTime)) / 1000)
+  );
 
   return (
     <View style={styles.container}>
@@ -1006,11 +1066,11 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
               },
               {
                 title: 'Saved Networks',
-                data: debouncedNetworks.filter(net => networkPasswords[net.SSID] && currentNetwork?.SSID !== net.SSID)
+                data: debouncedNetworks.filter(net => getPasswordForSSID(networkPasswords, net.SSID) && currentNetwork?.SSID !== net.SSID)
               },
               {
                 title: 'Available Networks',
-                data: debouncedNetworks.filter(net => !networkPasswords[net.SSID] && currentNetwork?.SSID !== net.SSID)
+                data: debouncedNetworks.filter(net => !getPasswordForSSID(networkPasswords, net.SSID) && currentNetwork?.SSID !== net.SSID)
               }
             ].filter(section => section.data.length > 0 || (section.title === 'Available Networks' && debouncedNetworks.length > 0))}
             keyExtractor={(item) => item.BSSID + item.SSID + (item.timestamp || '')}

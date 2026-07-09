@@ -298,8 +298,9 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
             if (cmdAuth.equals("open")) {
                 os.writeBytes("cmd wifi connect-network " + safeSsid + " open\n");
             } else {
-                // For secured networks, forget the network first to ensure fresh authentication
-                forgetNetworkInternal(ssid);
+                // Do not forget the network before connecting — that wipes saved credentials
+                // and forces the user to re-enter the password. Use forgetNetwork() only
+                // when the user explicitly chooses "Forget".
                 os.writeBytes("cmd wifi connect-network " + safeSsid + " " + cmdAuth + " " + safePassword + "\n");
             }
 

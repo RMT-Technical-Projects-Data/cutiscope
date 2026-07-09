@@ -142,7 +142,7 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
       'onBluetoothShareStatusChanged',
       (event) => {
         if (event.status === 'accepted') {
-          ToastAndroid.show('File transfer request sent to other device', ToastAndroid.LONG);
+          //ToastAndroid.show('File transfer request sent to other device', ToastAndroid.LONG);
           showInAppToast("File transfer request sent to other device", { durationMs: 3000 });
         }
       }
@@ -305,7 +305,7 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
         showInAppToast("Bluetooth pairing was cancelled", { durationMs: 3000 });
       } else if (isCancelled) {
         if (Platform.OS === 'android') {
-          ToastAndroid.show('transfer cancelled by device', ToastAndroid.LONG);
+          //ToastAndroid.show('transfer cancelled by device', ToastAndroid.LONG);
         }
         showInAppToast("transfer cancelled by device", { durationMs: 3000 });
       } else if (isConnectFailed) {

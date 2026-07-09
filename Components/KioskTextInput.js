@@ -16,6 +16,7 @@ const KioskTextInput = forwardRef(function KioskTextInput({
   onSelectionChange,
   id: propId,
   hostKeyboardLocally = false,
+  maxLength,
   ...rest
 }, ref) {
   const localRef = useRef(null);
@@ -75,6 +76,7 @@ const KioskTextInput = forwardRef(function KioskTextInput({
         setValue,
         getSelection,
         setSelection,
+        maxLength: typeof maxLength === 'number' ? maxLength : undefined,
         keyboardType: rest.keyboardType || 'default',
         showDismiss: rest.showDismiss ?? false,
         hostKeyboardLocally,
@@ -109,6 +111,7 @@ const KioskTextInput = forwardRef(function KioskTextInput({
     <TextInput
       ref={setRef}
       {...rest}
+      maxLength={maxLength}
       value={value}
       onChangeText={onChangeText}
       selection={selection}

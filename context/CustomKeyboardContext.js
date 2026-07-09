@@ -9,6 +9,7 @@ const defaultDescriptor = {
   setValue: () => {},
   getSelection: () => ({ start: 0, end: 0 }),
   setSelection: () => {},
+  maxLength: undefined,
   keyboardType: 'default',
   showDismiss: false,
   blur: () => {},
@@ -59,9 +60,11 @@ export function CustomKeyboardProvider({ children }) {
     if (!cur) return;
     const value = cur.getValue();
     const { start, end } = cur.getSelection();
-    const newValue = value.slice(0, start) + text + value.slice(end);
+    const requestedValue = value.slice(0, start) + text + value.slice(end);
+    const hasMaxLength = typeof cur.maxLength === 'number' && cur.maxLength >= 0;
+    const newValue = hasMaxLength ? requestedValue.slice(0, cur.maxLength) : requestedValue;
     cur.setValue(newValue);
-    const newCursor = start + text.length;
+    const newCursor = Math.min(start + text.length, newValue.length);
     cur.setSelection({ start: newCursor, end: newCursor });
   }, []);
 
