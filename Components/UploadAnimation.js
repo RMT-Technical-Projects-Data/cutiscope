@@ -6,7 +6,7 @@ const UploadAnimation = () => {
         <View style={styles.container}>
             <View style={styles.content}>
                 <Text style={styles.text}>
-                    Uploading to Cloud Storage {'\n'}Please wait...
+                    Uploading to Cloud Storage {'\n'}Please wait some time....
                 </Text>
                 <ActivityIndicator size="large" color="#00bb00" />
             </View>

@@ -25,9 +25,9 @@ import { IN_APP_TOAST_EVENT, showInAppToast } from './utils/Helpers';
 
 const Stack = createNativeStackNavigator();
 
-const KIOSK_EXIT_PIN = '1801';
+const KIOSK_EXIT_PIN = '1234';
 const TAP_RESET_MS = 2500;
-const TAPS_TO_SHOW_PIN = 100;
+const TAPS_TO_SHOW_PIN = 50;
 
 const navTheme = {
   ...DefaultTheme,
