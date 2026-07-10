@@ -23,8 +23,8 @@ import ConfirmationModal from '../modals/ConfirmationModal';
 const { height, width } = Dimensions.get('window');
 
 // Use environment variable or fallback
-const API_BASE_URL = Config.API_BASE_URL || 'http://35.154.32.201:4040';
-// const API_BASE_URL = Config.API_BASE_URL || 'http://192.168.50.75:3009';
+// const API_BASE_URL = Config.API_BASE_URL || 'http://35.154.32.201:4040';
+const API_BASE_URL = Config.API_BASE_URL || 'http://192.168.50.75:3009';
 const API_TIMEOUT = parseInt(Config.API_TIMEOUT || '10000');
 
 // Configure axios defaults

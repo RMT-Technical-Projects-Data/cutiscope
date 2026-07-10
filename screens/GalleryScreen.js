@@ -62,7 +62,7 @@ if (
 }
 
 // Theme Colors
-const PRIMARY_BACKGROUND = '#000000';
+const PRIMARY_BACKGROUND = '#22B2A6';
 const HEADER_FOOTER_BG = '#000000';
 const PRIMARY_TEXT = '#FFFFFF';
 const SECONDARY_TEXT = '#AAAAAA';

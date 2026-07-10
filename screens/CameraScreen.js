@@ -91,7 +91,7 @@ import KeyEvent from 'react-native-keyevent';
 import VolumeManager from 'react-native-volume-manager';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
-const SCALE_BASE_MM = 15.0;
+const SCALE_BASE_MM = 20.0;
 
 const MillimeterScale = ({ zoom }) => {
   const maxMm = 15.0 / zoom;
