@@ -16,8 +16,9 @@ import {
   Platform,
   SectionList,
   ScrollView,
+  DeviceEventEmitter,
 } from 'react-native';
-import { showInAppToast } from '../utils/Helpers';
+import { showInAppToast, IN_APP_TOAST_EVENT } from '../utils/Helpers';
 import KioskTextInput from '../Components/KioskTextInput';
 import CustomKeyboard from '../Components/CustomKeyboard';
 import WifiManager from 'react-native-wifi-reborn';
@@ -77,6 +78,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
   const [connectedNetworks, setConnectedNetworks] = useState({});
   const [isConnecting, setIsConnecting] = useState(false);
   const [passwordError, setPasswordError] = useState(false);
+  const [passwordModalToast, setPasswordModalToast] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
@@ -101,6 +103,41 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
   const isConnectingRef = useRef(false);
   const lastNetworkFingerprintRef = useRef('');
   const scanNetworksRef = useRef(null);
+  const passwordToastTimerRef = useRef(null);
+
+  const showPasswordModalToast = useCallback((message, durationMs = 3500) => {
+    if (!message) return;
+    setPasswordModalToast(message);
+    if (passwordToastTimerRef.current) {
+      clearTimeout(passwordToastTimerRef.current);
+    }
+    passwordToastTimerRef.current = setTimeout(() => {
+      setPasswordModalToast('');
+    }, durationMs);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (passwordToastTimerRef.current) {
+        clearTimeout(passwordToastTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!passwordModalVisible) {
+      setPasswordModalToast('');
+      return undefined;
+    }
+
+    const sub = DeviceEventEmitter.addListener(IN_APP_TOAST_EVENT, (payload) => {
+      if (payload?.message) {
+        showPasswordModalToast(payload.message, payload.durationMs ?? 3500);
+      }
+    });
+
+    return () => sub.remove();
+  }, [passwordModalVisible, showPasswordModalToast]);
 
   // Debounced networks to prevent flickering
   const debouncedNetworks = useDebounce(networks, 500);
@@ -556,18 +593,25 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
 
           let errorMessage = 'Failed to connect. Please check your password or signal strength.';
           const msg = (connectionError.message || '').toLowerCase();
-          if (msg.includes('password') ||
+          const isWrongPassword =
+            msg.includes('password') ||
             msg.includes('incorrect') ||
             msg.includes('authentication') ||
             msg.includes('auth') ||
-            msg.includes('verify')
-          ) {
-            errorMessage = 'Incorrect password. Please try again.';
+            msg.includes('verify');
+
+          if (isWrongPassword) {
+            errorMessage = 'Password is wrong. Please re-enter.';
+            setPasswordError(true);
+            setPasswordModalVisible(true);
+            setTimeout(() => showPasswordModalToast(errorMessage, 3500), 150);
           } else if (msg.includes('timeout')) {
             errorMessage = 'Connection timed out. Please check signal strength.';
+            showInAppToast(errorMessage, { durationMs: 3500, position: 'center' });
+          } else {
+            showInAppToast(errorMessage, { durationMs: 3500, position: 'center' });
           }
 
-          showInAppToast(errorMessage, { durationMs: 3500, position: 'center' });
           setSelectedNetwork(network);
           resumeScanning(true);
         }
@@ -581,7 +625,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
         isConnectingRef.current = false;
       }
     },
-    [password, fetchCurrentNetwork, verifyConnection, savePasswordToStorage, pauseScanning, scheduleNextScan, resumeScanning]
+    [password, fetchCurrentNetwork, verifyConnection, savePasswordToStorage, pauseScanning, scheduleNextScan, resumeScanning, showPasswordModalToast]
   );
 
   // Improved scanNetworks function
@@ -1128,6 +1172,11 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
       {passwordModalVisible && (
         <Modal visible={passwordModalVisible} transparent={true} animationType="fade">
           <View style={styles.passwordModalOverlay}>
+            {passwordModalToast ? (
+              <View style={styles.passwordModalToastBanner} pointerEvents="none">
+                <Text style={styles.passwordModalToastText}>{passwordModalToast}</Text>
+              </View>
+            ) : null}
             <View style={styles.passwordModalContentWrapper}>
               <View style={styles.passwordModalContent}>
                 <View style={styles.modalHeader}>
@@ -1137,7 +1186,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
                   </Text>
                   {passwordError && (
                     <Text style={styles.passwordErrorText}>
-                      Incorrect password. Please try again.
+                      Password is wrong. Please re-enter.
                     </Text>
                   )}
                 </View>
@@ -1178,6 +1227,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
                       setPassword('');
                       setSelectedNetwork(null);
                       setPasswordError(false);
+                      setPasswordModalToast('');
                     }}
                     style={[styles.modalButton, styles.cancelButton]}
                     activeOpacity={0.8}
@@ -1623,6 +1673,25 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontFamily: 'ProductSans-Bold',
     textAlign: 'center',
+  },
+  passwordModalToastBanner: {
+    position: 'absolute',
+    top: 48,
+    left: 20,
+    right: 20,
+    zIndex: 20,
+    backgroundColor: '#d32f2f',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    elevation: 8,
+  },
+  passwordModalToastText: {
+    color: '#fff',
+    fontSize: 15,
+    textAlign: 'center',
+    fontFamily: 'ProductSans-Bold',
   },
   inputContainer: {
     flexDirection: 'row',

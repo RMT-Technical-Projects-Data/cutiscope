@@ -302,7 +302,7 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
         if (Platform.OS === 'android') {
           ToastAndroid.show('Bluetooth pairing was cancelled', ToastAndroid.LONG);
         }
-        showInAppToast("Bluetooth pairing was cancelled", { durationMs: 3000 });
+        // showInAppToast("Bluetooth pairing was cancelled", { durationMs: 3000 });
       } else if (isCancelled) {
         if (Platform.OS === 'android') {
           //ToastAndroid.show('transfer cancelled by device', ToastAndroid.LONG);

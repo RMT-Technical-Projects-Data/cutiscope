@@ -47,10 +47,27 @@ const KioskTextInput = forwardRef(function KioskTextInput({
 
   const setValue = useCallback(
     (v) => {
-      valueRef.current = v;
-      onChangeText?.(v);
+      const previous = valueRef.current ?? '';
+      let next = String(v ?? '');
+      if (typeof maxLength === 'number' && maxLength >= 0) {
+        if (previous.length >= maxLength && next.length > previous.length) {
+          return;
+        }
+        if (next.length > maxLength) {
+          next = next.slice(0, maxLength);
+        }
+      }
+      valueRef.current = next;
+      onChangeText?.(next);
     },
-    [onChangeText]
+    [onChangeText, maxLength]
+  );
+
+  const handleChangeText = useCallback(
+    (text) => {
+      setValue(text);
+    },
+    [setValue]
   );
 
   const setSelection = useCallback((s) => {
@@ -85,7 +102,7 @@ const KioskTextInput = forwardRef(function KioskTextInput({
       });
       rest.onFocus?.(e);
     },
-    [id, getValue, setValue, getSelection, setSelection, registerFocusedInput, hostKeyboardLocally, rest, onSubmitEditing]
+    [id, getValue, setValue, getSelection, setSelection, maxLength, registerFocusedInput, hostKeyboardLocally, rest, onSubmitEditing]
   );
 
   const handleBlur = useCallback(
@@ -113,7 +130,7 @@ const KioskTextInput = forwardRef(function KioskTextInput({
       {...rest}
       maxLength={maxLength}
       value={value}
-      onChangeText={onChangeText}
+      onChangeText={handleChangeText}
       selection={selection}
       onSelectionChange={handleSelectionChange}
       onFocus={handleFocus}

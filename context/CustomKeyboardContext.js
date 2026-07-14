@@ -60,11 +60,17 @@ export function CustomKeyboardProvider({ children }) {
     if (!cur) return;
     const value = cur.getValue();
     const { start, end } = cur.getSelection();
-    const requestedValue = value.slice(0, start) + text + value.slice(end);
     const hasMaxLength = typeof cur.maxLength === 'number' && cur.maxLength >= 0;
-    const newValue = hasMaxLength ? requestedValue.slice(0, cur.maxLength) : requestedValue;
+    const selectionLength = end - start;
+    const nextLength = value.length - selectionLength + text.length;
+
+    if (hasMaxLength && nextLength > cur.maxLength) {
+      return;
+    }
+
+    const newValue = value.slice(0, start) + text + value.slice(end);
     cur.setValue(newValue);
-    const newCursor = Math.min(start + text.length, newValue.length);
+    const newCursor = start + text.length;
     cur.setSelection({ start: newCursor, end: newCursor });
   }, []);
 

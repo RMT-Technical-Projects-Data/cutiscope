@@ -18,7 +18,7 @@ import {
   SectionList,
   DeviceEventEmitter,
 } from 'react-native';
-import { showInAppToast } from '../utils/Helpers';
+import { showInAppToast, IN_APP_TOAST_EVENT } from '../utils/Helpers';
 import KioskTextInput from '../Components/KioskTextInput';
 import CustomKeyboard from '../Components/CustomKeyboard';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -79,6 +79,8 @@ const WifiSettingsModal = ({ visible, onClose }) => {
   const [password, setPassword] = useState('');
   const [selectedNetwork, setSelectedNetwork] = useState(null);
   const [passwordModalVisible, setPasswordModalVisible] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordModalToast, setPasswordModalToast] = useState('');
   const [currentNetwork, setCurrentNetwork] = useState(null);
   const [showCamera, setShowCamera] = useState(false);
   const [savedPasswordModalVisible, setSavedPasswordModalVisible] = useState(false);
@@ -116,6 +118,42 @@ const WifiSettingsModal = ({ visible, onClose }) => {
   const inputRef = useRef(null);
   const savedInputRef = useRef(null);
   const passwordInputRef = useRef(null);
+  const passwordToastTimerRef = useRef(null);
+
+  const showPasswordModalToast = useCallback((message, durationMs = 3500) => {
+    if (!message) return;
+    setPasswordModalToast(message);
+    if (passwordToastTimerRef.current) {
+      clearTimeout(passwordToastTimerRef.current);
+    }
+    passwordToastTimerRef.current = setTimeout(() => {
+      setPasswordModalToast('');
+    }, durationMs);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (passwordToastTimerRef.current) {
+        clearTimeout(passwordToastTimerRef.current);
+      }
+    };
+  }, []);
+
+  // In kiosk mode nested modals sit above App-level toasts — mirror toasts inside password modal
+  useEffect(() => {
+    if (!passwordModalVisible) {
+      setPasswordModalToast('');
+      return undefined;
+    }
+
+    const sub = DeviceEventEmitter.addListener(IN_APP_TOAST_EVENT, (payload) => {
+      if (payload?.message) {
+        showPasswordModalToast(payload.message, payload.durationMs ?? 3500);
+      }
+    });
+
+    return () => sub.remove();
+  }, [passwordModalVisible, showPasswordModalToast]);
 
   const { hasPermission: cameraHasPermission, requestPermission: requestCameraPermission } = useCameraPermission();
   const device = useCameraDevice('back');
@@ -719,23 +757,30 @@ const WifiSettingsModal = ({ visible, onClose }) => {
 
       let errorMessage = 'Failed to connect. Please check your password or signal strength.';
       const msg = (error.message || '').toLowerCase();
-      if (msg.includes('password') ||
+      const isWrongPassword =
+        msg.includes('password') ||
         msg.includes('incorrect') ||
         msg.includes('authentication') ||
         msg.includes('auth') ||
-        msg.includes('verify')
-      ) {
-        errorMessage = 'Incorrect password. Please try again.';
+        msg.includes('verify');
+
+      if (isWrongPassword) {
+        errorMessage = 'Password is wrong. Please re-enter.';
+        setPasswordError(errorMessage);
+        setShowPassword(false);
+        setPasswordModalVisible(true);
+        setTimeout(() => showPasswordModalToast(errorMessage, 3500), 150);
+      } else {
+        showInAppToast(errorMessage, { durationMs: 3500, position: 'center' });
       }
 
-      showInAppToast(errorMessage, { durationMs: 3500, position: 'center' });
       setSelectedNetwork(network);
       resumeScanning(true);
     } finally {
       setIsConnecting(false);
       isConnectingRef.current = false;
     }
-  }, [password, fetchCurrentNetwork, verifyConnection, savePasswordToStorage, saveNetworkToSavedList, pauseScanning, resumeScanning, scheduleNextScan, isConnecting]);
+  }, [password, fetchCurrentNetwork, verifyConnection, savePasswordToStorage, saveNetworkToSavedList, pauseScanning, resumeScanning, scheduleNextScan, isConnecting, showPasswordModalToast]);
 
   // Disconnect from network
   const disconnectFromNetwork = async () => {
@@ -1006,10 +1051,17 @@ const WifiSettingsModal = ({ visible, onClose }) => {
       return;
     }
 
+    const lookupSSID = normalizeSSID(network.SSID);
+    const isInScan = networks.some((net) => ssidsMatch(net.SSID, network.SSID));
+
+    // Saved network not currently visible in scan — use saved-network connect flow
+    if (isNetworkSaved(lookupSSID) && !isInScan) {
+      handleSavedNetworkPress({ SSID: lookupSSID });
+      return;
+    }
+
     setSelectedNetwork(network);
     setConnectionStatus('connecting');
-
-    const lookupSSID = normalizeSSID(network.SSID);
 
     const requiresPassword =
       network.capabilities &&
@@ -1027,6 +1079,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
         // Clear password and show modal
         setConnectionStatus('disconnected');
         setPassword('');
+        setPasswordError('');
         setShowPassword(false); // Always default to hidden when opening
         setPasswordModalVisible(true);
 
@@ -1096,6 +1149,33 @@ const WifiSettingsModal = ({ visible, onClose }) => {
         BSSID: `saved_${item.SSID}`,
       };
     });
+  };
+
+  // Available list includes scanned networks plus saved networks (in-range or not)
+  const getAvailableNetworksForMainList = () => {
+    const fromScan = networks.filter(
+      (net) => !ssidsMatch(currentNetwork?.SSID, net.SSID)
+    );
+
+    const scannedSSIDs = new Set(
+      fromScan.map((net) => normalizeSSID(net.SSID)).filter(Boolean)
+    );
+
+    const savedNotInScan = getSavedNetworks()
+      .filter(
+        (saved) =>
+          !scannedSSIDs.has(normalizeSSID(saved.SSID)) &&
+          !ssidsMatch(saved.SSID, currentNetwork?.SSID)
+      )
+      .map((saved) => ({
+        SSID: saved.SSID,
+        level: -100,
+        capabilities: '[ESS]',
+        BSSID: `saved_${saved.SSID}`,
+        isSavedOnly: true,
+      }));
+
+    return [...fromScan, ...savedNotInScan];
   };
 
   // Handle saved network press
@@ -1543,16 +1623,13 @@ const WifiSettingsModal = ({ visible, onClose }) => {
                       title: 'Connected Network',
                       data: getConnectedNetworkEntries()
                     },
-                    {
-                      title: 'Saved Networks',
-                      data: getSavedNetworksForMainList()
-                    },
+                    // {
+                    //   title: 'Saved Networks',
+                    //   data: getSavedNetworksForMainList()
+                    // },
                     {
                       title: 'Available Networks',
-                      data: networks.filter(net =>
-                        !isNetworkSaved(net.SSID) &&
-                        !ssidsMatch(currentNetwork?.SSID, net.SSID)
-                      )
+                      data: getAvailableNetworksForMainList()
                     }
                   ].filter(section => section.data.length > 0 || section.title === 'Available Networks')}
                   keyExtractor={(item) => item.BSSID + item.SSID}
@@ -1634,6 +1711,8 @@ const WifiSettingsModal = ({ visible, onClose }) => {
               if (!isConnecting) {
                 setPasswordModalVisible(false);
                 setPassword('');
+                setPasswordError('');
+                setPasswordModalToast('');
                 setShowPassword(false);
                 Keyboard.dismiss();
               }
@@ -1647,15 +1726,25 @@ const WifiSettingsModal = ({ visible, onClose }) => {
                 if (!isConnecting) {
                   setPasswordModalVisible(false);
                   setPassword('');
+                  setPasswordError('');
+                  setPasswordModalToast('');
                   setShowPassword(false);
                   Keyboard.dismiss();
                 }
               }}
             >
+              {passwordModalToast ? (
+                <View style={styles.passwordModalToastBanner} pointerEvents="none">
+                  <Text style={styles.passwordModalToastText}>{passwordModalToast}</Text>
+                </View>
+              ) : null}
               <TouchableOpacity activeOpacity={1} style={{ width: '100%', alignItems: 'center' }}>
                 <View style={styles.passwordModalContent}>
                   <Text style={styles.modalTitle}>Enter Password for</Text>
                   <Text style={styles.modalSubTitle}>{selectedNetwork?.SSID}</Text>
+                  {passwordError ? (
+                    <Text style={styles.passwordErrorText}>{passwordError}</Text>
+                  ) : null}
 
                   <View style={styles.passwordInputContainer}>
                     <View style={styles.passwordInputRow}>
@@ -1663,7 +1752,10 @@ const WifiSettingsModal = ({ visible, onClose }) => {
                         ref={passwordInputRef}
                         style={styles.input}
                         value={password}
-                        onChangeText={setPassword}
+                        onChangeText={(text) => {
+                          setPassword(text);
+                          if (passwordError) setPasswordError('');
+                        }}
                         placeholder="Enter Password"
                         secureTextEntry={!showPassword}
                         placeholderTextColor="#888"
@@ -1692,6 +1784,8 @@ const WifiSettingsModal = ({ visible, onClose }) => {
                         if (!isConnecting) {
                           setPasswordModalVisible(false);
                           setPassword('');
+                          setPasswordError('');
+                          setPasswordModalToast('');
                           setShowPassword(false);
                           Keyboard.dismiss();
                         }
@@ -2230,6 +2324,32 @@ const styles = StyleSheet.create({
     marginTop: 6,
     textAlign: 'center',
     width: '100%',
+  },
+  passwordErrorText: {
+    color: '#ff5252',
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 10,
+    fontFamily: 'ProductSans-Bold',
+  },
+  passwordModalToastBanner: {
+    position: 'absolute',
+    top: 48,
+    left: 20,
+    right: 20,
+    zIndex: 20,
+    backgroundColor: '#d32f2f',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    elevation: 8,
+  },
+  passwordModalToastText: {
+    color: '#fff',
+    fontSize: 15,
+    textAlign: 'center',
+    fontFamily: 'ProductSans-Bold',
   },
   input: {
     flex: 1,

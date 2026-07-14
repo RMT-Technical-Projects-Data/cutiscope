@@ -11,6 +11,7 @@ import KioskTextInput from '../Components/KioskTextInput';
 import CustomKeyboard from '../Components/CustomKeyboard';
 import { useCustomKeyboard } from '../context/CustomKeyboardContext';
 import CustomStatusBar from '../Components/CustomStatusBar';
+import { applyCappedTextChange } from '../utils/textInputLimits';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const H_PAD = 24;
@@ -85,7 +86,14 @@ const BodyPartModal = ({ visible, onClose, onSave, initialValue = '' }) => {
               ref={inputRef}
               style={styles.input}
               value={value}
-              onChangeText={(text) => setValue(sanitizeBodyPart(text))}
+              onChangeText={(text) => {
+                setValue((prev) => applyCappedTextChange(
+                  prev,
+                  text,
+                  BODY_PART_MAX_LENGTH,
+                  (value) => value.replace(/[^a-zA-Z\s]/g, '')
+                ));
+              }}
               placeholder="e.g. Left Arm, Back"
               placeholderTextColor="#666"
               autoCapitalize="words"

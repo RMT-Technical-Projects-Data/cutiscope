@@ -25,6 +25,7 @@ import backIcon from '../assets/icon_back.png';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import CustomStatusBar from '../Components/CustomStatusBar';
 import { getPatients, createPatient, getNextPatientId } from '../services/patientsService';
+import { applyCappedTextChange } from '../utils/textInputLimits';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const IS_SMALL = SCREEN_WIDTH < 360 || SCREEN_HEIGHT < 600;
@@ -433,7 +434,12 @@ const PatientBoxModal = ({
                       style={styles.input}
                       value={name}
                       onChangeText={(text) => {
-                        setName(sanitizePatientName(text));
+                        setName((prev) => applyCappedTextChange(
+                          prev,
+                          text,
+                          PATIENT_NAME_MAX_LENGTH,
+                          (value) => value.replace(/[^a-zA-Z\s]/g, '')
+                        ));
                         if (formError) setFormError('');
                       }}
                       placeholder="Patient"

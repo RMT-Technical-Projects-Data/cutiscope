@@ -29,7 +29,6 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
   const [isScanning, setIsScanning] = useState(false);
   const [pairedDevices, setPairedDevices] = useState([]);
   const [scannedDevices, setScannedDevices] = useState([]);
-  const [connectedDevices, setConnectedDevices] = useState([]);
   const [connectingAddress, setConnectingAddress] = useState(null);
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
@@ -48,7 +47,6 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
             setBluetoothEnabled(isEnabled);
             if (isEnabled) {
               loadPairedDevices();
-              loadConnectedDevices();
             }
           }
         } catch (e) {
@@ -85,21 +83,13 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
     });
 
     const connectionSub = DeviceEventEmitter.addListener('onBluetoothConnectionChanged', (event) => {
-      if (event.connected) {
-        setConnectedDevices(prev => {
-          if (!prev.find(d => d.address === event.address)) {
-            return [...prev, { name: event.name || 'Unknown Device', address: event.address }];
-          }
-          return prev;
-        });
-      } else {
-        setConnectedDevices(prev => prev.filter(d => d.address !== event.address));
-      }
-
-      if (event.address === connectingAddress || connectingAddress === null) {
-        setConnectingAddress(null);
-        loadPairedDevices();
-      }
+      setConnectingAddress((current) => {
+        if (event.address === current) {
+          loadPairedDevices();
+          return null;
+        }
+        return current;
+      });
     });
 
     const bondSub = DeviceEventEmitter.addListener('onBluetoothBondStateChanged', (event) => {
@@ -146,17 +136,6 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
     }
   };
 
-  const loadConnectedDevices = async () => {
-    if (SystemTimeModule && SystemTimeModule.getConnectedDevices) {
-      try {
-        const devices = await SystemTimeModule.getConnectedDevices();
-        setConnectedDevices(devices || []);
-      } catch (e) {
-        console.warn('Error getting connected devices', e);
-      }
-    }
-  };
-
   const startScan = async () => {
     const hasPerms = await requestPermissions();
     if (!hasPerms) {
@@ -199,14 +178,12 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
           // Delay to allow OS to turn BT on before scanning
           setTimeout(() => {
             loadPairedDevices();
-            loadConnectedDevices();
             // startScan();
           }, 1500);
         } else {
           stopScan();
           setPairedDevices([]);
           setScannedDevices([]);
-          setConnectedDevices([]);
         }
       }
     } catch (e) {
@@ -247,7 +224,6 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
         setShowOptionsModal(false);
         setTimeout(() => {
           loadPairedDevices();
-          loadConnectedDevices();
         }, 1000);
       } catch (e) {
         console.warn('Error unpairing device', e);
@@ -263,7 +239,6 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
         await SystemTimeModule.unpairDevice(device.address);
         setTimeout(() => {
           loadPairedDevices();
-          loadConnectedDevices();
         }, 500);
       }
     } catch (e) {
@@ -372,21 +347,6 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
 
           {bluetoothEnabled && (
             <View style={{ flex: 1 }}>
-              {connectedDevices.length > 0 && (
-                <>
-                  <View style={styles.sectionHeaderContainer}>
-                    <Text style={styles.sectionHeader}>Connected Devices</Text>
-                  </View>
-                  <FlatList
-                    data={connectedDevices}
-                    keyExtractor={(item) => item.address}
-                    renderItem={(props) => renderDevice({ ...props, isPaired: true })}
-                    style={styles.list}
-                  />
-                </>
-              )}
-
-
               <View style={styles.sectionHeaderContainer}>
                 <Text style={styles.sectionHeader}>Available Devices</Text>
                 {isScanning ? (
