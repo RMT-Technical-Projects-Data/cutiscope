@@ -6,6 +6,7 @@ import googleDriveService from '../services/googleDriveService';
 import firebaseAuthService from '../services/firebaseAuthService';
 import OptimisedUploadService from '../services/OptimisedUploadService';
 import { registerAndEnqueue } from '../services/CapturePipeline';
+import CaptureQueue from '../services/CaptureQueue';
 import { recordPhotoCapture } from '../services/patientsService';
 import {
   StyleSheet,
@@ -394,6 +395,25 @@ const CameraScreen = ({ navigation }) => {
   const [isPolPressed, setIsPolPressed] = useState(null);
   const isCapturingRef = useRef(false); // Synchronous lock for capture
   const lastCaptureTimeRef = useRef(0); // Debounce for rapid clicks
+  // Cache storage permission so we don't do a native permission round-trip on
+  // every shot (that was adding latency to the capture path).
+  const hasStoragePermissionRef = useRef(false);
+  // Tracks whether the camera screen is focused, so the background queue can
+  // process freely when the user is NOT on the camera (and hold off when they are).
+  const isFocusedRef = useRef(true);
+  // Monotonic capture counter. The gallery thumbnail must always reflect the most
+  // recent shot; the background queue drains FIFO (oldest first), so it must only
+  // update the thumbnail when the job it just finished is still the latest one.
+  const latestCaptureSeqRef = useRef(0);
+  // Background pipeline (CaptureQueue): the actual per-job work is injected via
+  // this ref so the queue always calls the freshest closures without stale state.
+  const captureProcessorRef = useRef(null);
+  // How long after a shot the queue keeps yielding to the shutter (load balance).
+  // Must comfortably exceed the user's tap-to-tap gap so heavy processing never
+  // starts between shots and collides with the next capture. Each new shot
+  // resets this window, so during a burst nothing processes; it drains once the
+  // user pauses for this long (or leaves the screen). Backlog cap still applies.
+  const CAPTURE_PROCESS_DEFER_MS = 2500;
   const [onCapturePress, setOnCapturePress] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [latestPhotoUri, setLatestPhotoUri] = useState(null);
@@ -1041,13 +1061,17 @@ const CameraScreen = ({ navigation }) => {
   };
 
   const saveImageLocallyOnly = async (sourcePath, fileName = null, options = {}) => {
-    const { forGuest = false } = options;
+    const { forGuest = false, skipScan = false } = options;
+    // Allow the caller (background queue) to pin the patient/user context so a
+    // deferred save lands in the right folder even if the UI selection changed.
+    const effectiveBox = options.box !== undefined ? options.box : currentBox;
+    const effectiveUserData = options.ctxUserData !== undefined ? options.ctxUserData : userData;
     try {
       const now = new Date();
       const pad = (n) => String(n).padStart(2, '0');
       const ts = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-      const targetFileName = fileName || (currentBox?.id
-        ? `Cutiscope_${currentBox.id}_${ts}.jpg`
+      const targetFileName = fileName || (effectiveBox?.id
+        ? `Cutiscope_${effectiveBox.id}_${ts}.jpg`
         : `Cutiscope_${ts}.jpg`);
 
       let directoryPath;
@@ -1059,8 +1083,8 @@ const CameraScreen = ({ navigation }) => {
       } else {
         // Logged-in user: per-user, per-patient, year/month/week hierarchy
         const userSegment =
-          userData?.id != null
-            ? String(userData.id)
+          effectiveUserData?.id != null
+            ? String(effectiveUserData.id)
             : sanitizeFolderName(getUsername() || 'user');
 
         const year = String(now.getFullYear());
@@ -1068,8 +1092,8 @@ const CameraScreen = ({ navigation }) => {
         const day = pad(now.getDate());
         const dateSegment = `${day}-${month}-${year}`;
 
-        const patientSegment = currentBox?.id
-          ? `${currentBox.id}__${sanitizeFolderName(currentBox.name || '')}`
+        const patientSegment = effectiveBox?.id
+          ? `${effectiveBox.id}__${sanitizeFolderName(effectiveBox.name || '')}`
           : 'Unassigned';
 
         if (Platform.OS === 'android') {
@@ -1106,7 +1130,9 @@ const CameraScreen = ({ navigation }) => {
       } catch (_) { }
 
       // Do not scan guest photos into MediaStore — they stay app-private (cache + .nomedia).
-      if (Platform.OS === 'android' && !forGuest) {
+      // skipScan lets the caller defer the (slow) MediaScanner to a background step
+      // so the capture path stays instant.
+      if (Platform.OS === 'android' && !forGuest && !skipScan) {
         try {
           await RNFS.scanFile(targetPath);
         } catch (scannerError) {
@@ -1717,7 +1743,9 @@ const CameraScreen = ({ navigation }) => {
     const initializePermissions = async () => {
       try {
         await requestPermission();
-        await requestStoragePermission();
+        const storageOk = await requestStoragePermission();
+        // Prime the cache so the first capture doesn't pay a permission round-trip.
+        hasStoragePermissionRef.current = !!storageOk;
         await requestLocationPermission();
       } catch (error) {
         console.error('Permission initialization error:', error);
@@ -1826,10 +1854,51 @@ const CameraScreen = ({ navigation }) => {
   };
 
   // ========== CAPTURE FUNCTION ==========
-  // Guest: rapid capture like normal OS camera (short throttle + non-blocking save). Logged-in: 1s throttle + 500ms settle.
+  // Minimum gap between shots (debounce only). The shutter now unlocks right
+  // after takePhoto and all heavy work is off-thread in CaptureQueue, so this can
+  // be small — it just prevents accidental double-fires.
   const CAPTURE_THROTTLE_MS_GUEST = 300;
-  const CAPTURE_THROTTLE_MS_LOGGED_IN = 500;
-  const CAPTURE_UNLOCK_DELAY_MS_LOGGED_IN = 100;
+  const CAPTURE_THROTTLE_MS_LOGGED_IN = 300;
+
+  // Set true to save raw + processed JPEG pairs for orientation/scale debugging.
+  const DEBUG_SAVE_CAPTURE_PAIR = false;
+  // Dermascope is fixed to the phone; ignore device tilt so we never rotate
+  // landscape-left / landscape-right captures (that was inverting the image).
+  const FORCE_PORTRAIT_NO_DEVICE_TILT_ROTATION = true;
+
+  const saveDebugCaptureImage = async (sourcePath, label, debugTs, orientation = null) => {
+    if (!DEBUG_SAVE_CAPTURE_PAIR) return null;
+    try {
+      const debugDir = Platform.OS === 'android'
+        ? `${RNFS.ExternalStorageDirectoryPath}/Pictures/Cutiscope_Debug`
+        : `${RNFS.DocumentDirectoryPath}/Cutiscope_Debug`;
+      await RNFS.mkdir(debugDir);
+
+      const cleanSource = sourcePath.startsWith('file://') ? sourcePath.slice(7) : sourcePath;
+      const orientSuffix = orientation ? `_${orientation}` : '';
+      const destPath = `${debugDir}/${debugTs}_${label}${orientSuffix}.jpg`;
+
+      const sourceExists = await RNFS.exists(cleanSource);
+      if (!sourceExists) {
+        console.warn(`🔬 Debug save skipped (missing source): ${cleanSource}`);
+        return null;
+      }
+
+      await RNFS.copyFile(cleanSource, destPath);
+
+      if (Platform.OS === 'android') {
+        try {
+          await RNFS.scanFile(destPath);
+        } catch (_) { }
+      }
+
+      console.log(`🔬 Debug capture saved: ${destPath}`);
+      return destPath;
+    } catch (err) {
+      console.warn('🔬 Debug capture save failed:', err?.message || err);
+      return null;
+    }
+  };
 
   // const processImage = async (uri, zoomVal = 1.0, patientName = '', part = '') => {
   //   try {
@@ -2014,15 +2083,28 @@ const CameraScreen = ({ navigation }) => {
     try {
       console.log('🖼️ processImage: Starting Skia processing for', uri, 'Zoom:', zoomVal, 'Orientation:', orientation);
 
-      const exists = await RNFS.exists(uri);
+      const cleanPath = uri.startsWith('file://') ? uri.slice(7) : uri;
+      const exists = await RNFS.exists(cleanPath);
       if (!exists) {
         console.error('❌ processImage: Source file does not exist:', uri);
         return uri;
       }
 
-      const data = await RNFS.readFile(uri, 'base64');
-      const skData = Skia.Data.fromBase64(data);
-      const image = Skia.Image.MakeImageFromEncoded(skData);
+      // Fast path: load the file straight into Skia natively via a URI. This
+      // avoids reading a multi-MB base64 string into JS and the synchronous
+      // fromBase64 decode — the biggest JS-thread stalls on the old path.
+      let image = null;
+      try {
+        const skData = await Skia.Data.fromURI(`file://${cleanPath}`);
+        image = Skia.Image.MakeImageFromEncoded(skData);
+      } catch (uriErr) {
+        console.warn('⚠️ processImage: fromURI failed, falling back to base64', uriErr?.message || uriErr);
+      }
+      // Fallback: base64 read (older, slower, but reliable).
+      if (!image) {
+        const data = await RNFS.readFile(cleanPath, 'base64');
+        image = Skia.Image.MakeImageFromEncoded(Skia.Data.fromBase64(data));
+      }
 
       if (!image) {
         console.error('❌ processImage: Failed to decode image with Skia');
@@ -2060,7 +2142,24 @@ const CameraScreen = ({ navigation }) => {
       let rotationAngle = 0;
       let isSideways = false;
 
-      if (orientation === 'landscape-left') {
+      if (FORCE_PORTRAIT_NO_DEVICE_TILT_ROTATION) {
+        // Lock the output to portrait using ONLY the pixel dimensions — the phone
+        // tilt / reported device orientation is deliberately ignored. If the raw
+        // buffer happens to be landscape (wider than tall), rotate it 90° so the
+        // saved image is ALWAYS portrait; otherwise keep it as-is.
+        if (originalW > originalH) {
+          isSideways = true;
+          rotationAngle = 90;
+        } else {
+          isSideways = false;
+          rotationAngle = 0;
+        }
+        console.log(
+          '🖼️ processImage: FORCE_PORTRAIT — locked to portrait (ignoring tilt):',
+          orientation,
+          `(raw ${originalW}x${originalH}) -> rotate ${rotationAngle}`
+        );
+      } else if (orientation === 'landscape-left') {
         rotationAngle = 90;
         isSideways = true;
       } else if (orientation === 'landscape-right') {
@@ -2222,6 +2321,122 @@ const CameraScreen = ({ navigation }) => {
     }
   };
 
+  // Move the camera's temp file into a queue-owned staging folder (a fast rename
+  // on the same volume). The queue then owns this file until it is processed and
+  // the single final photo is saved; keeps captured images safe across restarts.
+  const stageRawForQueue = async (srcPath) => {
+    try {
+      // DocumentDirectory (not Caches) so staged raws survive an app-kill and can
+      // be resumed by CaptureQueue.hydrate() on next launch.
+      const dir = `${RNFS.DocumentDirectoryPath}/capture_queue`;
+      await RNFS.mkdir(dir);
+      const dest = `${dir}/raw_${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
+      try {
+        await RNFS.moveFile(srcPath, dest);
+      } catch (moveErr) {
+        await RNFS.copyFile(srcPath, dest);
+        try { await RNFS.unlink(srcPath); } catch (_) { }
+      }
+      return dest;
+    } catch (e) {
+      console.warn('stageRawForQueue failed, using original temp path:', e?.message || e);
+      return srcPath;
+    }
+  };
+
+  // The per-job worker used by CaptureQueue. Kept in a ref (updated every render)
+  // so the queue always runs against the freshest functions/state. One job:
+  // process (watermark/white-balance) → save the ONE final photo → hand off S3 +
+  // Drive uploads. Throwing here makes CaptureQueue retry the job.
+  captureProcessorRef.current = async (job) => {
+    const processedPath = await processImage(
+      job.rawPath, job.zoom, job.patientName, job.bodyPart, job.orientation
+    );
+    const cleanProcessed = processedPath && processedPath.startsWith('file://')
+      ? processedPath.slice(7) : processedPath;
+
+    const localResult = await saveImageLocallyOnly(cleanProcessed, job.fileName, {
+      forGuest: job.isGuest,
+      box: job.boxCtx,
+      ctxUserData: job.userCtx,
+    });
+
+    // Only update the thumbnail if this is still the most recent shot; otherwise
+    // a newer capture is already shown and we must not flip back to an older one.
+    if (!job.captureSeq || job.captureSeq >= latestCaptureSeqRef.current) {
+      setLatestPhotoUri({ path: localResult.path });
+    }
+
+    // The single photo is saved — drop the staged raw.
+    try { if (await RNFS.exists(job.rawPath)) await RNFS.unlink(job.rawPath); } catch (_) { }
+
+    // Uploads (logged-in only). S3 goes through OptimisedUploadService's own
+    // serial queue (continuous background upload); Drive runs concurrently. Both
+    // are best-effort and must NOT fail the processing job (so no re-processing).
+    if (!job.isGuest) {
+      const pathKey = localResult.path;
+      const savedFileName = localResult.fileName;
+      try { await AsyncStorage.setItem(`uploaded_${pathKey}`, 'pending'); } catch (_) { }
+      try {
+        await registerAndEnqueue({
+          localPath: localResult.path,
+          fileName: savedFileName,
+          username: job.username,
+          userData: job.userCtx,
+          currentBox: job.boxCtx,
+        });
+      } catch (e) {
+        console.warn('registerAndEnqueue failed:', e?.message || e);
+      }
+      (async () => {
+        try {
+          const accessToken = await firebaseAuthService.getValidAccessToken();
+          if (accessToken) {
+            await googleDriveService.uploadPhotoToDrive(
+              accessToken, `file://${localResult.path}`, savedFileName
+            );
+            await AsyncStorage.setItem(`uploaded_${pathKey}`, 'true');
+          } else {
+            await AsyncStorage.setItem(`uploaded_${pathKey}`, 'pending');
+          }
+        } catch (e) {
+          await AsyncStorage.setItem(`uploaded_${pathKey}`, 'failed');
+        }
+      })();
+    }
+  };
+
+  // Keep the focus ref in sync so the queue's deferGate can read it.
+  useEffect(() => {
+    isFocusedRef.current = isFocused;
+  }, [isFocused]);
+
+  // Configure the CaptureQueue once: inject the processor (via ref) and the
+  // shutter-priority gate, then restore any jobs left pending from last session.
+  useEffect(() => {
+    CaptureQueue.configure({
+      processor: (job) =>
+        captureProcessorRef.current ? captureProcessorRef.current(job) : Promise.resolve(),
+      // Load balancing — the shutter ALWAYS wins:
+      //  • If the user isn't on the camera screen, process freely (background).
+      //  • While on the camera, hold off processing as long as they're actively
+      //    capturing (a shot in flight, or a recent shot within the window), so a
+      //    heavy Skia encode never collides with the next takePhoto.
+      deferGate: () => {
+        if (!isFocusedRef.current) return false;
+        return (
+          isCapturingRef.current ||
+          Date.now() - lastCaptureTimeRef.current < CAPTURE_PROCESS_DEFER_MS
+        );
+      },
+      // Allow a large backlog before forcing processing, so long capture bursts
+      // stay perfectly smooth (staged raws drain once the user pauses/leaves).
+      forceProcessAfter: 25,
+    });
+    CaptureQueue.hydrate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleCapturePress = async () => {
     resetInactivityTimer();
     // resetInactivityTimer();
@@ -2260,7 +2475,13 @@ const CameraScreen = ({ navigation }) => {
         setOnCapturePress(true);
         setIsCapturing(true);
 
-        const hasStoragePermission = await requestStoragePermission();
+        // Only hit the native permission API until it's granted once; after that
+        // reuse the cached result so the shutter path stays fast.
+        let hasStoragePermission = hasStoragePermissionRef.current;
+        if (!hasStoragePermission) {
+          hasStoragePermission = await requestStoragePermission();
+          hasStoragePermissionRef.current = hasStoragePermission;
+        }
         if (!hasStoragePermission) {
           Alert.alert(
             'Storage Permission Required',
@@ -2268,22 +2489,35 @@ const CameraScreen = ({ navigation }) => {
             [{ text: 'OK' }]
           );
           setOnCapturePress(false);
+          setIsCapturing(false);
           isCapturingRef.current = false; // Reset lock early
           resetInactivityTimer(); // Restart timer
           return;
         }
 
         const photo = await cameraRef.current.takePhoto({
-          qualityPrioritization: 'quality',
+          // 'speed' returns from the shutter as fast as possible (no multi-frame
+          // HDR fusion) — best for rapid, continuous capture. Still a full-
+          // resolution image. Bump to 'balanced'/'quality' if more processing is
+          // acceptable at the cost of shutter lag.
+          qualityPrioritization: 'speed',
           flash: 'off',
           enableShutterSound: false,
         });
 
-        // Apply White Balance Correction & Watermarking
-        const patientName = currentBox?.name || '';
-        const processedPath = await processImage(photo.path, zoomBtnValue, patientName, bodyPart);
-        console.log('📸 handleCapturePress: processedPath =', processedPath);
-        const finalPhotoPath = processedPath.startsWith('file://') ? processedPath.slice(7) : processedPath;
+        // Re-enable the shutter immediately: the photo is captured, and
+        // everything below (staging + queueing) is fast and non-blocking. The
+        // heavy processing/upload happens entirely in the background queue.
+        setOnCapturePress(false);
+        setIsCapturing(false);
+        isCapturingRef.current = false;
+
+        console.log('📸 takePhoto orientation:', photo.orientation, 'path:', photo.path);
+
+        // Camera's temporary file. It is NEVER saved to the gallery as-is; it is
+        // staged for the background queue, processed into the single final photo,
+        // then deleted. Only ONE (processed) photo is ever saved to the gallery.
+        const rawPhotoPath = photo.path.startsWith('file://') ? photo.path.slice(7) : photo.path;
 
         const now = new Date();
         const pad = num => num.toString().padStart(2, '0');
@@ -2294,97 +2528,55 @@ const CameraScreen = ({ navigation }) => {
         const minutes = pad(now.getMinutes());
         const seconds = pad(now.getSeconds());
 
-
         const fileName = currentBox?.id
           ? `Cutiscope_${currentBox.id}_${year}${month}${day}_${hours}${minutes}${seconds}.jpg`
           : `Cutiscope_${year}${month}${day}_${hours}${minutes}${seconds}.jpg`;
 
-        const metadata = {
-          zoom: zoomBtnValue,
-          exposure: exposureBtnValue,
-          focusDepth: focusDepthValue,
-          deviceId: 'Dev_005',
-          timestamp: new Date().toISOString(),
-          userId: userData?.id || 'guest',
-          username: userData?.username || 'guest'
-        };
-
-        if (isGuest) {
-          const guestPhotoPath = finalPhotoPath;
-          const guestFileName = fileName;
-          (async () => {
-            try {
-              const localResult = await saveImageLocallyOnly(guestPhotoPath, guestFileName, { forGuest: true });
-              setLatestPhotoUri({ path: localResult.path });
-              loadImage();
-            } catch (e) {
-              if (Platform.OS === 'android') showInAppToast('Failed', { durationMs: 2000 });
-            }
-          })();
-        } else {
-          const username = getUsername();
-          try {
-            const localResult = await saveImageLocallyOnly(finalPhotoPath, fileName);
-            setLatestPhotoUri({ path: localResult.path });
-            loadImage();
-
-            await registerAndEnqueue({
-              localPath: localResult.path,
-              fileName: localResult.fileName,
-              username,
-              userData,
-              currentBox,
-            });
-
-            // Update patient photo counts
-            if (currentBox?.id) {
-              recordPhotoCapture(currentBox.id);
-            }
-
-            if (Platform.OS === 'android') {
-              showInAppToast('Uploading', { position: 'bottom', durationMs: 1200 });
-            }
-            try {
-              await AsyncStorage.setItem(`uploaded_${localResult.path}`, 'pending');
-            } catch (_) { }
-
-            (async () => {
-              const pathKey = localResult.path;
-              try {
-                const accessToken = await firebaseAuthService.getValidAccessToken();
-                if (accessToken) {
-                  await googleDriveService.uploadPhotoToDrive(
-                    accessToken,
-                    `file://${localResult.path}`,
-                    fileName
-                  );
-                  await AsyncStorage.setItem(`uploaded_${pathKey}`, 'true');
-                } else {
-                  await AsyncStorage.setItem(`uploaded_${pathKey}`, 'pending');
-                }
-              } catch (e) {
-                await AsyncStorage.setItem(`uploaded_${pathKey}`, 'failed');
-              }
-            })();
-          } catch (error) {
-            if (Platform.OS === 'android') showInAppToast('Failed', { durationMs: 2000 });
+        // Instant feedback + patient count (logged-in).
+        if (!isGuest) {
+          if (currentBox?.id) {
+            recordPhotoCapture(currentBox.id);
+          }
+          if (Platform.OS === 'android') {
+            showInAppToast('Saved', { position: 'bottom', durationMs: 1000 });
           }
         }
+
+        // This shot's sequence number — used to keep the gallery thumbnail on the
+        // most recent capture even as the queue drains older shots in the back.
+        const captureSeq = ++latestCaptureSeqRef.current;
+
+        // Move the raw off the camera temp dir into the queue's staging folder
+        // (fast rename), then show the instant preview from the staged file.
+        const stagedPath = await stageRawForQueue(rawPhotoPath);
+        setLatestPhotoUri({ path: stagedPath });
+
+        // Hand off to the background pipeline with a serializable snapshot of the
+        // patient/user context. The shutter is now completely free.
+        CaptureQueue.enqueue({
+          rawPath: stagedPath,
+          fileName,
+          isGuest,
+          captureSeq,
+          zoom: zoomBtnValue,
+          patientName: currentBox?.name || '',
+          bodyPart,
+          orientation: photo.orientation,
+          username: isGuest ? '' : getUsername(),
+          boxCtx: currentBox ? { id: currentBox.id, name: currentBox.name } : null,
+          userCtx: userData ? { id: userData.id, username: userData.username } : null,
+        });
 
       } catch (error) {
         console.error('Failed to take picture:', error);
         Alert.alert('Error', UserMessages.captureFailed);
       } finally {
+        // Safety net: make sure the shutter is unlocked even if we errored or
+        // returned before the early re-enable above. Rapid double-fires are still
+        // prevented by the throttle (CAPTURE_THROTTLE_MS_*).
         setOnCapturePress(false);
         setIsCapturing(false);
-        if (isGuest) {
-          // Unlock immediately for rapid capture like normal OS camera
-          isCapturingRef.current = false;
-        } else {
-          setTimeout(() => {
-            isCapturingRef.current = false;
-          }, CAPTURE_UNLOCK_DELAY_MS_LOGGED_IN);
-        }
+        isCapturingRef.current = false;
         resetInactivityTimer(); // Restart auto-lock timer
       }
     } else {
