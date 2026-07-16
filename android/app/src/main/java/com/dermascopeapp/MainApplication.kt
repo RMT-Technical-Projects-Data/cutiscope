@@ -23,6 +23,7 @@ class MainApplication : Application(), ReactApplication {
               add(SystemPowerPackage())
               add(KioskModePackage())
               add(ConnectivityPackage())
+              add(ImageProcessorPackage())
             }
 
         override fun getJSMainModuleName(): String = "index"

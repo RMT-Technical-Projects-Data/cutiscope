@@ -2081,242 +2081,27 @@ const CameraScreen = ({ navigation }) => {
 
   const processImage = async (uri, zoomVal = 1.0, patientName = '', part = '', orientation = null) => {
     try {
-      console.log('🖼️ processImage: Starting Skia processing for', uri, 'Zoom:', zoomVal, 'Orientation:', orientation);
-
-      const cleanPath = uri.startsWith('file://') ? uri.slice(7) : uri;
-      const exists = await RNFS.exists(cleanPath);
-      if (!exists) {
-        console.error('❌ processImage: Source file does not exist:', uri);
+      console.log('🖼️ processImage: Offloading to Native Module for', uri);
+      
+      const { ImageProcessorModule } = NativeModules;
+      if (!ImageProcessorModule) {
+        console.warn('ImageProcessorModule not found, returning original uri');
         return uri;
       }
 
-      // Fast path: load the file straight into Skia natively via a URI. This
-      // avoids reading a multi-MB base64 string into JS and the synchronous
-      // fromBase64 decode — the biggest JS-thread stalls on the old path.
-      let image = null;
-      try {
-        const skData = await Skia.Data.fromURI(`file://${cleanPath}`);
-        image = Skia.Image.MakeImageFromEncoded(skData);
-      } catch (uriErr) {
-        console.warn('⚠️ processImage: fromURI failed, falling back to base64', uriErr?.message || uriErr);
-      }
-      // Fallback: base64 read (older, slower, but reliable).
-      if (!image) {
-        const data = await RNFS.readFile(cleanPath, 'base64');
-        image = Skia.Image.MakeImageFromEncoded(Skia.Data.fromBase64(data));
-      }
-
-      if (!image) {
-        console.error('❌ processImage: Failed to decode image with Skia');
-        return uri;
-      }
-
-      // Calculate Color Matrix for White Balance
-      const temp = DEFAULT_TEMPERATURE || 6500;
-      const tint = DEFAULT_TINT || 0;
-
-      // Simple approximation for Temperature and Tint
-      // Temperature: scales Red and Blue
-      // Tint: scales Green
-      const tempRatio = temp / 6500;
-      const rScale = tempRatio < 1 ? 1 : 1 / tempRatio;
-      const bScale = tempRatio > 1 ? 1 : tempRatio;
-      const gScale = 1.0 - (tint * 0.1);
-
-      const matrix = [
-        rScale, 0, 0, 0, 0,
-        0, gScale, 0, 0, 0,
-        0, 0, bScale, 0, 0,
-        0, 0, 0, 1, 0,
-      ];
-
-      const originalW = image.width();
-      const originalH = image.height();
-
-      // --- Determine rotation from the camera's reported sensor orientation ---
-      // NOTE: Skia.Image.MakeImageFromEncoded does NOT read/apply EXIF orientation,
-      // it only gives raw pixel dimensions. We must rely on the orientation value
-      // reported directly by vision-camera's takePhoto() (hardware-accurate),
-      // instead of guessing from width > height, which is unreliable and was
-      // the cause of intermittent wrong-direction captures.
-      let rotationAngle = 0;
-      let isSideways = false;
-
-      if (FORCE_PORTRAIT_NO_DEVICE_TILT_ROTATION) {
-        // Lock the output to portrait using ONLY the pixel dimensions — the phone
-        // tilt / reported device orientation is deliberately ignored. If the raw
-        // buffer happens to be landscape (wider than tall), rotate it 90° so the
-        // saved image is ALWAYS portrait; otherwise keep it as-is.
-        if (originalW > originalH) {
-          isSideways = true;
-          rotationAngle = 90;
-        } else {
-          isSideways = false;
-          rotationAngle = 0;
-        }
-        console.log(
-          '🖼️ processImage: FORCE_PORTRAIT — locked to portrait (ignoring tilt):',
-          orientation,
-          `(raw ${originalW}x${originalH}) -> rotate ${rotationAngle}`
-        );
-      } else if (orientation === 'landscape-left') {
-        rotationAngle = 90;
-        isSideways = true;
-      } else if (orientation === 'landscape-right') {
-        rotationAngle = -90;
-        isSideways = true;
-      } else if (orientation === 'portrait-upside-down') {
-        rotationAngle = 180;
-        isSideways = false;
-      } else if (orientation === 'portrait') {
-        rotationAngle = 0;
-        isSideways = false;
-      } else {
-        // Fallback (orientation not reported by this device): use the old
-        // pixel-dimension heuristic as a safety net rather than failing outright.
-        console.warn('⚠️ processImage: No orientation reported, falling back to dimension heuristic');
-        isSideways = originalW > originalH;
-        rotationAngle = isSideways ? 90 : 0;
-      }
-
-      // Set target portrait output dimensions
-      const imgW = isSideways ? originalH : originalW;
-      const imgH = isSideways ? originalW : originalH;
-
-      const surface = Skia.Surface.MakeOffscreen(imgW, imgH);
-      if (!surface) {
-        console.error('❌ processImage: Failed to create Skia surface');
-        return uri;
-      }
-
-      const canvas = surface.getCanvas();
-      const paint = Skia.Paint();
-      paint.setColorFilter(Skia.ColorFilter.MakeMatrix(matrix));
-
-      if (rotationAngle !== 0) {
-        canvas.save();
-        if (rotationAngle === 90) {
-          canvas.translate(imgW, 0);
-          canvas.rotate(90, 0, 0);
-        } else if (rotationAngle === -90) {
-          canvas.translate(0, imgH);
-          canvas.rotate(-90, 0, 0);
-        } else if (rotationAngle === 180) {
-          canvas.translate(imgW, imgH);
-          canvas.rotate(180, 0, 0);
-        }
-      }
-      canvas.drawImage(image, 0, 0, paint);
-      if (rotationAngle !== 0) {
-        canvas.restore();
-      }
-
-      // --- Draw Millimeter Scale Watermark ---
-      try {
-        console.log('📏 processImage: Drawing scale watermark...');
-        const scaleX = imgW * 0.04;
-        const scaleTop = imgH * 0.1;
-        const scaleHeight = imgH * 0.8;
-
-        const scalePaint = Skia.Paint();
-        scalePaint.setColor(Skia.Color('#ffffff'));
-        scalePaint.setStrokeWidth(Math.max(4, imgW / 300));
-        scalePaint.setAntiAlias(true);
-
-        canvas.drawLine(scaleX, scaleTop, scaleX, scaleTop + scaleHeight, scalePaint);
-
-        const maxMm = 15.0 / zoomVal;
-
-        let font = null;
-        try {
-          const typeface = Skia.FontMgr.System().matchFamilyStyle("sans-serif", FontStyle.Normal);
-          font = Skia.Font(typeface, Math.max(30, imgH / 40));
-        } catch (fontErr) {
-          console.warn('⚠️ processImage: Font creation failed', fontErr);
-        }
-
-        const totalSteps = Math.floor(maxMm * 10);
-        for (let step = 0; step <= totalSteps; step++) {
-          const val = step / 10;
-          const valRounded = Math.round(val * 10);
-          const isMajor = valRounded % 10 === 0;
-          const isMedium = valRounded % 10 === 5;
-
-          const y = scaleTop + ((maxMm - val) / maxMm) * scaleHeight;
-
-          let tickWidth = imgW * 0.015; // minor tick (0.1 mm)
-          if (isMajor) {
-            tickWidth = imgW * 0.04;   // major tick (1.0 mm)
-          } else if (isMedium) {
-            tickWidth = imgW * 0.027;  // medium tick (0.5 mm)
-          }
-
-          canvas.drawLine(scaleX, y, scaleX + tickWidth, y, scalePaint);
-
-          if (isMajor && font) {
-            const text = val.toFixed(0);
-            const textX = scaleX + tickWidth + (imgW * 0.015);
-            canvas.drawText(text, textX, y + (font.getSize() / 3), scalePaint, font);
-          }
-        }
-
-        if (font) {
-          canvas.drawText('mm', scaleX, scaleTop + scaleHeight + font.getSize() + 10, scalePaint, font);
-        }
-        console.log('✅ processImage: Scale watermark drawn successfully');
-      } catch (scaleDrawErr) {
-        console.error('❌ processImage: Scale watermark error:', scaleDrawErr);
-      }
-
-      // --- Draw Patient Info Box ---
-      if (patientName || part) {
-        try {
-          console.log('📝 processImage: Drawing patient info box...');
-          const label = [patientName, part].filter(Boolean).join(' | ');
-
-          const fontSize = Math.max(40, imgW / 25);
-
-          const textPaint = Skia.Paint();
-          textPaint.setColor(Skia.Color('#ffffff'));
-          textPaint.setAntiAlias(true);
-
-          const typeface = Skia.FontMgr.System().matchFamilyStyle("sans-serif", FontStyle.Bold);
-          const font = Skia.Font(typeface, fontSize);
-
-          const textWidth = font.measureText(label).width;
-
-          const paddingX = fontSize * 1.0;
-          const paddingY = fontSize * 0.6;
-          const boxWidth = textWidth + paddingX * 2;
-          const boxHeight = fontSize + paddingY * 2;
-
-          const boxX = (imgW - boxWidth) / 2;
-          const boxY = imgH - boxHeight - (imgH * 0.01);
-
-          const boxPaint = Skia.Paint();
-          boxPaint.setColor(Skia.Color('rgba(0, 0, 0, 0.6)'));
-          boxPaint.setAntiAlias(true);
-
-          canvas.drawRect({ x: boxX, y: boxY, width: boxWidth, height: boxHeight }, boxPaint);
-
-          const textX = boxX + paddingX;
-          const textY = boxY + boxHeight / 2 + fontSize * 0.35;
-
-          canvas.drawText(label, textX, textY, textPaint, font);
-          console.log('✅ processImage: Patient info box drawn successfully');
-        } catch (infoDrawErr) {
-          console.error('❌ processImage: Patient info box error:', infoDrawErr);
-        }
-      }
-
-      const snapshot = surface.makeImageSnapshot();
-      const encoded = snapshot.encodeToBase64(ImageFormat.JPEG, 90);
-      const path = `${RNFS.TemporaryDirectoryPath}/processed_${Date.now()}.jpg`;
-      await RNFS.writeFile(path, encoded, 'base64');
-      console.log('✅ processImage: Done, path:', path);
-      return path;
+      // The native module runs asynchronously on a background thread (Dispatchers.IO)
+      // and returns the path to the processed image.
+      const processedUri = await ImageProcessorModule.processImageAsync(
+        uri,
+        zoomVal,
+        patientName,
+        part,
+        orientation
+      );
+      
+      return processedUri;
     } catch (err) {
-      console.error('❌ Skia processImage error:', err);
+      console.error('❌ Native processImage error:', err);
       return uri;
     }
   };
@@ -2367,16 +2152,29 @@ const CameraScreen = ({ navigation }) => {
       setLatestPhotoUri({ path: localResult.path });
     }
 
-    // The single photo is saved — drop the staged raw.
+    // Clean up staged raw and temporary processed file
     try { if (await RNFS.exists(job.rawPath)) await RNFS.unlink(job.rawPath); } catch (_) { }
+    if (cleanProcessed !== job.rawPath) {
+        try { if (await RNFS.exists(cleanProcessed)) await RNFS.unlink(cleanProcessed); } catch (_) { }
+    }
 
-    // Uploads (logged-in only). S3 goes through OptimisedUploadService's own
-    // serial queue (continuous background upload); Drive runs concurrently. Both
-    // are best-effort and must NOT fail the processing job (so no re-processing).
+    // Emit event to trigger decoupled uploads
     if (!job.isGuest) {
+      DeviceEventEmitter.emit('CAPTURE_PROCESSED', {
+        localResult,
+        job
+      });
+    }
+  };
+
+  // Listen for fully processed captures and handle uploads independently of the queue
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener('CAPTURE_PROCESSED', async ({ localResult, job }) => {
       const pathKey = localResult.path;
       const savedFileName = localResult.fileName;
+      
       try { await AsyncStorage.setItem(`uploaded_${pathKey}`, 'pending'); } catch (_) { }
+      
       try {
         await registerAndEnqueue({
           localPath: localResult.path,
@@ -2388,6 +2186,7 @@ const CameraScreen = ({ navigation }) => {
       } catch (e) {
         console.warn('registerAndEnqueue failed:', e?.message || e);
       }
+      
       (async () => {
         try {
           const accessToken = await firebaseAuthService.getValidAccessToken();
@@ -2403,8 +2202,10 @@ const CameraScreen = ({ navigation }) => {
           await AsyncStorage.setItem(`uploaded_${pathKey}`, 'failed');
         }
       })();
-    }
-  };
+    });
+
+    return () => subscription.remove();
+  }, []);
 
   // Keep the focus ref in sync so the queue's deferGate can read it.
   useEffect(() => {
@@ -2429,9 +2230,9 @@ const CameraScreen = ({ navigation }) => {
           Date.now() - lastCaptureTimeRef.current < CAPTURE_PROCESS_DEFER_MS
         );
       },
-      // Allow a large backlog before forcing processing, so long capture bursts
-      // stay perfectly smooth (staged raws drain once the user pauses/leaves).
-      forceProcessAfter: 25,
+      // Allow a small backlog before forcing processing. Native processing is fast,
+      // so this rarely gets hit, but keeps the raw staging folder size tiny.
+      forceProcessAfter: 8,
     });
     CaptureQueue.hydrate();
     // eslint-disable-next-line react-hooks/exhaustive-deps

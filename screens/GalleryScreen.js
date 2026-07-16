@@ -281,10 +281,10 @@ const ZoomableImage = ({ uri, onTap }) => {
 
   return (
     <GestureDetector gesture={composed}>
-      <Reanimated.View style={{ flex: 1, width, height: '100%', justifyContent: 'center', alignItems: 'center' }}>
-        <Reanimated.Image
+      <Reanimated.View style={[{ flex: 1, width, height: '100%', justifyContent: 'center', alignItems: 'center' }, animatedStyle]}>
+        <Image
           source={{ uri }}
-          style={[{ width: '100%', height: '100%' }, animatedStyle]}
+          style={{ width: '100%', height: '100%' }}
           resizeMode="contain"
           fadeDuration={0}
         />
@@ -2094,7 +2094,7 @@ const FullScreenGalleryModal = React.memo(({
             windowSize={5}
             maxToRenderPerBatch={3}
             initialNumToRender={3}
-            removeClippedSubviews={false}
+            removeClippedSubviews={true}
           />
         </View>
 

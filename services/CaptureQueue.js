@@ -19,7 +19,7 @@
  * The actual work (Skia processing + local save + upload) is injected via
  * `configure({ processor })` because it depends on the screen's Skia setup.
  */
-import { DeviceEventEmitter } from 'react-native';
+import { DeviceEventEmitter, InteractionManager } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const STORAGE_KEY = 'capture_queue_pending_v1';
@@ -130,6 +130,14 @@ class CaptureQueue {
           this.queue.shift();
           this._emit();
           await this._persist();
+          
+          // Yield the JS thread to React Native after every job, even if processing
+          // was native. This ensures UI animations, touches, and navigation always
+          // get priority before we start another loop iteration.
+          await new Promise(resolve => InteractionManager.runAfterInteractions(resolve));
+          
+          // Micro-yield for other microtasks
+          await this._wait(0);
         } catch (e) {
           // Retry with backoff, then drop after maxRetries.
           job.retries = (job.retries || 0) + 1;
@@ -144,9 +152,6 @@ class CaptureQueue {
             await this._persist();
           }
         }
-
-        // Yield to the event loop between jobs so taps / renders can run.
-        await this._wait(0);
       }
     } finally {
       this.isProcessing = false;
