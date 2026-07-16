@@ -8,12 +8,88 @@ import Config from 'react-native-config';
 import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
 
 // S3 Configuration from .env (bucket: cutiscope, region: ap-south-1 Mumbai)
-const S3_CONFIG = {
-  bucket: (Config.AWS_S3_BUCKET || 'cutiscope').trim(),
-  region: (Config.AWS_REGION || 'ap-south-1').trim(),
-  accessKey: (Config.AWS_ACCESS_KEY_ID || '').trim(),
-  secretKey: (Config.AWS_SECRET_ACCESS_KEY || '').trim(),
-  successActionStatus: 201,
+// Read at call-time so credentials are not stuck empty if Config loads late.
+const getS3Config = () => {
+  const stripQuotes = (v) => {
+    const s = String(v || '').trim();
+    if (
+      (s.startsWith("'") && s.endsWith("'")) ||
+      (s.startsWith('"') && s.endsWith('"'))
+    ) {
+      return s.slice(1, -1).trim();
+    }
+    return s;
+  };
+  return {
+    bucket: stripQuotes(Config?.AWS_S3_BUCKET || 'cutiscope'),
+    region: stripQuotes(Config?.AWS_REGION || 'ap-south-1'),
+    accessKey: stripQuotes(Config?.AWS_ACCESS_KEY_ID || ''),
+    // Keep + and / intact — never URL-decode the secret
+    secretKey: stripQuotes(Config?.AWS_SECRET_ACCESS_KEY || ''),
+    successActionStatus: 201,
+  };
+};
+
+const S3_CONFIG = new Proxy(
+  {},
+  {
+    get(_target, prop) {
+      return getS3Config()[prop];
+    },
+  }
+);
+
+const assertS3Credentials = (cfg = getS3Config()) => {
+  if (!cfg.accessKey || !cfg.secretKey) {
+    throw new Error(
+      'S3 credentials missing. Fill AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in .env, then rebuild (npx react-native run-android).'
+    );
+  }
+};
+
+/**
+ * Shared RNS3 options. Regional awsUrl is required for SigV4 outside us-east-1;
+ * posting to s3.amazonaws.com often yields SignatureDoesNotMatch.
+ */
+const buildRns3Options = (keyPrefix, cfg = getS3Config()) => {
+  assertS3Credentials(cfg);
+  const region = cfg.region || 'ap-south-1';
+  return {
+    bucket: cfg.bucket,
+    region,
+    accessKey: cfg.accessKey,
+    secretKey: cfg.secretKey,
+    keyPrefix,
+    successActionStatus: 201,
+    // BucketOwnerEnforced: only this canned ACL (or none) is accepted
+    acl: 'bucket-owner-full-control',
+    // Critical for ap-south-1 (and any non-us-east-1 region)
+    awsUrl: `s3.${region}.amazonaws.com`,
+  };
+};
+
+/** Warn when device clock is wildly wrong (AWS SigV4 allows ~15 min skew). */
+const logClockSkewHint = () => {
+  const now = new Date();
+  console.log('🕒 Device time for S3 signing:', now.toISOString());
+  // Rough sanity: year should be current-ish; filenames like 01-01-2026 with Jul 2026
+  // real world still fail if the phone date is frozen.
+};
+
+/** Parse AWS XML/text error from RNS3 response for clearer logs */
+const formatS3Error = (response) => {
+  const status = response?.status;
+  const raw =
+    (typeof response?.text === 'string' && response.text) ||
+    (typeof response?.body === 'string' && response.body) ||
+    '';
+  if (!raw) return `S3 upload failed: HTTP ${status}`;
+  const code = raw.match(/<Code>([^<]+)<\/Code>/)?.[1];
+  const message = raw.match(/<Message>([^<]+)<\/Message>/)?.[1];
+  if (code || message) {
+    return `S3 Error [${code || 'Unknown'}]: ${message || `HTTP ${status}`}`;
+  }
+  return `S3 upload failed: HTTP ${status} — ${raw.slice(0, 300)}`;
 };
 
 // ========== HELPER: COMPRESS IMAGE ==========
@@ -243,29 +319,12 @@ export const uploadToUserS3Folder = async (filePath, fileName, username, metadat
 
     console.log('📄 File object prepared');
 
-    // 8. Prepare S3 options (key: clinica/<patient_folder>/images/<fileName>)
-    const options = {
-      bucket: S3_CONFIG.bucket,
-      region: S3_CONFIG.region,
-      accessKey: S3_CONFIG.accessKey,
-      secretKey: S3_CONFIG.secretKey,
-      keyPrefix,
-      successActionStatus: 201,
-      // We set this to "private" so the library doesn't default to "public-read".
-      // If this still fails, you MUST enable ACLs in AWS Console.
-      acl: "private",
-    };
-
-    // Add metadata
-    if (metadata && Object.keys(metadata).length > 0) {
-      options.metadata = {
-        ...metadata,
-        originalFileName: fileName,
-        uploadTimestamp: new Date().toISOString(),
-        originalSizeMB: fileSizeMB
-      };
-      console.log('📝 Metadata added');
-    }
+    // 8. Prepare S3 options
+    const cfg = getS3Config();
+    logClockSkewHint();
+    const options = buildRns3Options(keyPrefix, cfg);
+    console.log('🧩 RNS3 endpoint:', options.awsUrl, 'region:', options.region);
+    // Do not attach custom metadata — RNS3 does not sign x-amz-meta-* in the policy.
 
     console.log('📤 Calling RNS3.put()...');
     console.log('Start time:', new Date().toISOString());
@@ -335,29 +394,10 @@ export const uploadToUserS3Folder = async (filePath, fileName, username, metadat
       };
 
     } else {
-      console.error('❌ S3 Upload failed with status:', response.status);
-      console.error('Full error response:', response);
-
-      let errorMessage = `S3 upload failed: HTTP ${response.status}`;
-      let awsErrorCode = 'Unknown';
-
-      // Parse the actual error from AWS response
-      if (response.body) {
-        if (typeof response.body === 'string' && response.body.includes('<Error>')) {
-          try {
-            const codeMatch = response.body.match(/<Code>([^<]+)<\/Code>/);
-            const messageMatch = response.body.match(/<Message>([^<]+)<\/Message>/);
-            if (codeMatch && messageMatch) {
-              awsErrorCode = codeMatch[1];
-              errorMessage = `S3 Error [${awsErrorCode}]: ${messageMatch[1]}`;
-            }
-          } catch (parseError) { }
-        } else if (typeof response.body === 'object' && response.body.error) {
-          errorMessage = `S3 Error: ${response.body.error}`;
-        }
-      }
-
-      console.error('Error message:', errorMessage);
+      const errorMessage = formatS3Error(response);
+      const awsErrorCode = errorMessage.match(/\[([^\]]+)\]/)?.[1] || 'Unknown';
+      console.error('❌ S3 Upload failed:', errorMessage);
+      console.error('📬 S3 error body:', typeof response.text === 'string' ? response.text.slice(0, 500) : response.body);
 
       await saveUploadError({
         username: sanitizedUsername,
@@ -400,6 +440,8 @@ export const uploadWithImageRecord = async (filePath, image) => {
   let tempCompressedPath = null;
   const resolvedPath = normalizeFsPath(filePath);
   const { keyPrefix, fileName } = buildS3PathFromImage(image);
+  const cfg = getS3Config();
+  assertS3Credentials(cfg);
 
   if (!image || !image.id) throw new Error('Image record with id is required');
   const fileExists = await RNFS.exists(resolvedPath);
@@ -407,7 +449,7 @@ export const uploadWithImageRecord = async (filePath, image) => {
 
   const fileStat = await RNFS.stat(resolvedPath);
   if (fileStat.size === 0) throw new Error('File is empty (0 bytes)');
-  const fileSizeMB = (fileStat.size / (1024 * 1024)).toFixed(2);
+  console.log(`📦 Image record upload size: ${(fileStat.size / (1024 * 1024)).toFixed(2)} MB`);
 
   let uploadUri = resolvedPath;
   // Use original filename from local path (e.g. Cutiscope_1_20260402_170229.jpg)
@@ -424,30 +466,27 @@ export const uploadWithImageRecord = async (filePath, image) => {
 
   const fileUri = uploadUri.startsWith('file://') ? uploadUri : `file://${uploadUri}`;
   const file = { uri: fileUri, name: uploadName, type: 'image/jpeg' };
-  const options = {
-    bucket: S3_CONFIG.bucket,
-    region: S3_CONFIG.region,
-    accessKey: S3_CONFIG.accessKey,
-    secretKey: S3_CONFIG.secretKey,
-    keyPrefix,
-    successActionStatus: 201,
-    acl: 'private',
-    metadata: {
-      userId: image.userId,
-      patientId: image.patientId,
-      uploadTimestamp: new Date().toISOString(),
-      originalSizeMB: fileSizeMB,
-    },
-  };
+  logClockSkewHint();
+  const options = buildRns3Options(keyPrefix, cfg);
 
   try {
     console.log(`📁 S3 path from image record: ${keyPrefix}${uploadName}`);
+    console.log('🧩 S3 creds check:', {
+      bucket: cfg.bucket,
+      region: cfg.region,
+      awsUrl: options.awsUrl,
+      accessKeyPrefix: cfg.accessKey.slice(0, 8) + '...',
+      accessKeyLen: cfg.accessKey.length,
+      secretKeyLen: cfg.secretKey.length,
+    });
     const response = await RNS3.put(file, options);
     if (tempCompressedPath) {
       try { await RNFS.unlink(tempCompressedPath); } catch (e) { }
     }
     if (!response || (response.status !== 201 && response.status !== 200)) {
-      throw new Error(response ? `S3 upload failed: HTTP ${response.status}` : 'No response from S3');
+      const errMsg = formatS3Error(response);
+      console.error('📬 S3 uploadWithImageRecord failed:', errMsg);
+      throw new Error(errMsg);
     }
     const imageUrl = response.body?.postResponse?.location;
     const s3Key = response.body?.postResponse?.key || `${keyPrefix}${uploadName}`;
@@ -513,15 +552,7 @@ export const testBucketACLSetting = async () => {
       type: 'text/plain',
     };
 
-    const options = {
-      bucket: S3_CONFIG.bucket,
-      region: S3_CONFIG.region,
-      accessKey: S3_CONFIG.accessKey,
-      secretKey: S3_CONFIG.secretKey,
-      keyPrefix: 'test-acl/',
-      successActionStatus: 201,
-      acl: "private", // Explicitly private
-    };
+    const options = buildRns3Options('test-acl/');
 
     console.log('Testing upload without ACL...');
     const response = await RNS3.put(file, options);
