@@ -133,14 +133,28 @@ const firebaseAuthService = {
   },
 
   /**
-   * Sign out the current user
+   * Sign out the current user.
+   * Safe when nobody is signed in (startup / session clear) — no error thrown.
    */
   signOut: async () => {
     try {
-      await auth.signOut();
-      await GoogleSignin.signOut();
+      // Avoid [auth/no-current-user] when clearing session on cold start.
+      if (auth.currentUser) {
+        await auth.signOut();
+      }
+      try {
+        await GoogleSignin.signOut();
+      } catch (_) {
+        // Not signed in with Google — ignore
+      }
       await AsyncStorage.multiRemove(['userInfo', 'accessToken', 'refreshToken', 'firebaseIdToken']);
     } catch (error) {
+      const code = error?.code || '';
+      const msg = String(error?.message || error || '');
+      if (code === 'auth/no-current-user' || /no-current-user|No user currently signed in/i.test(msg)) {
+        await AsyncStorage.multiRemove(['userInfo', 'accessToken', 'refreshToken', 'firebaseIdToken']).catch(() => {});
+        return;
+      }
       console.error('Firebase sign out error:', error);
       throw error;
     }

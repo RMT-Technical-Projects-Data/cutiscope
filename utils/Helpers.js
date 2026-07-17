@@ -2,6 +2,7 @@ import { Vibration, Platform, Alert, DeviceEventEmitter } from 'react-native';
 import { VIBRATION_DURATION, VIBRATION_INTERVAL } from './Constants';
 
 export const IN_APP_TOAST_EVENT = 'in_app_toast_show';
+export const SESSION_ACTIVITY_EVENT = 'session_user_activity';
 
 export const showInAppToast = (message, opts = {}) => {
   if (!message) return;

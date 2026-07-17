@@ -14,12 +14,20 @@ import { useNavigation } from '@react-navigation/native';
 import { UserMessages } from '../utils/userMessages';
 import CustomKeyboard from '../Components/CustomKeyboard';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+import {
+    DEFAULT_SESSION_TIMEOUT_MINUTES,
+    SESSION_TIMEOUT_OPTIONS,
+    getSessionTimeoutMinutes,
+    setSessionTimeoutMinutes,
+} from '../utils/sessionSettings';
 
 const SettingsMenu = () => {
     const [isPressed, setIsPressed] = useState(null);
     const [wifiMenuVisible, setWifiMenuVisible] = useState(false);
     const [bluetoothMenuVisible, setBluetoothMenuVisible] = useState(false);
     const [dateAndTimeMenuVisible, setDateAndTimeVisible] = useState(false);
+    const [inactivityMenuVisible, setInactivityMenuVisible] = useState(false);
+    const [inactivityMinutes, setInactivityMinutes] = useState(DEFAULT_SESSION_TIMEOUT_MINUTES);
     const [serialNumber, setSerialNumber] = useState('Loading...');
     const [userEmail, setUserEmail] = useState('');
     const [userName, setUserName] = useState('');
@@ -53,6 +61,7 @@ const SettingsMenu = () => {
         };
 
         fetchSerialNumberAndEmail();
+        getSessionTimeoutMinutes().then(setInactivityMinutes);
     }, []);
 
     // Confirmation Modal State (for actions like logout/exit)
@@ -92,6 +101,17 @@ const SettingsMenu = () => {
 
     const handlePressDateandTime = () => {
         setDateAndTimeVisible(true);
+    };
+
+    const handleInactivityTimerChange = async (minutes) => {
+        try {
+            const saved = await setSessionTimeoutMinutes(minutes);
+            setInactivityMinutes(saved);
+            setInactivityMenuVisible(false);
+        } catch (error) {
+            console.error('Failed to save inactivity timer:', error);
+            showResult('Error', 'Could not update the inactivity timer.', true);
+        }
     };
 
     const handleExitGuestMode = () => {
@@ -259,6 +279,29 @@ const SettingsMenu = () => {
                                         <Text style={styles.arrow}>›</Text>
                                     </View>
                                 </TouchableOpacity>
+
+                                {/* Session inactivity timer */}
+                                <TouchableOpacity
+                                    style={[styles.menuItem, isPressed === 'InactivityTimer' && styles.menuItemPressed]}
+                                    onPress={() => setInactivityMenuVisible(true)}
+                                    onPressIn={() => setIsPressed('InactivityTimer')}
+                                    onPressOut={() => setIsPressed(null)}
+                                    activeOpacity={0.8}
+                                >
+                                    <View style={styles.iconContainer}>
+                                        <MaterialCommunityIcons name="timer-outline" size={24} color="#22B2A6" />
+                                    </View>
+                                    <View style={styles.menuText}>
+                                        <Text style={styles.menuTitle}>Inactivity Timer</Text>
+                                        <Text style={styles.menuSubText}>
+                                            After {inactivityMinutes} min idle, show 10s logout warning
+                                        </Text>
+                                    </View>
+                                    <View style={styles.timeoutValueContainer}>
+                                        <Text style={styles.timeoutValue}>{inactivityMinutes} min</Text>
+                                        <Text style={styles.arrow}>›</Text>
+                                    </View>
+                                </TouchableOpacity>
                             </>
                         )}
 
@@ -337,6 +380,52 @@ const SettingsMenu = () => {
                             onClose={() => setDateAndTimeVisible(false)}
                             onConfirm={handleConfirmDate}
                         />
+
+                        <Modal
+                            visible={inactivityMenuVisible}
+                            transparent
+                            animationType="fade"
+                            statusBarTranslucent
+                            onRequestClose={() => setInactivityMenuVisible(false)}
+                        >
+                            <View style={styles.timeoutOverlay}>
+                                <CustomStatusBar />
+                                <View style={styles.timeoutModal}>
+                                    <Text style={styles.timeoutTitle}>Inactivity Timer</Text>
+                                    <Text style={styles.timeoutDescription}>
+                                        After this idle time, a 10-second logout warning appears:
+                                    </Text>
+                                    <View style={styles.timeoutOptions}>
+                                        {SESSION_TIMEOUT_OPTIONS.map((minutes) => {
+                                            const selected = minutes === inactivityMinutes;
+                                            return (
+                                                <TouchableOpacity
+                                                    key={minutes}
+                                                    style={[
+                                                        styles.timeoutOption,
+                                                        selected && styles.timeoutOptionSelected,
+                                                    ]}
+                                                    onPress={() => handleInactivityTimerChange(minutes)}
+                                                >
+                                                    <Text style={[
+                                                        styles.timeoutOptionText,
+                                                        selected && styles.timeoutOptionTextSelected,
+                                                    ]}>
+                                                        {minutes} minutes
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            );
+                                        })}
+                                    </View>
+                                    <TouchableOpacity
+                                        style={styles.timeoutCancel}
+                                        onPress={() => setInactivityMenuVisible(false)}
+                                    >
+                                        <Text style={styles.timeoutCancelText}>Cancel</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </Modal>
 
                         <ConfirmationModal
                             visible={confirmModalVisible}
@@ -532,6 +621,85 @@ const styles = StyleSheet.create({
         fontSize: 28,
         color: '#666666',
         fontWeight: '300',
+    },
+    timeoutValueContainer: {
+        marginLeft: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    timeoutValue: {
+        color: '#22B2A6',
+        fontSize: 15,
+        fontFamily: 'ProductSans-Bold',
+        marginRight: 8,
+    },
+    timeoutOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.78)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 20,
+    },
+    timeoutModal: {
+        width: '100%',
+        maxWidth: 340,
+        backgroundColor: '#1C1C1E',
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: '#3A3A3C',
+        padding: 24,
+    },
+    timeoutTitle: {
+        color: '#FFFFFF',
+        fontSize: 21,
+        fontFamily: 'ProductSans-Bold',
+        textAlign: 'center',
+        marginBottom: 8,
+    },
+    timeoutDescription: {
+        color: '#AAAAAA',
+        fontSize: 15,
+        fontFamily: 'ProductSans-Regular',
+        textAlign: 'center',
+        marginBottom: 20,
+    },
+    timeoutOptions: {
+        width: '100%',
+    },
+    timeoutOption: {
+        width: '100%',
+        paddingVertical: 14,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#3A3A3C',
+        backgroundColor: '#2A2A2C',
+        alignItems: 'center',
+        marginBottom: 10,
+    },
+    timeoutOptionSelected: {
+        borderColor: '#22B2A6',
+        backgroundColor: '#19332F',
+    },
+    timeoutOptionText: {
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontFamily: 'ProductSans-Bold',
+    },
+    timeoutOptionTextSelected: {
+        color: '#22B2A6',
+    },
+    timeoutCancel: {
+        width: '100%',
+        paddingVertical: 13,
+        borderRadius: 12,
+        backgroundColor: '#333333',
+        alignItems: 'center',
+        marginTop: 4,
+    },
+    timeoutCancelText: {
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontFamily: 'ProductSans-Bold',
     },
     divider: {
         width: '100%',

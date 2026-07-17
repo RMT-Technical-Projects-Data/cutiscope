@@ -52,7 +52,7 @@ import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import DeviceInfo from 'react-native-device-info';
 import { UserMessages } from '../utils/userMessages';
 import { ensureGuestPhotosDir, getGuestPhotosDir } from '../utils/guestPhotos';
-import { showInAppToast } from '../utils/Helpers';
+import { SESSION_ACTIVITY_EVENT, showInAppToast } from '../utils/Helpers';
 
 // Import Auth Context
 import { useAuth } from '../context/AuthContext';
@@ -235,6 +235,7 @@ const CameraScreen = ({ navigation }) => {
   const isScreenFocusedRef = useRef(true);
 
   const resetInactivityTimer = useCallback(() => {
+    DeviceEventEmitter.emit(SESSION_ACTIVITY_EVENT);
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
     }

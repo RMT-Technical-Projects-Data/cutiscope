@@ -286,7 +286,13 @@ class AuthService {
     }
 
     async logout() {
-        await AsyncStorage.multiRemove(['userToken', 'userEmail', 'username']);
+        await AsyncStorage.multiRemove([
+            'userToken',
+            'userEmail',
+            'username',
+            'userId',
+            '@patient_box',
+        ]);
     }
 
     async getToken() {
