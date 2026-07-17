@@ -515,7 +515,13 @@ const App = () => {
       }
       lastPowerPressRef.current = now;
       console.log('🔌 Showing Power Menu Modal');
-      setIsPowerModalVisible(true);
+      // Notify Camera to hide StandbyModal so it cannot cover this menu.
+      DeviceEventEmitter.emit('onPowerMenuOpened');
+      // Force remount/re-show even if state was already true (stuck behind standby).
+      setIsPowerModalVisible(false);
+      requestAnimationFrame(() => {
+        setIsPowerModalVisible(true);
+      });
     };
 
     // Ensure native power module is instantiated and its receiver is registered.

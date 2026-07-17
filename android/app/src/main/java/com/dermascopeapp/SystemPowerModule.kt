@@ -167,41 +167,76 @@ class SystemPowerModule(private val reactContext: ReactApplicationContext) : Rea
     fun lockScreen() {
         if (isLocking) return
         isLocking = true
-        
+
         try {
             Log.d("SystemPowerModule", "Attempting lock screen...")
-            
-            // Set flag on MainActivity to indicate this is a deliberate lock action.
-            // This prevents screenOffReceiver from waking the screen back up.
-            MainActivity.isDeliberateLock = true
-            
+
+            // Clear KEEP_SCREEN_ON / wake locks first — otherwise lockNow cannot keep the screen off.
+            MainActivity.prepareForDeliberateLock()
+
+            val activity = reactContext.currentActivity
             val dpm = reactContext.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
             val adminComponent = ComponentName(reactContext, KioskDeviceAdminReceiver::class.java)
-            
-            if (dpm.isAdminActive(adminComponent)) {
-                Log.i("SystemPowerModule", "Locking via DPM.lockNow()")
-                dpm.lockNow()
-                return
+
+            // Prefer goToSleep on the main thread after flags are cleared.
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try {
+                    var locked = false
+
+                    // 1) Device admin lockNow (works even with keyguard disabled as screen-off)
+                    if (dpm.isAdminActive(adminComponent)) {
+                        Log.i("SystemPowerModule", "Locking via DPM.lockNow()")
+                        dpm.lockNow()
+                        locked = true
+                    }
+
+                    // 2) PowerManager.goToSleep (reflection — DEVICE_POWER / system apps)
+                    try {
+                        val pm = reactContext.getSystemService(Context.POWER_SERVICE) as PowerManager
+                        val method = PowerManager::class.java.getMethod("goToSleep", Long::class.javaPrimitiveType)
+                        method.invoke(pm, android.os.SystemClock.uptimeMillis())
+                        Log.i("SystemPowerModule", "goToSleep invoked")
+                        locked = true
+                    } catch (e: Exception) {
+                        Log.w("SystemPowerModule", "goToSleep unavailable: ${e.message}")
+                    }
+
+                    // 3) Accessibility GLOBAL_ACTION_LOCK_SCREEN
+                    if (!locked) {
+                        PowerMenuAccessibilityService.instance?.let {
+                            Log.i("SystemPowerModule", "Locking via Accessibility Service")
+                            if (it.lockScreen()) locked = true
+                        }
+                    }
+
+                    // 4) Root fallback: turn screen off without toggling back on
+                    if (!locked) {
+                        try {
+                            Runtime.getRuntime().exec(arrayOf("su", "-c", "input keyevent 223")) // KEYCODE_SLEEP
+                            Log.i("SystemPowerModule", "Root KEYCODE_SLEEP sent")
+                            locked = true
+                        } catch (e: Exception) {
+                            Log.w("SystemPowerModule", "Root sleep failed: ${e.message}")
+                        }
+                    }
+
+                    if (!locked) {
+                        Log.w("SystemPowerModule", "All lock strategies failed; moveTaskToBack fallback")
+                        MainActivity.isDeliberateLock = false
+                        activity?.moveTaskToBack(true)
+                    }
+                } catch (e: Exception) {
+                    MainActivity.isDeliberateLock = false
+                    Log.e("SystemPowerModule", "Lock post failed: ${e.message}")
+                }
             }
-            
-            // Fallback: Accessibility Service (Android 9+)
-            PowerMenuAccessibilityService.instance?.let {
-                Log.i("SystemPowerModule", "Locking via Accessibility Service")
-                if (it.lockScreen()) return
-            }
-            
-            Log.w("SystemPowerModule", "Admin and Accessibility fallbacks failed. Falling back to moveTaskToBack")
-            MainActivity.isDeliberateLock = false
-            val currentActivity = reactContext.currentActivity
-            currentActivity?.moveTaskToBack(true)
-            
         } catch (e: Exception) {
             MainActivity.isDeliberateLock = false
             Log.e("SystemPowerModule", "Lock failed: ${e.message}")
         } finally {
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                 isLocking = false
-            }, 1000)
+            }, 1500)
         }
     }
 

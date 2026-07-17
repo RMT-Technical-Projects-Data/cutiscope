@@ -46,6 +46,24 @@ class MainActivity : ReactActivity() {
         @JvmStatic
         fun getInstance(): MainActivity? = instance
 
+        /** Called before deliberate Lock so KEEP_SCREEN_ON / wake locks cannot fight lockNow/goToSleep. */
+        @JvmStatic
+        fun prepareForDeliberateLock() {
+            isDeliberateLock = true
+            instance?.runOnUiThread {
+                instance?.prepareWindowForScreenOff()
+            }
+        }
+
+        /** Called when power menu opens / screen is intentionally woken. */
+        @JvmStatic
+        fun clearDeliberateLockAndRestoreKeepAwake() {
+            isDeliberateLock = false
+            instance?.runOnUiThread {
+                instance?.restoreWindowKeepAwake()
+            }
+        }
+
         @JvmStatic
         fun reapplyFullKiosk(activity: Activity?) {
             val act = activity as? MainActivity ?: return
@@ -68,6 +86,10 @@ class MainActivity : ReactActivity() {
     // Add this broadcast receiver to refresh wake lock from service
     private val wakeLockReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            if (isDeliberateLock) {
+                Log.d("MainActivity", "Ignoring wake-lock request during deliberate lock")
+                return
+            }
             when (intent?.action) {
                 "com.dermascopeapp.REFRESH_WAKE_LOCK" -> refreshWakeLock()
                 "com.dermascopeapp.ACQUIRE_WAKE_LOCK" -> acquireWakeLock()
@@ -162,9 +184,49 @@ class MainActivity : ReactActivity() {
 
     override fun onResume() {
         super.onResume()
-        isDeliberateLock = false
-        applyImmersiveUi()
-        Log.d("MainActivity", "onResume: reset isDeliberateLock to false")
+        // Do not clear deliberate lock while screen is still off — otherwise
+        // KEEP_SCREEN_ON / wake-lock restore fights the Lock button.
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        val interactive = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT_WATCH) {
+            pm.isInteractive
+        } else {
+            @Suppress("DEPRECATION")
+            pm.isScreenOn
+        }
+        if (!isDeliberateLock || interactive) {
+            if (interactive) {
+                isDeliberateLock = false
+                restoreWindowKeepAwake()
+            }
+            applyImmersiveUi()
+        }
+        Log.d("MainActivity", "onResume: deliberateLock=$isDeliberateLock interactive=$interactive")
+    }
+
+    private fun prepareWindowForScreenOff() {
+        try {
+            Log.i("MainActivity", "Preparing window for deliberate screen off")
+            stopPeriodicWakeLockRefresh()
+            releaseWakeLock()
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setTurnScreenOn(false)
+            }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "prepareWindowForScreenOff failed: ${e.message}")
+        }
+    }
+
+    private fun restoreWindowKeepAwake() {
+        try {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setTurnScreenOn(true)
+            }
+            acquireWakeLock()
+        } catch (e: Exception) {
+            Log.e("MainActivity", "restoreWindowKeepAwake failed: ${e.message}")
+        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -385,13 +447,13 @@ class MainActivity : ReactActivity() {
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
                 if (isDeliberateLock) {
                     Log.i("MainActivity", "Screen OFF detected (Deliberate lock) - NOT waking up screen")
-                    isDeliberateLock = false
+                    // Keep isDeliberateLock true until SCREEN_ON so onResume cannot re-arm keep-awake
                     
                     // 1. Turn off torch
                     turnOffTorchAtSystemLevel()
                     
-                    // 2. Release wake lock
-                    releaseWakeLock()
+                    // 2. Release wake lock and clear keep-awake again (belt and suspenders)
+                    prepareWindowForScreenOff()
                 } else {
                     Log.i("MainActivity", "Screen OFF detected (Non-deliberate) - attempting immediate wake up")
                     
@@ -406,7 +468,8 @@ class MainActivity : ReactActivity() {
                 }
             } else if (intent.action == Intent.ACTION_SCREEN_ON) {
                 Log.i("MainActivity", "Screen ON - acquiring wake lock")
-                acquireWakeLock()
+                isDeliberateLock = false
+                restoreWindowKeepAwake()
                 
                 // Release temporary wake lock since screen is now ON
                 try {

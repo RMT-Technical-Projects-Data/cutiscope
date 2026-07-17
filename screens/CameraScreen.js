@@ -170,6 +170,8 @@ const CameraScreen = ({ navigation }) => {
   const [showTopScaleBar, setShowTopScaleBar] = useState(false); // Start hidden, show only when zoomed in
   const [exitModalVisible, setExitModalVisible] = useState(false); // Exit confirmation modal
   const [powerOffModalVisible, setPowerOffModalVisible] = useState(false);
+  // Global App.js power menu is open — hide StandbyModal so it cannot cover it.
+  const [globalPowerMenuOpen, setGlobalPowerMenuOpen] = useState(false);
 
   // ========== FLASHLIGHT STATE ==========
   const [isFlashOn, setIsFlashOn] = useState(false); // Start as OFF
@@ -683,28 +685,37 @@ const CameraScreen = ({ navigation }) => {
     return () => subscription.remove();
   }, [navigation]);
 
-  // Effect 1c: Handle Physical Power Button Event
+  // Effect 1c: Handle Physical Power Button Event / global power menu
   useEffect(() => {
     console.log('🔌 Setting up power button event listener');
     const subscription = DeviceEventEmitter.addListener('onPowerButtonPressed', () => {
-
       console.log('🔌 Physical Power Button Pressed - Handling in JS');
       ignoreKeysRef.current = true;
-      setIsLightOn(false); // Turn off torch for safety/logic
-      // Modal is opened by App.js listener
+      setIsLightOn(false);
+      setGlobalPowerMenuOpen(true);
+    });
+
+    const subOpen = DeviceEventEmitter.addListener('onPowerMenuOpened', () => {
+      console.log('🔌 Power Menu opened - hiding standby overlay');
+      setGlobalPowerMenuOpen(true);
+      setIsLightOn(false);
     });
 
     const subClose = DeviceEventEmitter.addListener('onPowerMenuClosed', () => {
       console.log('🔙 Power Menu closed - recovery in CameraScreen');
-      handleReturnToCamera();
+      setGlobalPowerMenuOpen(false);
+      // Keep standby if already in standby; only re-enable key handling + sync pol.
+      ignoreKeysRef.current = false;
+      syncPolarizationState(true);
     });
 
     return () => {
       console.log('🔌 Removing power button event listener');
       subscription.remove();
+      subOpen.remove();
       subClose.remove();
     };
-  }, [handleReturnToCamera]);
+  }, [syncPolarizationState]);
 
   // Effect 2: MAIN FLASHLIGHT CONTROL - Simple and reliable
   // NOTE: Flashlight works the SAME for both guest and logged-in users
@@ -780,7 +791,8 @@ const CameraScreen = ({ navigation }) => {
       bodyPartModalVisible ||
       wifiMenuVisible ||
       exitModalVisible ||
-      powerOffModalVisible;
+      powerOffModalVisible ||
+      globalPowerMenuOpen;
 
     if (!isScreenFocused || isStandby || anyModalVisible) {
       if (timeoutRef.current) {
@@ -796,7 +808,7 @@ const CameraScreen = ({ navigation }) => {
         clearTimeout(timeoutRef.current);
       }
     };
-  }, [isScreenFocused, isStandby, menuVisible, patientBoxModalVisible, bodyPartModalVisible, wifiMenuVisible, exitModalVisible, powerOffModalVisible, resetInactivityTimer]);
+  }, [isScreenFocused, isStandby, menuVisible, patientBoxModalVisible, bodyPartModalVisible, wifiMenuVisible, exitModalVisible, powerOffModalVisible, globalPowerMenuOpen, resetInactivityTimer]);
 
 
 
@@ -3281,7 +3293,7 @@ const CameraScreen = ({ navigation }) => {
 
         {/* ========== STANDBY MODAL ========== */}
         <StandbyModal
-          visible={isStandby && isScreenFocused}
+          visible={isStandby && isScreenFocused && !globalPowerMenuOpen}
           onActivate={() => {
             setIsStandby(false);
             resetInactivityTimer();

@@ -31,26 +31,42 @@ class PowerMenuAccessibilityService : AccessibilityService() {
 
     override fun onKeyEvent(event: KeyEvent?): Boolean {
         Log.d("PowerMenuAccess", "Key event received: ${event?.keyCode} action: ${event?.action}")
-        
+
         if (event?.keyCode == KeyEvent.KEYCODE_POWER) {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            val screenOn = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT_WATCH) {
+                powerManager.isInteractive
+            } else {
+                @Suppress("DEPRECATION")
+                powerManager.isScreenOn
+            }
+
             if (event.action == KeyEvent.ACTION_DOWN) {
-                Log.d("PowerMenuAccess", "Power button DOWN detected - consuming to prevent sleep")
-                
-                // Broadcast to SystemPowerModule so it emits to JS
+                // Wake from lock / screen off: do not open power menu — let system wake normally.
+                if (!screenOn || MainActivity.isDeliberateLock) {
+                    Log.d("PowerMenuAccess", "Screen off / deliberate lock — wake only, no power menu")
+                    MainActivity.clearDeliberateLockAndRestoreKeepAwake()
+                    return false
+                }
+
+                Log.d("PowerMenuAccess", "Power button DOWN (screen on) - showing power menu")
+
                 val intent = Intent("com.dermascopeapp.POWER_BUTTON_PRESSED")
                 intent.setPackage(packageName)
                 sendBroadcast(intent)
-                
-                // Also ensure MainActivity is in front
+
                 val activityIntent = Intent(this, MainActivity::class.java).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 }
                 startActivity(activityIntent)
-                
-                return true // Consume DOWN to prevent screen off
+
+                return true // Consume DOWN to prevent system sleep while menu is shown
             } else if (event.action == KeyEvent.ACTION_UP) {
+                if (!screenOn || MainActivity.isDeliberateLock) {
+                    return false
+                }
                 Log.d("PowerMenuAccess", "Power button UP detected - consuming")
-                return true // Consume UP as well
+                return true
             }
         }
         return super.onKeyEvent(event)

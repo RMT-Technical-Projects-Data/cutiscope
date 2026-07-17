@@ -3,7 +3,7 @@ import { DeviceEventEmitter } from 'react-native';
 
 export const SESSION_TIMEOUT_KEY = 'session_inactivity_timeout_minutes';
 export const SESSION_TIMEOUT_CHANGED_EVENT = 'session_timeout_changed';
-export const SESSION_TIMEOUT_OPTIONS = [30, 60, 90, 120];
+export const SESSION_TIMEOUT_OPTIONS = [2, 30, 60, 90, 120];
 export const DEFAULT_SESSION_TIMEOUT_MINUTES = 60;
 
 export async function getSessionTimeoutMinutes() {

@@ -34,8 +34,13 @@ const PowerOffModal = ({ visible, onClose }) => {
     const handleLock = () => {
         console.log('Locking device...');
         if (SystemPowerModule) {
-            SystemPowerModule.lockScreen();
-            onClose(); // Close modal immediately on lock
+            try {
+                SystemPowerModule.lockScreen();
+            } catch (e) {
+                console.warn('lockScreen failed:', e);
+            }
+            // Close after native has a moment to clear keep-awake and sleep.
+            setTimeout(() => onClose?.(), 120);
         }
     };
 

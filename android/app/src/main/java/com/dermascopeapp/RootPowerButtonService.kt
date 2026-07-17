@@ -140,10 +140,6 @@ class RootPowerButtonService : Service() {
     }
 
     private fun handlePowerButtonPress() {
-        // ========== ADD THIS: Refresh wake lock on power button press ==========
-        refreshAppWakeLock()
-        // ========================================================================
-        
         val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
         val isLocked = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
             keyguardManager.isDeviceLocked
@@ -151,12 +147,25 @@ class RootPowerButtonService : Service() {
             keyguardManager.isKeyguardLocked
         }
 
-        if (wasScreenInteractiveOnDown && !isLocked) {
-            Log.d("RootPowerMenu", "Screen was ON and device NOT locked, broadcasting POWER_BUTTON_PRESSED")
+        // Wake-from-lock / screen-was-off: only wake the display — do NOT open power menu.
+        if (!wasScreenInteractiveOnDown || MainActivity.isDeliberateLock) {
+            Log.d(
+                "RootPowerMenu",
+                "Wake only (no power menu). wasInteractive=$wasScreenInteractiveOnDown deliberate=${MainActivity.isDeliberateLock}"
+            )
+            MainActivity.clearDeliberateLockAndRestoreKeepAwake()
+            refreshAppWakeLock()
+            return
+        }
+
+        // Screen was already ON: show in-app power menu (unless secure keyguard is up).
+        if (!isLocked) {
+            Log.d("RootPowerMenu", "Screen was ON — broadcasting POWER_BUTTON_PRESSED")
+            refreshAppWakeLock()
             val intent = Intent("com.dermascopeapp.POWER_BUTTON_PRESSED")
             sendBroadcast(intent)
         } else {
-            Log.d("RootPowerMenu", "Skipping broadcast: wasInteractive=$wasScreenInteractiveOnDown, isLocked=$isLocked")
+            Log.d("RootPowerMenu", "Skipping broadcast: secure keyguard locked")
         }
     }
 
