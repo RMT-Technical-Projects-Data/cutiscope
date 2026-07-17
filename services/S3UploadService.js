@@ -380,7 +380,7 @@ export const uploadToUserS3Folder = async (filePath, fileName, username, metadat
       });
 
       if (Platform.OS === 'android') {
-        showInAppToast('Uploaded', { position: 'bottom', durationMs: 1200 });
+        showInAppToast('Uploaded', { position: 'aboveCapture', durationMs: 1200 });
       }
 
       return {
@@ -490,7 +490,9 @@ export const uploadWithImageRecord = async (filePath, image) => {
     }
     const imageUrl = response.body?.postResponse?.location;
     const s3Key = response.body?.postResponse?.key || `${keyPrefix}${uploadName}`;
-    if (Platform.OS === 'android') showInAppToast('Uploaded', { position: 'bottom', durationMs: 1200 });
+    if (Platform.OS === 'android') {
+      showInAppToast('Uploaded', { position: 'aboveCapture', durationMs: 1200 });
+    }
     return {
       success: true,
       url: imageUrl,

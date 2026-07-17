@@ -7,17 +7,16 @@
  *     single final photo, then hand it off for S3 + Drive upload.
  *
  * Design goals (load balancing / queue management):
- *   - Serial processing (concurrency = 1) so the heavy Skia work never stacks
+ *   - Serial processing (concurrency = 1) so the heavy image work never stacks
  *     and blows up memory / the JS thread.
- *   - SHUTTER PRIORITY: a `deferGate` predicate lets the queue yield the JS
- *     thread to an in-flight capture, so taking the next photo is never blocked
- *     by processing a previous one.
+ *   - SHUTTER PRIORITY: a `deferGate` predicate lets the queue yield while a
+ *     takePhoto is in flight, so the next shot is never blocked by processing.
  *   - Durability: the pending list is persisted so a crash / app-kill does not
  *     lose captured images (their raw files live in a staging folder on disk).
  *   - Retries with backoff for transient failures.
  *
- * The actual work (Skia processing + local save + upload) is injected via
- * `configure({ processor })` because it depends on the screen's Skia setup.
+ * The actual work (processing + local save + upload) is injected via
+ * `configure({ processor })` because it depends on the screen's setup.
  */
 import { DeviceEventEmitter, InteractionManager } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -32,13 +31,15 @@ class CaptureQueue {
     this.isProcessing = false;
     this.processor = null; // async (job) => void ; throws to trigger retry
     this.deferGate = null; // () => boolean ; true => wait (shutter busy)
-    this.maxRetries = 2;
-    this.deferPollMs = 100;
-    this.maxDeferMs = 60000; // never starve forever
+    this.maxRetries = 4;
+    this.deferPollMs = 50;
+    this.maxDeferMs = 15000; // never starve forever
     // Backpressure: if the backlog grows past this, process even while the
     // shutter is busy so staged raw files don't pile up on disk unbounded.
-    this.forceProcessAfter = 5;
+    this.forceProcessAfter = 12;
     this.hydrated = false;
+    this._persistTimer = null;
+    this._persistInFlight = null;
   }
 
   configure({ processor, deferGate, maxRetries, forceProcessAfter } = {}) {
@@ -64,6 +65,26 @@ class CaptureQueue {
       // Only persist serializable job data (no functions).
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(this.queue));
     } catch (_) {}
+  }
+
+  /** Debounced persist so rapid bursts don't block on AsyncStorage every shot. */
+  _schedulePersist() {
+    if (this._persistTimer) clearTimeout(this._persistTimer);
+    this._persistTimer = setTimeout(() => {
+      this._persistTimer = null;
+      this._persistInFlight = this._persist();
+    }, 250);
+  }
+
+  async _flushPersist() {
+    if (this._persistTimer) {
+      clearTimeout(this._persistTimer);
+      this._persistTimer = null;
+    }
+    if (this._persistInFlight) {
+      try { await this._persistInFlight; } catch (_) {}
+    }
+    await this._persist();
   }
 
   _wait(ms) {
@@ -96,7 +117,7 @@ class CaptureQueue {
     const id = job.id || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
     this.queue.push({ ...job, id, retries: 0 });
     this._emit();
-    this._persist();
+    this._schedulePersist();
     this._drain();
     return id;
   }
@@ -110,8 +131,7 @@ class CaptureQueue {
     try {
       while (this.queue.length > 0) {
         // ── Load balancing: give the shutter priority ──
-        // While a capture is in flight (or just happened), don't start the heavy
-        // job — keep the JS thread free so the next takePhoto stays instant.
+        // Only defer while a takePhoto is actively in flight (or briefly after).
         // Exceptions: bounded backlog (backpressure) or a max defer ceiling.
         let deferred = 0;
         while (
@@ -129,32 +149,37 @@ class CaptureQueue {
           await this.processor(job);
           this.queue.shift();
           this._emit();
-          await this._persist();
-          
-          // Yield the JS thread to React Native after every job, even if processing
-          // was native. This ensures UI animations, touches, and navigation always
-          // get priority before we start another loop iteration.
+          this._schedulePersist();
+
+          // Yield so UI touches / animations stay responsive between jobs.
           await new Promise(resolve => InteractionManager.runAfterInteractions(resolve));
-          
-          // Micro-yield for other microtasks
           await this._wait(0);
         } catch (e) {
-          // Retry with backoff, then drop after maxRetries.
+          // Retry with backoff, then drop only after maxRetries.
           job.retries = (job.retries || 0) + 1;
           this.queue.shift();
           if (job.retries <= this.maxRetries) {
+            console.warn(
+              `CaptureQueue: retry ${job.retries}/${this.maxRetries} for ${job.fileName || job.id}:`,
+              e?.message || e
+            );
             this.queue.push(job);
-            await this._persist();
-            await this._wait(400 * job.retries);
+            this._schedulePersist();
+            await this._wait(300 * job.retries);
           } else {
-            console.warn('CaptureQueue: dropping job after retries:', e?.message || e);
+            console.warn('CaptureQueue: dropping job after retries:', e?.message || e, job.fileName || job.id);
             this._emit();
-            await this._persist();
+            await this._flushPersist();
           }
         }
       }
+      await this._flushPersist();
     } finally {
       this.isProcessing = false;
+      // If something enqueued while we were finishing, keep draining.
+      if (this.queue.length > 0) {
+        this._drain();
+      }
     }
   }
 }

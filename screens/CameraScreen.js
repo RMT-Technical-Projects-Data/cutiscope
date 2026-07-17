@@ -8,6 +8,7 @@ import OptimisedUploadService from '../services/OptimisedUploadService';
 import { registerAndEnqueue } from '../services/CapturePipeline';
 import CaptureQueue from '../services/CaptureQueue';
 import { recordPhotoCapture } from '../services/patientsService';
+import { prependGalleryPhoto, notifyGalleryPhotoUpdated } from '../services/GalleryMemoryCache';
 import {
   StyleSheet,
   View,
@@ -408,12 +409,11 @@ const CameraScreen = ({ navigation }) => {
   // Background pipeline (CaptureQueue): the actual per-job work is injected via
   // this ref so the queue always calls the freshest closures without stale state.
   const captureProcessorRef = useRef(null);
-  // How long after a shot the queue keeps yielding to the shutter (load balance).
-  // Must comfortably exceed the user's tap-to-tap gap so heavy processing never
-  // starts between shots and collides with the next capture. Each new shot
-  // resets this window, so during a burst nothing processes; it drains once the
-  // user pauses for this long (or leaves the screen). Backlog cap still applies.
-  const CAPTURE_PROCESS_DEFER_MS = 2500;
+  // After the last shot, wait 3s before watermark/processing so continuous
+  // capture never fights image processing for the shutter / memory.
+  const CAPTURE_PROCESS_DEFER_MS = 3000;
+  // Hold-to-burst: true while finger is down on the capture button.
+  const continuousCaptureRef = useRef(false);
   const [onCapturePress, setOnCapturePress] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [latestPhotoUri, setLatestPhotoUri] = useState(null);
@@ -1061,7 +1061,7 @@ const CameraScreen = ({ navigation }) => {
   };
 
   const saveImageLocallyOnly = async (sourcePath, fileName = null, options = {}) => {
-    const { forGuest = false, skipScan = false } = options;
+    const { forGuest = false, skipScan = false, keepSource = false } = options;
     // Allow the caller (background queue) to pin the patient/user context so a
     // deferred save lands in the right folder even if the UI selection changed.
     const effectiveBox = options.box !== undefined ? options.box : currentBox;
@@ -1108,26 +1108,36 @@ const CameraScreen = ({ navigation }) => {
 
       targetPath = `${directoryPath}/${targetFileName}`;
 
+      // Never overwrite another shot from a burst (same-second name collisions).
+      if (await RNFS.exists(targetPath)) {
+        const uniqueSuffix = `_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        targetPath = targetPath.replace(/(\.[^.]+)$/, `${uniqueSuffix}$1`);
+      }
+
       const sourceExists = await RNFS.exists(sourcePath);
       if (!sourceExists) {
         throw new Error(`Source file does not exist: ${sourcePath}`);
       }
 
-      // Prefer move (single stored copy). If move fails, fall back to copy+delete source.
-      try {
-        await RNFS.moveFile(sourcePath, targetPath);
-      } catch (moveErr) {
+      // keepSource=true: copy for instant gallery visibility while queue still owns the raw.
+      if (keepSource) {
         await RNFS.copyFile(sourcePath, targetPath);
-      }
-
-      // Best-effort cleanup: ensure the original temp file doesn't remain.
-      // If it remains, the Gallery can show duplicates if it scans cache/other dirs.
-      try {
-        const stillExists = await RNFS.exists(sourcePath);
-        if (stillExists) {
-          await RNFS.unlink(sourcePath);
+      } else {
+        // Prefer move (single stored copy). If move fails, fall back to copy+delete source.
+        try {
+          await RNFS.moveFile(sourcePath, targetPath);
+        } catch (moveErr) {
+          await RNFS.copyFile(sourcePath, targetPath);
         }
-      } catch (_) { }
+
+        // Best-effort cleanup: ensure the original temp file doesn't remain.
+        try {
+          const stillExists = await RNFS.exists(sourcePath);
+          if (stillExists) {
+            await RNFS.unlink(sourcePath);
+          }
+        } catch (_) { }
+      }
 
       // Do not scan guest photos into MediaStore — they stay app-private (cache + .nomedia).
       // skipScan lets the caller defer the (slow) MediaScanner to a background step
@@ -1146,14 +1156,16 @@ const CameraScreen = ({ navigation }) => {
       }
 
       const fileInfo = await RNFS.stat(targetPath);
+      const savedName = targetPath.substring(targetPath.lastIndexOf('/') + 1);
 
       return {
         success: true,
         path: targetPath,
-        fileName: targetFileName,
+        fileName: savedName,
         localUrl: `file://${targetPath}`,
         size: fileInfo.size,
-        modified: fileInfo.mtime
+        modified: fileInfo.mtime,
+        directory: directoryPath,
       };
 
     } catch (error) {
@@ -1347,10 +1359,21 @@ const CameraScreen = ({ navigation }) => {
         return;
       }
 
-      // Only app folders – no OS gallery. When all photos deleted, thumbnail shows default (empty).
-      const directoriesToCheck = isGuest
-        ? [getGuestPhotosDir()]
-        : [`${RNFS.ExternalStorageDirectoryPath}/DCIM/Camera`];
+      // Only the same folders GalleryScreen uses. When all photos are deleted,
+      // this must resolve to null so the icon shows the empty gallery asset.
+      let directoriesToCheck;
+      if (isGuest) {
+        directoriesToCheck = [getGuestPhotosDir()];
+      } else {
+        const userSegment =
+          userData?.id != null
+            ? String(userData.id)
+            : sanitizeFolderName(getUsername() || 'user');
+        directoriesToCheck =
+          Platform.OS === 'android'
+            ? [`${RNFS.ExternalStorageDirectoryPath}/DCIM/Camera/${userSegment}`]
+            : [`${RNFS.DocumentDirectoryPath}/Dermscope/${userSegment}`];
+      }
 
       let latestImage = null;
       let latestImageTime = 0;
@@ -1385,6 +1408,9 @@ const CameraScreen = ({ navigation }) => {
               if (deletedFilesSet.has(file.path)) continue;
 
               try {
+                const stillThere = await RNFS.exists(file.path);
+                if (!stillThere) continue;
+
                 const stat = await RNFS.stat(file.path);
                 const modifiedTime = stat.mtime ? new Date(stat.mtime).getTime() : 0;
 
@@ -1410,7 +1436,7 @@ const CameraScreen = ({ navigation }) => {
         await findLatestImageRecursive(directory);
       }
 
-      if (latestImage) {
+      if (latestImage?.path && (await RNFS.exists(latestImage.path))) {
         console.log('Setting latest photo URI:', latestImage.path);
         setLatestPhotoUri(latestImage);
       } else {
@@ -1421,7 +1447,7 @@ const CameraScreen = ({ navigation }) => {
       console.error('Failed to load images:', error);
       setLatestPhotoUri(null);
     }
-  }, [requestStoragePermission, isGuest]);
+  }, [requestStoragePermission, isGuest, userData?.id, getUsername]);
 
   // Add this useEffect to refresh when returning from Gallery
   useFocusEffect(
@@ -1705,12 +1731,7 @@ const CameraScreen = ({ navigation }) => {
 
   const handleGalleryPress = () => {
     resetInactivityTimer();
-    if (isCapturingRef.current) {
-      if (Platform.OS === 'android') {
-        showInAppToast('Please wait, saving photo...', { durationMs: 2000, position: 'center' });
-      }
-      return;
-    }
+    // Never block gallery open on capture — photos are already on disk (instant save).
     ignoreKeysRef.current = true;
     console.log('🖼️ Going to Gallery screen');
 
@@ -1854,11 +1875,9 @@ const CameraScreen = ({ navigation }) => {
   };
 
   // ========== CAPTURE FUNCTION ==========
-  // Minimum gap between shots (debounce only). The shutter now unlocks right
-  // after takePhoto and all heavy work is off-thread in CaptureQueue, so this can
-  // be small — it just prevents accidental double-fires.
-  const CAPTURE_THROTTLE_MS_GUEST = 300;
-  const CAPTURE_THROTTLE_MS_LOGGED_IN = 300;
+  // Near-zero debounce — only prevents accidental double-fires between loop ticks.
+  const CAPTURE_THROTTLE_MS_GUEST = 0;
+  const CAPTURE_THROTTLE_MS_LOGGED_IN = 0;
 
   // Set true to save raw + processed JPEG pairs for orientation/scale debugging.
   const DEBUG_SAVE_CAPTURE_PAIR = false;
@@ -2114,7 +2133,10 @@ const CameraScreen = ({ navigation }) => {
       // DocumentDirectory (not Caches) so staged raws survive an app-kill and can
       // be resumed by CaptureQueue.hydrate() on next launch.
       const dir = `${RNFS.DocumentDirectoryPath}/capture_queue`;
-      await RNFS.mkdir(dir);
+      const dirExists = await RNFS.exists(dir);
+      if (!dirExists) {
+        await RNFS.mkdir(dir);
+      }
       const dest = `${dir}/raw_${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
       try {
         await RNFS.moveFile(srcPath, dest);
@@ -2130,38 +2152,105 @@ const CameraScreen = ({ navigation }) => {
   };
 
   // The per-job worker used by CaptureQueue. Kept in a ref (updated every render)
-  // so the queue always runs against the freshest functions/state. One job:
-  // process (watermark/white-balance) → save the ONE final photo → hand off S3 +
-  // Drive uploads. Throwing here makes CaptureQueue retry the job.
+  // so the queue always runs against the freshest functions/state.
+  // Gallery already has an instant copy at job.galleryPath; this step only
+  // watermark/replace that file, then hand off uploads. Never blocks the shutter.
   captureProcessorRef.current = async (job) => {
-    const processedPath = await processImage(
-      job.rawPath, job.zoom, job.patientName, job.bodyPart, job.orientation
-    );
-    const cleanProcessed = processedPath && processedPath.startsWith('file://')
-      ? processedPath.slice(7) : processedPath;
-
-    const localResult = await saveImageLocallyOnly(cleanProcessed, job.fileName, {
-      forGuest: job.isGuest,
-      box: job.boxCtx,
-      ctxUserData: job.userCtx,
-    });
-
-    // Only update the thumbnail if this is still the most recent shot; otherwise
-    // a newer capture is already shown and we must not flip back to an older one.
-    if (!job.captureSeq || job.captureSeq >= latestCaptureSeqRef.current) {
-      setLatestPhotoUri({ path: localResult.path });
+    if (!job?.rawPath) {
+      throw new Error('Capture job missing rawPath');
     }
 
-    // Clean up staged raw and temporary processed file
-    try { if (await RNFS.exists(job.rawPath)) await RNFS.unlink(job.rawPath); } catch (_) { }
-    if (cleanProcessed !== job.rawPath) {
+    const rawExists = await RNFS.exists(job.rawPath);
+    if (!rawExists && !(job.galleryPath && (await RNFS.exists(job.galleryPath)))) {
+      throw new Error(`Staged raw missing: ${job.rawPath}`);
+    }
+
+    let sourceForProcess = job.rawPath;
+    if (!(await RNFS.exists(sourceForProcess)) && job.galleryPath) {
+      sourceForProcess = job.galleryPath;
+    }
+
+    let cleanProcessed = null;
+    try {
+      const processedPath = await processImage(
+        sourceForProcess, job.zoom, job.patientName, job.bodyPart, job.orientation
+      );
+      cleanProcessed = processedPath && processedPath.startsWith('file://')
+        ? processedPath.slice(7) : processedPath;
+    } catch (processErr) {
+      console.warn('processImage failed; keeping instant gallery copy:', processErr?.message || processErr);
+    }
+
+    let finalPath = job.galleryPath || null;
+
+    if (cleanProcessed && (await RNFS.exists(cleanProcessed))) {
+      if (job.galleryPath) {
+        // Replace the instant gallery file in place with the watermarked version.
+        try {
+          await RNFS.copyFile(cleanProcessed, job.galleryPath);
+          finalPath = job.galleryPath;
+        } catch (replaceErr) {
+          console.warn('In-place replace failed, saving as new file:', replaceErr?.message || replaceErr);
+          const localResult = await saveImageLocallyOnly(cleanProcessed, job.fileName, {
+            forGuest: job.isGuest,
+            box: job.boxCtx,
+            ctxUserData: job.userCtx,
+            skipScan: true,
+          });
+          finalPath = localResult.path;
+        }
+      } else {
+        const localResult = await saveImageLocallyOnly(cleanProcessed, job.fileName, {
+          forGuest: job.isGuest,
+          box: job.boxCtx,
+          ctxUserData: job.userCtx,
+          skipScan: true,
+        });
+        finalPath = localResult.path;
+      }
+
+      if (cleanProcessed !== job.rawPath && cleanProcessed !== finalPath) {
         try { if (await RNFS.exists(cleanProcessed)) await RNFS.unlink(cleanProcessed); } catch (_) { }
+      }
+    } else if (!finalPath) {
+      // No instant gallery copy and processing failed — save raw so the shot is not lost.
+      const localResult = await saveImageLocallyOnly(sourceForProcess, job.fileName, {
+        forGuest: job.isGuest,
+        box: job.boxCtx,
+        ctxUserData: job.userCtx,
+        skipScan: true,
+        keepSource: true,
+      });
+      finalPath = localResult.path;
     }
 
-    // Emit event to trigger decoupled uploads
+    if (!finalPath) {
+      throw new Error('No gallery path after capture processing');
+    }
+
+    if (Platform.OS === 'android' && !job.isGuest) {
+      RNFS.scanFile(finalPath).catch(() => {});
+    }
+
+    if (!job.captureSeq || job.captureSeq >= latestCaptureSeqRef.current) {
+      setLatestPhotoUri({ path: finalPath });
+    }
+
+    notifyGalleryPhotoUpdated(finalPath);
+
+    // Clean up staged raw (gallery copy remains)
+    try {
+      if (job.rawPath && job.rawPath !== finalPath && (await RNFS.exists(job.rawPath))) {
+        await RNFS.unlink(job.rawPath);
+      }
+    } catch (_) { }
+
     if (!job.isGuest) {
       DeviceEventEmitter.emit('CAPTURE_PROCESSED', {
-        localResult,
+        localResult: {
+          path: finalPath,
+          fileName: job.fileName || finalPath.split('/').pop(),
+        },
         job
       });
     }
@@ -2218,25 +2307,46 @@ const CameraScreen = ({ navigation }) => {
     CaptureQueue.configure({
       processor: (job) =>
         captureProcessorRef.current ? captureProcessorRef.current(job) : Promise.resolve(),
-      // Load balancing — the shutter ALWAYS wins:
-      //  • If the user isn't on the camera screen, process freely (background).
-      //  • While on the camera, hold off processing as long as they're actively
-      //    capturing (a shot in flight, or a recent shot within the window), so a
-      //    heavy Skia encode never collides with the next takePhoto.
+      // Yield only while a takePhoto is in flight (or briefly after). Native
+      // processing runs off the JS thread, so we drain between shots instead of
+      // letting a 10–15 burst pile up until the user pauses.
       deferGate: () => {
         if (!isFocusedRef.current) return false;
+        // Hold off while shooting, while finger is held for continuous burst,
+        // and for 3s after the last shot so processing never blocks capture.
         return (
+          continuousCaptureRef.current ||
           isCapturingRef.current ||
           Date.now() - lastCaptureTimeRef.current < CAPTURE_PROCESS_DEFER_MS
         );
       },
-      // Allow a small backlog before forcing processing. Native processing is fast,
-      // so this rarely gets hit, but keeps the raw staging folder size tiny.
-      forceProcessAfter: 8,
+      maxRetries: 4,
+      // High backlog before forcing process mid-burst — prefer waiting the 3s defer.
+      forceProcessAfter: 30,
     });
     CaptureQueue.hydrate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const takePhotoWithRetry = async (options, maxAttempts = 3) => {
+    let lastError;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await cameraRef.current.takePhoto(options);
+      } catch (err) {
+        lastError = err;
+        const msg = String(err?.message || err || '');
+        const retryable =
+          /busy|timeout|timed out|session|capture|closed|pending|rejected|failed/i.test(msg) ||
+          attempt < maxAttempts;
+        console.warn(`takePhoto attempt ${attempt}/${maxAttempts} failed:`, msg);
+        if (!retryable || attempt === maxAttempts) break;
+        // Brief pause so CameraX can flush buffers before the next try.
+        await new Promise(resolve => setTimeout(resolve, 60 * attempt));
+      }
+    }
+    throw lastError;
+  };
 
   const handleCapturePress = async () => {
     resetInactivityTimer();
@@ -2251,7 +2361,7 @@ const CameraScreen = ({ navigation }) => {
       if (Platform.OS === 'android') {
         showInAppToast('Please select a patient to capture image', { durationMs: 2000, position: 'center' });
       }
-      return;
+      return false;
     }
 
     // Also require a selected body part
@@ -2259,13 +2369,13 @@ const CameraScreen = ({ navigation }) => {
       if (Platform.OS === 'android') {
         showInAppToast('Please select Patients body part to capture image', { durationMs: 2000, position: 'center' });
       }
-      return;
+      return false;
     }
 
     const now = Date.now();
     const throttleMs = isGuest ? CAPTURE_THROTTLE_MS_GUEST : CAPTURE_THROTTLE_MS_LOGGED_IN;
     if (isCapturingRef.current || (now - lastCaptureTimeRef.current < throttleMs)) {
-      return;
+      return false;
     }
 
     isCapturingRef.current = true;
@@ -2273,7 +2383,6 @@ const CameraScreen = ({ navigation }) => {
 
     if (cameraRef.current && device) {
       try {
-        setOnCapturePress(true);
         setIsCapturing(true);
 
         // Only hit the native permission API until it's granted once; after that
@@ -2289,14 +2398,13 @@ const CameraScreen = ({ navigation }) => {
             'Please grant storage permission to save images.',
             [{ text: 'OK' }]
           );
-          setOnCapturePress(false);
           setIsCapturing(false);
           isCapturingRef.current = false; // Reset lock early
           resetInactivityTimer(); // Restart timer
-          return;
+          return false;
         }
 
-        const photo = await cameraRef.current.takePhoto({
+        const photo = await takePhotoWithRetry({
           // 'speed' returns from the shutter as fast as possible (no multi-frame
           // HDR fusion) — best for rapid, continuous capture. Still a full-
           // resolution image. Bump to 'balanced'/'quality' if more processing is
@@ -2306,79 +2414,139 @@ const CameraScreen = ({ navigation }) => {
           enableShutterSound: false,
         });
 
-        // Re-enable the shutter immediately: the photo is captured, and
-        // everything below (staging + queueing) is fast and non-blocking. The
-        // heavy processing/upload happens entirely in the background queue.
-        setOnCapturePress(false);
+        // Unlock shutter immediately after the camera returns — staging, gallery
+        // copy, and queue work must not delay the next tap / continuous shot.
         setIsCapturing(false);
         isCapturingRef.current = false;
 
         console.log('📸 takePhoto orientation:', photo.orientation, 'path:', photo.path);
 
-        // Camera's temporary file. It is NEVER saved to the gallery as-is; it is
-        // staged for the background queue, processed into the single final photo,
-        // then deleted. Only ONE (processed) photo is ever saved to the gallery.
         const rawPhotoPath = photo.path.startsWith('file://') ? photo.path.slice(7) : photo.path;
 
-        const now = new Date();
+        const stamp = new Date();
         const pad = num => num.toString().padStart(2, '0');
-        const year = now.getFullYear();
-        const month = pad(now.getMonth() + 1);
-        const day = pad(now.getDate());
-        const hours = pad(now.getHours());
-        const minutes = pad(now.getMinutes());
-        const seconds = pad(now.getSeconds());
+        const year = stamp.getFullYear();
+        const month = pad(stamp.getMonth() + 1);
+        const day = pad(stamp.getDate());
+        const hours = pad(stamp.getHours());
+        const minutes = pad(stamp.getMinutes());
+        const seconds = pad(stamp.getSeconds());
+        const ms = String(stamp.getMilliseconds()).padStart(3, '0');
 
+        const captureSeq = ++latestCaptureSeqRef.current;
         const fileName = currentBox?.id
-          ? `Cutiscope_${currentBox.id}_${year}${month}${day}_${hours}${minutes}${seconds}.jpg`
-          : `Cutiscope_${year}${month}${day}_${hours}${minutes}${seconds}.jpg`;
+          ? `Cutiscope_${currentBox.id}_${year}${month}${day}_${hours}${minutes}${seconds}${ms}_${captureSeq}.jpg`
+          : `Cutiscope_${year}${month}${day}_${hours}${minutes}${seconds}${ms}_${captureSeq}.jpg`;
 
-        // Instant feedback + patient count (logged-in).
-        if (!isGuest) {
-          if (currentBox?.id) {
-            recordPhotoCapture(currentBox.id);
-          }
-          if (Platform.OS === 'android') {
-            showInAppToast('Saved', { position: 'bottom', durationMs: 1000 });
+        // Snapshot UI context now — background work must not depend on later selection changes.
+        const boxSnap = currentBox ? { id: currentBox.id, name: currentBox.name } : null;
+        const userSnap = userData ? { id: userData.id, username: userData.username } : null;
+        const guestSnap = isGuest;
+        const zoomSnap = zoomBtnValue;
+        const bodyPartSnap = bodyPart;
+        const orientationSnap = photo.orientation;
+        const usernameSnap = isGuest ? '' : getUsername();
+
+        if (!guestSnap) {
+          if (boxSnap?.id) recordPhotoCapture(boxSnap.id);
+          // Avoid toast spam during continuous hold — only ping on single / first shots.
+          if (Platform.OS === 'android' && !continuousCaptureRef.current) {
+            showInAppToast('Saved', { position: 'aboveCapture', durationMs: 600 });
           }
         }
 
-        // This shot's sequence number — used to keep the gallery thumbnail on the
-        // most recent capture even as the queue drains older shots in the back.
-        const captureSeq = ++latestCaptureSeqRef.current;
+        // Instant gallery visibility + background watermark/upload — fully detached
+        // from the shutter so a continuous burst never waits on disk/network.
+        (async () => {
+          try {
+            const stagedPath = await stageRawForQueue(rawPhotoPath);
 
-        // Move the raw off the camera temp dir into the queue's staging folder
-        // (fast rename), then show the instant preview from the staged file.
-        const stagedPath = await stageRawForQueue(rawPhotoPath);
-        setLatestPhotoUri({ path: stagedPath });
+            // Copy into the real gallery folder NOW so Gallery never looks empty
+            // while the watermark queue is still catching up.
+            const localResult = await saveImageLocallyOnly(stagedPath, fileName, {
+              forGuest: guestSnap,
+              box: boxSnap,
+              ctxUserData: userSnap,
+              skipScan: true,
+              keepSource: true,
+            });
 
-        // Hand off to the background pipeline with a serializable snapshot of the
-        // patient/user context. The shutter is now completely free.
-        CaptureQueue.enqueue({
-          rawPath: stagedPath,
-          fileName,
-          isGuest,
-          captureSeq,
-          zoom: zoomBtnValue,
-          patientName: currentBox?.name || '',
-          bodyPart,
-          orientation: photo.orientation,
-          username: isGuest ? '' : getUsername(),
-          boxCtx: currentBox ? { id: currentBox.id, name: currentBox.name } : null,
-          userCtx: userData ? { id: userData.id, username: userData.username } : null,
-        });
+            if (captureSeq >= latestCaptureSeqRef.current) {
+              setLatestPhotoUri({ path: localResult.path });
+            }
 
+            prependGalleryPhoto({
+              path: `file://${localResult.path}`,
+              absolutePath: localResult.path,
+              name: localResult.fileName,
+              directory: localResult.directory,
+              timestamp: new Date(),
+              mtime: new Date().toISOString(),
+              uploadStatus: 'PENDING',
+            });
+
+            if (Platform.OS === 'android' && !guestSnap) {
+              RNFS.scanFile(localResult.path).catch(() => {});
+            }
+
+            CaptureQueue.enqueue({
+              rawPath: stagedPath,
+              galleryPath: localResult.path,
+              fileName: localResult.fileName,
+              isGuest: guestSnap,
+              captureSeq,
+              zoom: zoomSnap,
+              patientName: boxSnap?.name || '',
+              bodyPart: bodyPartSnap,
+              orientation: orientationSnap,
+              username: usernameSnap,
+              boxCtx: boxSnap,
+              userCtx: userSnap,
+            });
+          } catch (bgErr) {
+            console.error('Instant gallery save / enqueue failed:', bgErr);
+            // Last resort: still queue the camera temp so the shot isn't lost.
+            try {
+              const stagedPath = await stageRawForQueue(rawPhotoPath);
+              if (captureSeq >= latestCaptureSeqRef.current) {
+                setLatestPhotoUri({ path: stagedPath });
+              }
+              CaptureQueue.enqueue({
+                rawPath: stagedPath,
+                fileName,
+                isGuest: guestSnap,
+                captureSeq,
+                zoom: zoomSnap,
+                patientName: boxSnap?.name || '',
+                bodyPart: bodyPartSnap,
+                orientation: orientationSnap,
+                username: usernameSnap,
+                boxCtx: boxSnap,
+                userCtx: userSnap,
+              });
+            } catch (fallbackErr) {
+              console.error('Capture fallback also failed:', fallbackErr);
+            }
+          }
+        })();
+
+        return true;
       } catch (error) {
         console.error('Failed to take picture:', error);
-        Alert.alert('Error', UserMessages.captureFailed);
+        if (Platform.OS === 'android') {
+          showInAppToast(UserMessages.captureFailed, { durationMs: 2000, position: 'bottom' });
+        } else {
+          Alert.alert('Error', UserMessages.captureFailed);
+        }
+        return false;
       } finally {
-        // Safety net: make sure the shutter is unlocked even if we errored or
-        // returned before the early re-enable above. Rapid double-fires are still
-        // prevented by the throttle (CAPTURE_THROTTLE_MS_*).
-        setOnCapturePress(false);
+        // Keep pressed visual during continuous hold; only unlock shutter lock.
         setIsCapturing(false);
         isCapturingRef.current = false;
-        resetInactivityTimer(); // Restart auto-lock timer
+        if (!continuousCaptureRef.current) {
+          setOnCapturePress(false);
+        }
+        resetInactivityTimer();
       }
     } else {
       console.log(`[WakeUpDebug] [${Date.now()}] takePicture fallback: Camera not ready or device not available. Setting error.`);
@@ -2386,8 +2554,45 @@ const CameraScreen = ({ navigation }) => {
       setCameraError(UserMessages.cameraNotReady);
       isCapturingRef.current = false; // Reset lock
       resetInactivityTimer();
+      return false;
     }
   };
+
+  // Hold capture button = continuous burst with zero UI delay.
+  // Image processing stays deferred for CAPTURE_PROCESS_DEFER_MS (3s) after last shot.
+  const handleCapturePressRef = useRef(handleCapturePress);
+  handleCapturePressRef.current = handleCapturePress;
+
+  const stopContinuousCapture = useCallback(() => {
+    continuousCaptureRef.current = false;
+    setOnCapturePress(false);
+  }, []);
+
+  const startContinuousCapture = useCallback(() => {
+    if (continuousCaptureRef.current || cameraError) return;
+    continuousCaptureRef.current = true;
+    setOnCapturePress(true);
+
+    (async () => {
+      while (continuousCaptureRef.current) {
+        const ok = await handleCapturePressRef.current();
+        if (!continuousCaptureRef.current) break;
+        // Tiny yield keeps touches responsive between shots (no artificial delay).
+        if (!ok) {
+          await new Promise(resolve => setTimeout(resolve, 30));
+        }
+      }
+      setOnCapturePress(false);
+    })();
+  }, [cameraError]);
+
+  // Stop burst if user leaves camera / screen blurs.
+  useEffect(() => {
+    if (!isFocused) {
+      continuousCaptureRef.current = false;
+      setOnCapturePress(false);
+    }
+  }, [isFocused]);
 
   const handleFocusScroll = event => {
     const offsetX = event.nativeEvent.contentOffset.x;
@@ -2621,7 +2826,7 @@ const CameraScreen = ({ navigation }) => {
                   animatedProps={animatedCameraProps}
                   format={format}
                   torch={isFlashOn ? 'on' : 'off'} // FLASHLIGHT CONTROL
-                  photoQualityBalance="quality"
+                  photoQualityBalance="speed"
                   enableZoomGesture={false}
                   enableFpsGraph={false}
                   orientation="portrait"
@@ -2869,26 +3074,26 @@ const CameraScreen = ({ navigation }) => {
             <TouchableOpacity
               style={styles.galleryButtonWrapper}
               onPress={handleGalleryPress}>
+              {/* key forces remount so Android Image cache does not keep a deleted thumb */}
               <Image
+                key={latestPhotoUri?.path ? `gallery-thumb-${latestPhotoUri.path}` : 'gallery-empty'}
                 source={
-                  latestPhotoUri
+                  latestPhotoUri?.path
                     ? { uri: `file://${latestPhotoUri.path}` }
                     : GalleryBtn
                 }
                 style={styles.galleryIcon}
-                defaultSource={GalleryBtn}
               />
             </TouchableOpacity>
           </View>
 
-          {/* CENTER: Capture – enabled even when no patient selected (logged-in users only) to show toast */}
+          {/* CENTER: Capture – hold for continuous burst (processing waits 3s after last shot) */}
           <View style={styles.centerContainer}>
             <TouchableOpacity
               style={[styles.captureButtonWrapper, cameraError && { opacity: 0.5 }]}
               disabled={!!cameraError}
-              onPress={handleCapturePress}
-              onPressIn={() => setOnCapturePress(true)}
-              onPressOut={() => setOnCapturePress(false)}
+              onPressIn={startContinuousCapture}
+              onPressOut={stopContinuousCapture}
               activeOpacity={0.6}
             >
               {isCapturing ? (

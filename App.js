@@ -38,7 +38,11 @@ const navTheme = {
 };
 
 const positionToContainerStyle = (position) => {
-  // All positions map to bottom to mimic native Android system toasts
+  // Capture status must stay above the 150px camera control bar.
+  if (position === 'aboveCapture') {
+    return { top: undefined, bottom: 170, justifyContent: 'flex-end' };
+  }
+  // Other notifications retain the native Android-style bottom position.
   return { top: undefined, bottom: 80, justifyContent: 'flex-end' };
 };
 

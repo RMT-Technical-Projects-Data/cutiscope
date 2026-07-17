@@ -129,8 +129,12 @@ const requestStoragePermission = async () => {
     return false;
   }
 };
+let galleryStoragePermissionGranted = false;
+
 export const requestStoragePermissionForGallery = async (PermissionsAndroid) => {
   try {
+    if (galleryStoragePermissionGranted) return true;
+
     const permissions = [];
 
     // Check Android version for appropriate permissions
@@ -145,6 +149,17 @@ export const requestStoragePermissionForGallery = async (PermissionsAndroid) => 
       permissions.push(PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE);
     }
 
+    // Fast path: already granted — avoid request dialog / IPC on every gallery open
+    try {
+      const checks = await Promise.all(
+        permissions.map((p) => PermissionsAndroid.check(p))
+      );
+      if (checks.every(Boolean)) {
+        galleryStoragePermissionGranted = true;
+        return true;
+      }
+    } catch (_) {}
+
     // Request permissions
     const results = await PermissionsAndroid.requestMultiple(permissions);
 
@@ -154,6 +169,7 @@ export const requestStoragePermissionForGallery = async (PermissionsAndroid) => 
     );
 
     if (allGranted) {
+      galleryStoragePermissionGranted = true;
       console.log('All storage permissions granted for gallery access');
       return true;
     } else {

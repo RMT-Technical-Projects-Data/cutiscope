@@ -34,6 +34,12 @@ import firebaseAuthService from '../services/firebaseAuthService';
 import { uploadToUserS3Folder, uploadWithImageRecord, buildS3PathFromImage, deleteObjectFromS3 } from '../services/S3UploadService';
 import OptimisedUploadService from '../services/OptimisedUploadService';
 import ImageDatabase from '../services/ImageDatabase';
+import {
+  getGallerySnapshot,
+  setGallerySnapshot,
+  GALLERY_PHOTO_ADDED,
+  GALLERY_PHOTO_UPDATED,
+} from '../services/GalleryMemoryCache';
 import ConfirmationModal from '../modals/ConfirmationModal';
 import BluetoothShareModal from '../modals/BluetoothShareModal';
 import { showInAppToast } from '../utils/Helpers';
@@ -366,26 +372,21 @@ const ThumbnailItem = React.memo(({
   const [imageUri, setImageUri] = useState(null);
   const [isUploaded, setIsUploaded] = useState(false);
 
-  // Load image with caching
+  // Load image with caching — re-run when photo identity changes (watermark replace).
   useEffect(() => {
-    if (imageUri) return;
-
-    const loadCachedImage = async () => {
-      if (IMAGE_CACHE.has(photo.path)) {
-        setImageUri(IMAGE_CACHE.get(photo.path));
-        return;
-      }
-
-      try {
-        IMAGE_CACHE.set(photo.path, photo.path);
-        setImageUri(photo.path);
-      } catch (error) {
-        console.log('Error loading thumbnail:', error);
-      }
-    };
-
-    loadCachedImage();
-  }, [photo.path, imageUri]);
+    const uri = photo.path;
+    if (!uri) return;
+    if (IMAGE_CACHE.has(uri)) {
+      setImageUri(IMAGE_CACHE.get(uri));
+      return;
+    }
+    try {
+      IMAGE_CACHE.set(uri, uri);
+      setImageUri(uri);
+    } catch (error) {
+      console.log('Error loading thumbnail:', error);
+    }
+  }, [photo.path, photo.id]);
 
   // Check upload status (DB first, then legacy AsyncStorage)
   useEffect(() => {
@@ -419,6 +420,7 @@ const ThumbnailItem = React.memo(({
     >
       {imageUri && (
         <Image
+          key={photo.id || imageUri}
           source={{ uri: imageUri }}
           style={[
             styles.thumbnail,
@@ -454,7 +456,8 @@ const ThumbnailItem = React.memo(({
 
 const GalleryScreen = ({ route, navigation }) => {
   const { userData, isGuest, getUsername } = useAuth();
-  const [capturedPhotos, setCapturedPhotos] = useState([]);
+  const initialCache = getGallerySnapshot([]);
+  const [capturedPhotos, setCapturedPhotos] = useState(() => initialCache?.capturedPhotos || []);
   const capturedPhotosRef = React.useRef(capturedPhotos);
   const [selectedPhotos, setSelectedPhotos] = useState([]);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -462,11 +465,16 @@ const GalleryScreen = ({ route, navigation }) => {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadTotal, setUploadTotal] = useState(1);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => {
+    const cached = initialCache;
+    return !(cached && (cached.albumItems.length > 0 || cached.capturedPhotos.length > 0));
+  });
   const [deletedFiles, setDeletedFiles] = useState(new Set());
+  const [deletedFilesLoaded, setDeletedFilesLoaded] = useState(false);
   const [forceRefreshCounter, setForceRefreshCounter] = useState(0);
+  const loadGenRef = useRef(0);
   const [albumPath, setAlbumPath] = useState([]);
-  const [albumItems, setAlbumItems] = useState([]);
+  const [albumItems, setAlbumItems] = useState(() => initialCache?.albumItems || []);
   const [selectedAlbumPaths, setSelectedAlbumPaths] = useState([]);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -536,14 +544,18 @@ const GalleryScreen = ({ route, navigation }) => {
         }
       } catch (error) {
         console.log('Error loading deleted files:', error);
+      } finally {
+        setDeletedFilesLoaded(true);
       }
     };
 
     loadDeletedFiles();
   }, []);
 
-  // Save deleted files to AsyncStorage
+  // Save deleted files to AsyncStorage (skip initial empty mount so we don't wipe storage)
   useEffect(() => {
+    if (!deletedFilesLoaded) return;
+
     const saveDeletedFiles = async () => {
       try {
         const deletedFilesArray = Array.from(deletedFiles);
@@ -554,7 +566,7 @@ const GalleryScreen = ({ route, navigation }) => {
     };
 
     saveDeletedFiles();
-  }, [deletedFiles]);
+  }, [deletedFiles, deletedFilesLoaded]);
 
   const handleBackPress = useCallback(() => {
     if (albumPath.length > 0) {
@@ -605,39 +617,41 @@ const GalleryScreen = ({ route, navigation }) => {
 
       // 1. Check if file exists (Standard Check)
       const fileExists = await RNFS.exists(cleanPath);
-      if (!fileExists) return true;
 
-      // 2. Delete the file
-      await RNFS.unlink(cleanPath);
+      // 2. Delete the file when it is still on disk
+      if (fileExists) {
+        await RNFS.unlink(cleanPath);
 
-      // 3. Force Android to update its media store
-      if (Platform.OS === 'android') {
-        try {
-          // Method 1: Use RNFS.scanFile (most reliable)
-          await RNFS.scanFile(cleanPath);
-
-          // Method 2: Access parent directory to trigger refresh
-          const parentDir = cleanPath.substring(0, cleanPath.lastIndexOf('/'));
+        // 3. Force Android to update its media store
+        if (Platform.OS === 'android') {
           try {
-            await RNFS.readDir(parentDir);
-          } catch (e) {
-            // Ignore errors
-          }
+            // Method 1: Use RNFS.scanFile (most reliable)
+            await RNFS.scanFile(cleanPath);
 
-          // Method 3: Small delay and rescan
-          setTimeout(async () => {
+            // Method 2: Access parent directory to trigger refresh
+            const parentDir = cleanPath.substring(0, cleanPath.lastIndexOf('/'));
             try {
-              await RNFS.scanFile(cleanPath);
+              await RNFS.readDir(parentDir);
             } catch (e) {
-              // Ignore
+              // Ignore errors
             }
-          }, 100);
-        } catch (error) {
-          console.warn('Error updating media store:', error);
+
+            // Method 3: Small delay and rescan
+            setTimeout(async () => {
+              try {
+                await RNFS.scanFile(cleanPath);
+              } catch (e) {
+                // Ignore
+              }
+            }, 100);
+          } catch (error) {
+            console.warn('Error updating media store:', error);
+          }
         }
       }
 
-      // 4. Add to deleted files list
+      // 4. Always record deletion + clear caches (even if file was already gone),
+      // so CameraScreen gallery icon does not keep a stale soft-deleted path.
       setDeletedFiles(prev => {
         const newSet = new Set(prev);
         newSet.add(cleanPath);
@@ -646,6 +660,8 @@ const GalleryScreen = ({ route, navigation }) => {
 
       // 5. Clear from memory cache
       IMAGE_CACHE.delete(filePath);
+      IMAGE_CACHE.delete(cleanPath);
+      IMAGE_CACHE.delete(`file://${cleanPath}`);
 
       // 6. Clear upload status from AsyncStorage
       try {
@@ -846,15 +862,30 @@ const GalleryScreen = ({ route, navigation }) => {
   };
 
   const loadAlbumContent = useCallback(async (path, isSilent = false) => {
+    const gen = ++loadGenRef.current;
     try {
-      if (!isSilent) setIsLoading(true);
+      // Instant paint from memory when available (avoid empty flash).
+      const cached = getGallerySnapshot(path);
+      if (cached && (cached.albumItems.length > 0 || cached.capturedPhotos.length > 0)) {
+        setAlbumItems(cached.albumItems);
+        setCapturedPhotos(cached.capturedPhotos);
+        setIsLoading(false);
+      } else if (!isSilent) {
+        setIsLoading(true);
+      }
+
       const base = getBasePath();
       const currentDir = path.length === 0 ? base : `${base}/${path.join('/')}`;
       const exists = await RNFS.exists(currentDir);
+      if (gen !== loadGenRef.current) return;
+
       if (!exists) {
-        setAlbumItems([]);
-        setCapturedPhotos([]);
-        if (!isSilent) setIsLoading(false);
+        // Keep showing cache if we have recent captures; only clear when truly empty.
+        if (!cached?.capturedPhotos?.length && !cached?.albumItems?.length) {
+          setAlbumItems([]);
+          setCapturedPhotos([]);
+        }
+        setIsLoading(false);
         return;
       }
 
@@ -863,41 +894,6 @@ const GalleryScreen = ({ route, navigation }) => {
         const j = await AsyncStorage.getItem(DELETED_FILES_KEY);
         if (j) deletedFilesSet = new Set(JSON.parse(j));
       } catch (_) { }
-
-      const statusMap = await ImageDatabase.getUploadStatusMap();
-      const enrichFormatted = (formatted) =>
-        formatted.map((p) => ({
-          ...p,
-          uploadStatus: statusMap[(p.absolutePath || p.path.replace('file://', ''))] ?? null,
-        }));
-
-      const getAllImageFilesRecursive = async (dirPath) => {
-        let results = [];
-        try {
-          const list = await RNFS.readDir(dirPath);
-          for (const item of list) {
-            if (item.isDirectory()) {
-              results = results.concat(await getAllImageFilesRecursive(item.path));
-            } else if (item.isFile() && item.name.match(/\.(jpg|jpeg|png|gif|bmp)$/i) && !item.name.startsWith('compressed_')) {
-              results.push({ ...item, directory: dirPath });
-            }
-          }
-        } catch (_) { }
-        return results;
-      };
-
-      // Returns the single latest image (by mtime) in dir recursively, or null. For album cover.
-      const getLatestImageInDir = async (dirPath) => {
-        try {
-          const files = await getAllImageFilesRecursive(dirPath);
-          const valid = files.filter((f) => !deletedFilesSet.has(f.path));
-          if (valid.length === 0) return null;
-          const latest = valid.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime())[0];
-          return latest ? { path: `file://${latest.path}` } : null;
-        } catch (_) {
-          return null;
-        }
-      };
 
       const formatPhoto = (file) => {
         const segments = (file.directory || '').split('/').filter(Boolean);
@@ -916,131 +912,171 @@ const GalleryScreen = ({ route, navigation }) => {
         };
       };
 
-      const enrichWithAsyncStorage = async (photos) => {
-        const enriched = enrichFormatted(photos);
-        return await Promise.all(enriched.map(async (p) => {
-          if (p.uploadStatus === 'UPLOADED') return p;
+      const getAllImageFilesRecursive = async (dirPath) => {
+        let results = [];
+        try {
+          const list = await RNFS.readDir(dirPath);
+          for (const item of list) {
+            if (item.isDirectory()) {
+              results = results.concat(await getAllImageFilesRecursive(item.path));
+            } else if (item.isFile() && item.name.match(/\.(jpg|jpeg|png|gif|bmp)$/i) && !item.name.startsWith('compressed_')) {
+              results.push({ ...item, directory: dirPath });
+            }
+          }
+        } catch (_) { }
+        return results;
+      };
+
+      // Covers are deferred — listing folders must not wait on recursive scans.
+      const fillCoversLater = (dirs, setter) => {
+        (async () => {
           try {
-            const cleanPath = (p.absolutePath || p.path.replace('file://', ''));
-            const status = await AsyncStorage.getItem(`uploaded_${cleanPath}`);
-            if (status === 'true') return { ...p, uploadStatus: 'UPLOADED' };
+            const withCovers = await Promise.all(
+              dirs.map(async (item) => {
+                try {
+                  const files = await getAllImageFilesRecursive(item._coverDir || `${currentDir}/${item.id}`);
+                  const valid = files.filter((f) => !deletedFilesSet.has(f.path));
+                  if (valid.length === 0) return item;
+                  const latest = valid.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime())[0];
+                  return { ...item, cover: { path: `file://${latest.path}` } };
+                } catch (_) {
+                  return item;
+                }
+              })
+            );
+            if (gen === loadGenRef.current) setter(withCovers);
           } catch (_) { }
-          return p;
-        }));
+        })();
+      };
+
+      const applyPhotos = (formatted) => {
+        if (gen !== loadGenRef.current) return;
+        setAlbumItems([]);
+        setCapturedPhotos(formatted);
+        setGallerySnapshot(path, [], formatted);
+        setIsLoading(false);
+
+        // Enrich upload status AFTER UI is painted — never blocks gallery open.
+        (async () => {
+          try {
+            const statusMap = await ImageDatabase.getUploadStatusMap();
+            if (gen !== loadGenRef.current) return;
+            setCapturedPhotos((prev) =>
+              prev.map((p) => {
+                const key = p.absolutePath || p.path?.replace('file://', '');
+                const status = statusMap[key];
+                return status ? { ...p, uploadStatus: status } : p;
+              })
+            );
+          } catch (_) { }
+        })();
+      };
+
+      const applyFolders = (items) => {
+        if (gen !== loadGenRef.current) return;
+        setAlbumItems(items);
+        setCapturedPhotos([]);
+        setGallerySnapshot(path, items, []);
+        setIsLoading(false);
+        fillCoversLater(items, (next) => {
+          setAlbumItems(next);
+          setGallerySnapshot(path, next, []);
+        });
       };
 
       if (path.length === 0) {
         const list = await RNFS.readDir(currentDir);
+        if (gen !== loadGenRef.current) return;
         const dirs = list.filter((i) => i.isDirectory());
         if (dirs.length > 0) {
-          const items = await Promise.all(
-            dirs.map(async (d) => {
-              let idLabel = d.name;
-              let nameLabel = '';
-              if (d.name.includes('__')) {
-                const [idPart, namePart] = d.name.split('__');
-                idLabel = idPart || d.name;
-                nameLabel = namePart ? namePart.replace(/_/g, ' ') : '';
-              }
-              const cover = await getLatestImageInDir(d.path);
-              return { id: d.name, idLabel, nameLabel, count: 0, cover, type: 'album' };
-            })
-          );
-          setAlbumItems(items.sort((a, b) => (a.nameLabel || a.idLabel).localeCompare(b.nameLabel || b.idLabel)));
-          setCapturedPhotos([]);
+          const items = dirs.map((d) => {
+            let idLabel = d.name;
+            let nameLabel = '';
+            if (d.name.includes('__')) {
+              const [idPart, namePart] = d.name.split('__');
+              idLabel = idPart || d.name;
+              nameLabel = namePart ? namePart.replace(/_/g, ' ') : '';
+            }
+            return {
+              id: d.name,
+              idLabel,
+              nameLabel,
+              count: 0,
+              cover: null,
+              type: 'album',
+              _coverDir: d.path,
+            };
+          }).sort((a, b) => (a.nameLabel || a.idLabel).localeCompare(b.nameLabel || b.idLabel));
+          applyFolders(items);
         } else {
-          // No subfolders (e.g. guest DCIM/Guest): show all photos at root
           const files = await getAllImageFilesRecursive(currentDir);
+          if (gen !== loadGenRef.current) return;
           const filtered = files.filter((f) => !deletedFilesSet.has(f.path));
           const sorted = filtered.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime());
-          const formatted = [];
-          for (const file of sorted) {
-            try {
-              if (await RNFS.exists(file.path)) formatted.push(formatPhoto(file));
-            } catch (_) { }
-          }
-          setAlbumItems([]);
-          setCapturedPhotos(await enrichWithAsyncStorage(formatted));
+          applyPhotos(sorted.map(formatPhoto));
         }
-        if (!isSilent) setIsLoading(false);
         return;
       }
 
       if (path.length === 1) {
         const list = await RNFS.readDir(currentDir);
+        if (gen !== loadGenRef.current) return;
         const subdirs = list.filter((i) => i.isDirectory());
         const yearDirs = subdirs.filter((d) => /^\d{4}$/.test(d.name));
         if (yearDirs.length > 0) {
-          const sortedYears = yearDirs.sort((a, b) => b.name.localeCompare(a.name));
-          const items = await Promise.all(
-            sortedYears.map(async (d) => {
-              const cover = await getLatestImageInDir(d.path);
-              return {
-                id: d.name,
-                idLabel: d.name,
-                nameLabel: d.name,
-                count: 0,
-                cover,
-                type: 'year',
-              };
-            })
-          );
-          setAlbumItems(items);
-          setCapturedPhotos([]);
+          const items = yearDirs
+            .sort((a, b) => b.name.localeCompare(a.name))
+            .map((d) => ({
+              id: d.name,
+              idLabel: d.name,
+              nameLabel: d.name,
+              count: 0,
+              cover: null,
+              type: 'year',
+              _coverDir: d.path,
+            }));
+          applyFolders(items);
         } else {
           const files = await getAllImageFilesRecursive(currentDir);
+          if (gen !== loadGenRef.current) return;
           const filtered = files.filter((f) => !deletedFilesSet.has(f.path));
           const sorted = filtered.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime());
-          const formatted = [];
-          for (const file of sorted) {
-            try {
-              if (await RNFS.exists(file.path)) formatted.push(formatPhoto(file));
-            } catch (_) { }
-          }
-          setAlbumItems([]);
-          setCapturedPhotos(await enrichWithAsyncStorage(formatted));
+          applyPhotos(sorted.map(formatPhoto));
         }
-        if (!isSilent) setIsLoading(false);
         return;
       }
 
       if (path.length === 2) {
         const list = await RNFS.readDir(currentDir);
+        if (gen !== loadGenRef.current) return;
         const dirs = list.filter((i) => i.isDirectory());
-        const items = await Promise.all(
-          dirs.map(async (d) => {
-            const isDateFolder = /^\d{2}-\d{2}-\d{4}$/.test(d.name);
-            const isMonthFolder = /^\d{2}$/.test(d.name);
-            let label = d.name;
-            let type = isDateFolder ? 'date' : (isMonthFolder ? 'month' : 'folder');
-
-            if (isMonthFolder) {
-              const num = parseInt(d.name, 10);
-              label = num >= 1 && num <= 12 ? MONTH_NAMES[num] : d.name;
-            }
-            const cover = await getLatestImageInDir(d.path);
-            return { id: d.name, idLabel: d.name, nameLabel: label, count: 0, cover, type };
-          })
-        );
-        setAlbumItems(
-          items.sort((a, b) => {
-            if (a.type === 'date' && b.type === 'date') {
-              try {
-                const [da, ma, ya] = a.id.split('-').map(Number);
-                const [db, mb, yb] = b.id.split('-').map(Number);
-                return new Date(yb, mb - 1, db) - new Date(ya, ma - 1, da);
-              } catch (_) { }
-            }
-            return b.id.localeCompare(a.id);
-          })
-        );
-        setCapturedPhotos([]);
-        if (!isSilent) setIsLoading(false);
+        const items = dirs.map((d) => {
+          const isDateFolder = /^\d{2}-\d{2}-\d{4}$/.test(d.name);
+          const isMonthFolder = /^\d{2}$/.test(d.name);
+          let label = d.name;
+          let type = isDateFolder ? 'date' : (isMonthFolder ? 'month' : 'folder');
+          if (isMonthFolder) {
+            const num = parseInt(d.name, 10);
+            label = num >= 1 && num <= 12 ? MONTH_NAMES[num] : d.name;
+          }
+          return { id: d.name, idLabel: d.name, nameLabel: label, count: 0, cover: null, type, _coverDir: d.path };
+        }).sort((a, b) => {
+          if (a.type === 'date' && b.type === 'date') {
+            try {
+              const [da, ma, ya] = a.id.split('-').map(Number);
+              const [db, mb, yb] = b.id.split('-').map(Number);
+              return new Date(yb, mb - 1, db) - new Date(ya, ma - 1, da);
+            } catch (_) { }
+          }
+          return b.id.localeCompare(a.id);
+        });
+        applyFolders(items);
         return;
       }
 
       if (path.length === 3) {
         const list = await RNFS.readDir(currentDir);
+        if (gen !== loadGenRef.current) return;
         const imageFiles = list.filter(
           (i) => i.isFile() && i.name.match(/\.(jpg|jpeg|png|gif|bmp)$/i) && !i.name.startsWith('compressed_')
         );
@@ -1048,60 +1084,42 @@ const GalleryScreen = ({ route, navigation }) => {
         if (imageFiles.length > 0) {
           const filtered = imageFiles.filter((f) => !deletedFilesSet.has(f.path));
           const sorted = filtered.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime());
-          const formatted = [];
-          for (const file of sorted) {
-            try {
-              if (await RNFS.exists(file.path)) formatted.push(formatPhoto({ ...file, directory: currentDir }));
-            } catch (_) { }
-          }
-          setAlbumItems([]);
-          setCapturedPhotos(await enrichWithAsyncStorage(formatted));
+          applyPhotos(sorted.map((file) => formatPhoto({ ...file, directory: currentDir })));
         } else {
           const dirs = list.filter((i) => i.isDirectory());
-          const items = await Promise.all(
-            dirs.map(async (d) => {
-              const cover = await getLatestImageInDir(d.path);
-              return {
-                id: d.name,
-                idLabel: d.name,
-                nameLabel: d.name.startsWith('W') ? `Week ${d.name.slice(1)}` : d.name,
-                count: 0,
-                cover,
-                type: 'week',
-              };
-            })
-          );
-          setAlbumItems(items.sort((a, b) => a.id.localeCompare(b.id)));
-          setCapturedPhotos([]);
+          const items = dirs.map((d) => ({
+            id: d.name,
+            idLabel: d.name,
+            nameLabel: d.name.startsWith('W') ? `Week ${d.name.slice(1)}` : d.name,
+            count: 0,
+            cover: null,
+            type: 'week',
+            _coverDir: d.path,
+          })).sort((a, b) => a.id.localeCompare(b.id));
+          applyFolders(items);
         }
-        if (!isSilent) setIsLoading(false);
         return;
       }
 
       if (path.length === 4) {
         const list = await RNFS.readDir(currentDir);
+        if (gen !== loadGenRef.current) return;
         const imageFiles = list.filter(
           (i) => i.isFile() && i.name.match(/\.(jpg|jpeg|png|gif|bmp)$/i) && !i.name.startsWith('compressed_')
         );
         const filtered = imageFiles.filter((f) => !deletedFilesSet.has(f.path));
         const sorted = filtered.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime());
-        const formatted = [];
-        for (const file of sorted) {
-          try {
-            if (await RNFS.exists(file.path)) formatted.push(formatPhoto({ ...file, directory: currentDir }));
-          } catch (_) { }
-        }
-        setAlbumItems([]);
-        setCapturedPhotos(await enrichWithAsyncStorage(formatted));
+        applyPhotos(sorted.map((file) => formatPhoto({ ...file, directory: currentDir })));
       }
-
-      if (!isSilent) setIsLoading(false);
     } catch (error) {
       console.error('Failed to load album:', error);
-      setAlbumItems([]);
-      setCapturedPhotos([]);
-      if (!isSilent) setIsLoading(false);
-      showInAppToast('Failed to load gallery', { durationMs: 2000, position: 'bottom' });
+      if (!isSilent) {
+        // Don't wipe a good cache on a transient read failure.
+        setIsLoading(false);
+        showInAppToast('Failed to load gallery', { durationMs: 2000, position: 'bottom' });
+      } else {
+        setIsLoading(false);
+      }
     }
   }, [getBasePath]);
 
@@ -1121,9 +1139,52 @@ const GalleryScreen = ({ route, navigation }) => {
 
   useFocusEffect(
     useCallback(() => {
+      // Silent refresh — keep current grid visible while disk resyncs.
       loadImages(true);
     }, [loadImages])
   );
+
+  // Live-insert photos captured while gallery is open (or just before open).
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(GALLERY_PHOTO_ADDED, (photo) => {
+      if (!photo) return;
+      // At photo-list levels (guest root, or deepest date folder), prepend instantly.
+      const showingPhotos = capturedPhotosRef.current.length > 0 || albumItems.length === 0;
+      if (!showingPhotos && albumPath.length < 3 && !isGuest) {
+        // Still in folder navigation — silent refresh will pick it up.
+        return;
+      }
+      setIsLoading(false);
+      setCapturedPhotos((prev) => {
+        const abs = photo.absolutePath || photo.path?.replace('file://', '');
+        if (prev.some((p) => (p.absolutePath || p.path?.replace('file://', '')) === abs)) {
+          return prev;
+        }
+        return [photo, ...prev];
+      });
+      setAlbumItems([]);
+    });
+    const upd = DeviceEventEmitter.addListener(GALLERY_PHOTO_UPDATED, ({ absolutePath }) => {
+      if (!absolutePath) return;
+      // Bust thumbnail identity so the watermarked replace reloads (keep clean file:// URI).
+      setCapturedPhotos((prev) =>
+        prev.map((p) => {
+          const abs = p.absolutePath || p.path?.replace(/^file:\/\//, '').split('?')[0];
+          if (abs !== absolutePath) return p;
+          return {
+            ...p,
+            id: `${abs}_${Date.now()}`,
+            path: `file://${absolutePath}`,
+            absolutePath,
+          };
+        })
+      );
+    });
+    return () => {
+      sub.remove();
+      upd.remove();
+    };
+  }, [albumPath.length, albumItems.length, isGuest]);
 
   // Selection handlers
   const togglePhotoSelection = useCallback((photoId) => {
@@ -1795,7 +1856,7 @@ const GalleryScreen = ({ route, navigation }) => {
         )}
 
         {/* Folder grid or photos grid */}
-        {isLoading ? (
+        {isLoading && capturedPhotos.length === 0 && albumItems.length === 0 ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={ACCENT_TEAL} />
             <Text style={styles.loadingText}>Loading Images...</Text>
@@ -1838,10 +1899,10 @@ const GalleryScreen = ({ route, navigation }) => {
               isSelectionMode && selectedPhotos.length > 0 && { paddingBottom: 100 }
             ]}
             showsVerticalScrollIndicator={false}
-            initialNumToRender={12}
-            maxToRenderPerBatch={6}
-            windowSize={7}
-            removeClippedSubviews={false}
+            initialNumToRender={18}
+            maxToRenderPerBatch={12}
+            windowSize={9}
+            removeClippedSubviews={Platform.OS === 'android'}
             extraData={[selectedPhotos, isSelectionMode, activePhotos]}
           />
         )}

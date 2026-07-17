@@ -53,15 +53,32 @@ class ImageProcessorModule(private val reactContext: ReactApplicationContext) : 
                     return@launch
                 }
 
-                // 1. Load Bitmap
+                // Decode full-res; downscale below if needed to limit peak RAM in bursts.
                 val options = BitmapFactory.Options().apply {
                     inPreferredConfig = Bitmap.Config.ARGB_8888
+                    inSampleSize = 1
                 }
                 var bitmap = BitmapFactory.decodeFile(cleanPath, options)
                 if (bitmap == null) {
                     Log.e("ImageProcessor", "Failed to decode bitmap from $cleanPath")
                     withContext(Dispatchers.Main) { promise.resolve(uri) }
                     return@launch
+                }
+
+                // Downscale very large frames slightly before canvas work to avoid OOM
+                // when the queue drains a burst. Keep enough resolution for clinical use.
+                val maxEdge = 4096
+                val srcW = bitmap.width
+                val srcH = bitmap.height
+                if (srcW > maxEdge || srcH > maxEdge) {
+                    val scale = min(maxEdge.toFloat() / srcW, maxEdge.toFloat() / srcH)
+                    val scaledW = max(1, (srcW * scale).toInt())
+                    val scaledH = max(1, (srcH * scale).toInt())
+                    val scaled = Bitmap.createScaledBitmap(bitmap, scaledW, scaledH, true)
+                    if (scaled != bitmap) {
+                        bitmap.recycle()
+                        bitmap = scaled
+                    }
                 }
 
                 val originalW = bitmap.width
@@ -216,12 +233,14 @@ class ImageProcessorModule(private val reactContext: ReactApplicationContext) : 
                     }
                 }
 
-                // 8. Save output
+                // 8. Save output — include nano-ish uniqueness so concurrent
+                // process calls never collide on the same temp filename.
                 val tempDir = reactContext.cacheDir
-                val outputFile = File(tempDir, "processed_${System.currentTimeMillis()}.jpg")
+                val outputFile = File(tempDir, "processed_${System.currentTimeMillis()}_${Thread.currentThread().id}.jpg")
                 
                 FileOutputStream(outputFile).use { out ->
-                    outputBitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                    // 85 keeps quality high while reducing encode time/memory under burst.
+                    outputBitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
                 }
                 
                 outputBitmap.recycle()
