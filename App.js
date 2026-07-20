@@ -150,6 +150,13 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
     promptVisibleRef.current = false;
     setPromptVisible(false);
 
+    // Navigate to login first so Settings/Camera never flash guest-mode UI mid-logout.
+    onLoggedOut();
+    navigationRef.current?.resetRoot?.({
+      index: 0,
+      routes: [{ name: 'Welcome' }],
+    });
+
     try {
       await signOut();
       await AsyncStorage.multiRemove([
@@ -180,11 +187,6 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
         '@patient_box',
       ]).catch(() => {});
     } finally {
-      onLoggedOut();
-      navigationRef.current?.resetRoot?.({
-        index: 0,
-        routes: [{ name: 'Welcome' }],
-      });
       logoutInProgressRef.current = false;
     }
   }, [navigationRef, onLoggedOut, signOut]);
@@ -689,7 +691,10 @@ const App = () => {
                         statusBarBackgroundColor: 'transparent',
                       }}
                     >
-                      <Stack.Screen name="Welcome">
+                      <Stack.Screen
+                        name="Welcome"
+                        options={{ animation: 'none' }}
+                      >
                         {(props) => (
                           <WelcomeScreen
                             {...props}

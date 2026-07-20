@@ -102,7 +102,8 @@ export const AuthProvider = ({ children }) => {
       // Clear any selected patient/box on sign-out
       await AsyncStorage.removeItem('@patient_box');
       setUserData(null);
-      setIsGuest(true);
+      // Logged out is not guest mode; guestLogin() is the explicit guest path.
+      setIsGuest(false);
       return true;
     } catch (error) {
       console.error('Error signing out:', error);

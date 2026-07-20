@@ -232,9 +232,21 @@ const CameraScreen = ({ navigation }) => {
   }, []);
 
   // ========== STANDBY TIMEOUT ==========
+  const INACTIVITY_STANDBY_MS = 120000;
   const [isStandby, setIsStandby] = useState(false);
   const timeoutRef = useRef(null);
   const isScreenFocusedRef = useRef(true);
+  const isStandbyRef = useRef(false);
+  const appStateRef = useRef(AppState.currentState);
+  const resumingFromLockRef = useRef(false);
+  const resumeClearTimerRef = useRef(null);
+
+  const isTransientCameraError = useCallback((error) => {
+    if (appStateRef.current !== 'active') return true;
+    const code = String(error?.code ?? '');
+    const msg = String(error?.message ?? error ?? '').toLowerCase();
+    return /session|interrupted|not-ready|not ready|closed|disconnected|recoverable|was interrupted|camera-is-restarting|in-use|invalid-output-configuration/.test(`${code} ${msg}`);
+  }, []);
 
   const resetInactivityTimer = useCallback(() => {
     DeviceEventEmitter.emit(SESSION_ACTIVITY_EVENT);
@@ -242,14 +254,15 @@ const CameraScreen = ({ navigation }) => {
       clearTimeout(timeoutRef.current);
     }
     // Only set timer if not already in standby and screen is focused
-    if (isScreenFocusedRef.current && !isStandby) {
+    if (isScreenFocusedRef.current && !isStandbyRef.current) {
       timeoutRef.current = setTimeout(() => {
         console.log('⏰ Inactivity timeout reached - Entering standby');
+        isStandbyRef.current = true;
         setIsStandby(true);
         setIsLightOn(false); // Turn off torch on standby
-      }, 120000);
+      }, INACTIVITY_STANDBY_MS);
     }
-  }, [isStandby]);
+  }, []);
 
   // Create a global PanResponder to catch any touches on the screen and reset the timer
   const panResponder = useRef(
@@ -298,6 +311,12 @@ const CameraScreen = ({ navigation }) => {
   useEffect(() => {
     const subscription = DeviceEventEmitter.addListener('onScreenOff', () => {
       console.log('📴 Screen off - turning torch and polarization off');
+      isStandbyRef.current = false;
+      setIsStandby(false);
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
       setIsFlashOn(false);
       setIsLightOn(false);
       if (Platform.OS === 'android' && NativeModules.DermascopeModule) {
@@ -587,6 +606,43 @@ const CameraScreen = ({ navigation }) => {
     }
   }, []);
 
+  const resumeCameraAfterUnlock = useCallback(() => {
+    if (!navigation.isFocused()) return;
+
+    console.log('📸 Resuming camera after device unlock');
+    resumingFromLockRef.current = true;
+    if (resumeClearTimerRef.current) {
+      clearTimeout(resumeClearTimerRef.current);
+    }
+    resumeClearTimerRef.current = setTimeout(() => {
+      resumingFromLockRef.current = false;
+      resumeClearTimerRef.current = null;
+    }, 3000);
+
+    isStandbyRef.current = false;
+    isScreenFocusedRef.current = true;
+    setIsStandby(false);
+    setCameraError(null);
+    setIsScreenFocused(true);
+    handleReturnToCamera();
+    resetInactivityTimer();
+  }, [navigation, handleReturnToCamera, resetInactivityTimer]);
+
+  const pauseCameraForLock = useCallback(() => {
+    console.log('🔒 Device locked - pausing camera without standby overlay');
+    isStandbyRef.current = false;
+    setIsStandby(false);
+    setCameraError(null);
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    isScreenFocusedRef.current = false;
+    setIsScreenFocused(false);
+    setIsFlashOn(false);
+    setIsLightOn(false);
+  }, []);
+
   // Effect 1: Handle screen focus/blur for ALL navigation
   useEffect(() => {
     console.log('Setting up navigation focus listeners with delay...');
@@ -662,28 +718,33 @@ const CameraScreen = ({ navigation }) => {
     };
   }, [navigation, handleReturnToCamera, forceTorchOffUntilUserTaps]);
 
-  // Effect 1b: Handle AppState for Lock/Background (Aggressive torch off)
+  // Effect 1b: Handle AppState for lock/unlock — always resume live camera, never standby/wake UI
   useEffect(() => {
     const handleAppStateChange = (nextAppState) => {
-      console.log('📱 AppState changed to:', nextAppState);
+      const prevAppState = appStateRef.current;
+      appStateRef.current = nextAppState;
+      console.log('📱 AppState changed:', prevAppState, '→', nextAppState);
+
       if (nextAppState === 'background' || nextAppState === 'inactive') {
-        console.log('🔒 Device locked or app backgrounded - Force Turning Torch OFF');
-        setIsScreenFocused(false);
-        setIsLightOn(false);
-      } else if (nextAppState === 'active') {
-        // Only restore focus if this screen is actually focused in the navigation stack
-        if (navigation.isFocused()) {
-          console.log('📸 AppState active: CameraScreen is focused, restoring screen focus state');
-          setIsScreenFocused(true);
-        } else {
-          console.log('📸 AppState active: CameraScreen is NOT focused, keeping screen focus state false');
-        }
+        pauseCameraForLock();
+        return;
+      }
+
+      if (nextAppState === 'active' && (prevAppState === 'background' || prevAppState === 'inactive')) {
+        resumeCameraAfterUnlock();
       }
     };
 
+    appStateRef.current = AppState.currentState;
     const subscription = AppState.addEventListener('change', handleAppStateChange);
-    return () => subscription.remove();
-  }, [navigation]);
+    return () => {
+      subscription.remove();
+      if (resumeClearTimerRef.current) {
+        clearTimeout(resumeClearTimerRef.current);
+        resumeClearTimerRef.current = null;
+      }
+    };
+  }, [pauseCameraForLock, resumeCameraAfterUnlock]);
 
   // Effect 1c: Handle Physical Power Button Event / global power menu
   useEffect(() => {
@@ -769,18 +830,10 @@ const CameraScreen = ({ navigation }) => {
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }
-    };
-  }, []);
-
-  // Effect 4b: Turn off torch when phone is locked (power button) or app goes to background
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextAppState) => {
-      if (nextAppState === 'background' || nextAppState === 'inactive') {
-        setIsFlashOn(false);
-        setIsLightOn(false);
+      if (resumeClearTimerRef.current) {
+        clearTimeout(resumeClearTimerRef.current);
       }
-    });
-    return () => subscription.remove();
+    };
   }, []);
 
   // Effect 4c: Standby Timer Management
@@ -2851,9 +2904,15 @@ const CameraScreen = ({ navigation }) => {
                   onInitialized={() => {
                     console.log(`[WakeUpDebug] [${Date.now()}] ReanimatedCamera onInitialized triggered. Flash state: ${isFlashOn ? 'ON' : 'OFF'}`);
                     console.log('📱 Camera initialized, flash state:', isFlashOn ? 'ON' : 'OFF');
+                    resumingFromLockRef.current = false;
+                    setCameraError(null);
                   }}
                   onError={(error) => {
                     console.log(`[WakeUpDebug] [${Date.now()}] ReanimatedCamera onError triggered. Error:`, error);
+                    if (resumingFromLockRef.current || isTransientCameraError(error)) {
+                      console.log('Ignoring transient camera error during lock/unlock:', error);
+                      return;
+                    }
                     console.error('Camera Error:', error);
                     setCameraError('Tap On the Button to Use Camera');
                   }}
@@ -2976,15 +3035,15 @@ const CameraScreen = ({ navigation }) => {
           isDestructive={true}
           onConfirm={async () => {
             setExitModalVisible(false);
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'Welcome' }],
+            });
             if (isGuest) {
               await exitGuestMode();
             } else {
               await signOut();
             }
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'Welcome' }],
-            });
           }}
         />
 
@@ -3295,6 +3354,7 @@ const CameraScreen = ({ navigation }) => {
         <StandbyModal
           visible={isStandby && isScreenFocused && !globalPowerMenuOpen}
           onActivate={() => {
+            isStandbyRef.current = false;
             setIsStandby(false);
             resetInactivityTimer();
           }}

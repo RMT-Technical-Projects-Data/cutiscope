@@ -140,13 +140,13 @@ const SettingsMenu = () => {
             confirmText: 'Logout',
             isDestructive: true,
             onConfirm: async () => {
+                setConfirmModalVisible(false);
+                navigation.reset({
+                    index: 0,
+                    routes: [{ name: 'Welcome' }],
+                });
                 try {
                     await signOut();
-                    onClose();
-                    navigation.reset({
-                        index: 0,
-                        routes: [{ name: 'Welcome' }],
-                    });
                 } catch (error) {
                     Alert.alert('Sign out', UserMessages.logoutFailed);
                 }
