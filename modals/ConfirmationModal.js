@@ -1,6 +1,5 @@
 import React from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import CustomStatusBar from '../Components/CustomStatusBar';
 
 const ConfirmationModal = ({
     visible,
@@ -22,7 +21,6 @@ const ConfirmationModal = ({
             statusBarTranslucent={true}
         >
             <View style={styles.overlay}>
-                <CustomStatusBar />
                 <View style={styles.modalContainer}>
                     <Text style={styles.title}>{title}</Text>
                     <Text style={styles.message}>{message}</Text>
