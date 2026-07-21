@@ -1,16 +1,13 @@
 import React from 'react';
 import {
-    Modal,
     View,
     Text,
     TouchableOpacity,
     StyleSheet,
-    StatusBar,
     NativeModules,
     Dimensions,
 } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-import CustomStatusBar from '../Components/CustomStatusBar';
 
 const { width } = Dimensions.get('window');
 
@@ -44,17 +41,13 @@ const PowerOffModal = ({ visible, onClose }) => {
         }
     };
 
+    if (!visible) {
+        return null;
+    }
+
     return (
-        <Modal
-            animationType="fade"
-            transparent={true}
-            visible={visible}
-            onRequestClose={onClose}
-            statusBarTranslucent={true}
-        >
-            <View style={styles.container}>
-                <CustomStatusBar />
-                <View style={styles.modalView}>
+        <View style={styles.container}>
+            <View style={styles.modalView}>
                     <Text style={styles.title}>Power Menu</Text>
 
                     <View style={styles.buttonContainer}>
@@ -92,18 +85,19 @@ const PowerOffModal = ({ visible, onClose }) => {
                     <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
                         <Text style={styles.cancelText}>Cancel</Text>
                     </TouchableOpacity>
-                </View>
             </View>
-        </Modal>
+        </View>
     );
 };
 
 const styles = StyleSheet.create({
     container: {
-        flex: 1,
+        ...StyleSheet.absoluteFillObject,
         justifyContent: 'center',
         alignItems: 'center',
         backgroundColor: 'rgba(0,0,0,0.8)',
+        zIndex: 10000,
+        elevation: 10000,
     },
     modalView: {
         width: width * 0.85,

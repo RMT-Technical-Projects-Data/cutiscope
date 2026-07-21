@@ -519,11 +519,9 @@ const App = () => {
       console.log('🔌 Showing Power Menu Modal');
       // Notify Camera to hide StandbyModal so it cannot cover this menu.
       DeviceEventEmitter.emit('onPowerMenuOpened');
-      // Force remount/re-show even if state was already true (stuck behind standby).
-      setIsPowerModalVisible(false);
-      requestAnimationFrame(() => {
-        setIsPowerModalVisible(true);
-      });
+      // Keep the menu in the existing app window so opening it cannot resize or
+      // shift the screen underneath it.
+      setIsPowerModalVisible(true);
     };
 
     // Ensure native power module is instantiated and its receiver is registered.
@@ -656,7 +654,7 @@ const App = () => {
       <GestureHandlerRootView style={{ flex: 1 }}>
         <CustomKeyboardProvider>
           <SafeAreaProvider>
-            <SafeAreaView style={{ flex: 1, paddingTop: 0, backgroundColor: '#000' }}>
+            <SafeAreaView edges={[]} style={{ flex: 1, paddingTop: 0, backgroundColor: '#000' }}>
               <View
                 style={styles.kioskTapOverlay}
                 onStartShouldSetResponder={() => Platform.OS === 'android'}
