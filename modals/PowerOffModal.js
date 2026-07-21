@@ -11,7 +11,7 @@ import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityI
 
 const { width } = Dimensions.get('window');
 
-const PowerOffModal = ({ visible, onClose }) => {
+const PowerOffModal = ({ visible, onClose, onLock }) => {
     const { SystemPowerModule } = NativeModules;
 
     const handlePowerOff = () => {
@@ -29,15 +29,13 @@ const PowerOffModal = ({ visible, onClose }) => {
     };
 
     const handleLock = () => {
-        console.log('Locking device...');
-        if (SystemPowerModule) {
-            try {
-                SystemPowerModule.lockScreen();
-            } catch (e) {
-                console.warn('lockScreen failed:', e);
-            }
-            // Close after native has a moment to clear keep-awake and sleep.
-            setTimeout(() => onClose?.(), 120);
+        console.log('Locking device (black screen overlay)...');
+        // Do NOT really sleep the device: on this kiosk, a real lock lets Android
+        // kill the process and crash on resume. Show a full black overlay instead.
+        if (onLock) {
+            onLock();
+        } else {
+            onClose?.();
         }
     };
 

@@ -15,6 +15,7 @@ import { CustomKeyboardProvider } from './context/CustomKeyboardContext';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import WifiOnboardingScreen from './screens/WifiOnboardingScreen';
 import Orientation from 'react-native-orientation-locker';
+import SystemSetting from 'react-native-system-setting';
 import CustomStatusBar from './Components/CustomStatusBar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import SerialNumberModal from './modals/SerialNumberModal';
@@ -280,6 +281,7 @@ const App = () => {
   const [hasSerialNumber, setHasSerialNumber] = useState(true);
   const [isGuestMode, setIsGuestMode] = useState(false);
   const [isPowerModalVisible, setIsPowerModalVisible] = useState(false);
+  const [isBlackScreenVisible, setIsBlackScreenVisible] = useState(false);
   const [isUpdateModalVisible, setIsUpdateModalVisible] = useState(false);
   const [updateInfo, setUpdateInfo] = useState(null);
   const [kioskPinModalVisible, setKioskPinModalVisible] = useState(false);
@@ -503,6 +505,52 @@ const App = () => {
   }, [kioskPinModalVisible]);
 
   const lastPowerPressRef = useRef(0);
+  const prevBrightnessRef = useRef(null);
+  const isBlackScreenVisibleRef = useRef(false);
+
+  // "Lock" simulation: instead of really sleeping the device (which lets Android
+  // kill this kiosk process and crash on resume), cover the screen with a full
+  // black overlay and dim brightness so it looks off. Only the physical power
+  // button can restore it; touch input is consumed by the overlay.
+  const handleSimulatedLock = useCallback(async () => {
+    // Render black immediately (no animation) so the screen goes dark instantly.
+    isBlackScreenVisibleRef.current = true;
+    setIsBlackScreenVisible(true);
+    setIsPowerModalVisible(false);
+    DeviceEventEmitter.emit('onPowerMenuClosed');
+
+    // Dim the backlight to reinforce the "off" look. Note: this version of
+    // react-native-system-setting resolves getAppBrightness() as a promise but
+    // setAppBrightness() returns void, so never chain .catch/.then on the setter.
+    try {
+      const current = await SystemSetting.getAppBrightness();
+      prevBrightnessRef.current = typeof current === 'number' ? current : null;
+      if (isBlackScreenVisibleRef.current) {
+        SystemSetting.setAppBrightness(0);
+      }
+    } catch (e) {
+      console.warn('Failed to dim brightness for lock overlay:', e);
+    }
+  }, []);
+
+  const handleDismissBlackScreen = useCallback(() => {
+    // Remove the overlay instantly (no animation) and restore brightness.
+    isBlackScreenVisibleRef.current = false;
+    setIsBlackScreenVisible(false);
+
+    // Swallow any follow-up power event so the power menu never opens right
+    // after this same press that woke the screen.
+    lastPowerPressRef.current = Date.now();
+
+    const prev = prevBrightnessRef.current;
+    prevBrightnessRef.current = null;
+    try {
+      SystemSetting.setAppBrightness(prev != null ? prev : 1);
+    } catch (e) {
+      console.warn('Failed to restore brightness after lock overlay:', e);
+    }
+    DeviceEventEmitter.emit(SESSION_ACTIVITY_EVENT);
+  }, []);
 
   // Orientation lock: portrait only; re-lock when app becomes active
   useEffect(() => {
@@ -524,6 +572,14 @@ const App = () => {
       setIsPowerModalVisible(true);
     };
 
+    const handlePhysicalPowerButton = () => {
+      if (isBlackScreenVisibleRef.current) {
+        handleDismissBlackScreen();
+        return;
+      }
+      handleShowPowerMenu();
+    };
+
     // Ensure native power module is instantiated and its receiver is registered.
     // On newer RN / lazy module initialization, the module may not be created
     // until JS accesses it, which would prevent POWER_BUTTON_PRESSED broadcasts
@@ -535,7 +591,7 @@ const App = () => {
       console.warn('SystemPowerModule initializeModule failed:', e);
     }
 
-    const subPhysical = DeviceEventEmitter.addListener('onPowerButtonPressed', handleShowPowerMenu);
+    const subPhysical = DeviceEventEmitter.addListener('onPowerButtonPressed', handlePhysicalPowerButton);
     const subRequest = DeviceEventEmitter.addListener('requestPowerMenu', handleShowPowerMenu);
 
     const shareSub = DeviceEventEmitter.addListener('onBluetoothShareStatusChanged', (event) => {
@@ -550,7 +606,7 @@ const App = () => {
       subRequest.remove();
       shareSub.remove();
     };
-  }, []);
+  }, [handleDismissBlackScreen]);
 
   // Orientation lock: portrait only; re-lock when app becomes active
   useEffect(() => {
@@ -742,12 +798,22 @@ const App = () => {
                 />
                 <PowerOffModal
                   visible={isPowerModalVisible}
+                  onLock={handleSimulatedLock}
                   onClose={() => {
                     console.log('🔌 Power Menu Modal Closed');
                     setIsPowerModalVisible(false);
                     DeviceEventEmitter.emit('onPowerMenuClosed');
                   }}
                 />
+                {isBlackScreenVisible && (
+                  <View
+                    style={styles.blackScreenOverlay}
+                    onStartShouldSetResponder={() => true}
+                    onMoveShouldSetResponder={() => true}
+                    onResponderTerminationRequest={() => false}
+                    collapsable={false}
+                  />
+                )}
                 <Modal
                   visible={kioskPinModalVisible}
                   transparent
@@ -872,6 +938,12 @@ const App = () => {
 const styles = StyleSheet.create({
   kioskTapOverlay: {
     flex: 1,
+  },
+  blackScreenOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#000',
+    zIndex: 100000,
+    elevation: 100000,
   },
   kioskPinOverlay: {
     flex: 1,
