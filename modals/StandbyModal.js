@@ -1,56 +1,51 @@
 import React from 'react';
 import {
-  Modal,
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
-  Dimensions,
 } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import CustomStatusBar from '../Components/CustomStatusBar';
 
-const { width, height } = Dimensions.get('window');
-
 const StandbyModal = ({ visible, onActivate }) => {
+  if (!visible) {
+    return null;
+  }
+
   return (
-    <Modal
-      animationType="fade"
-      transparent={true}
-      visible={visible}
-      statusBarTranslucent
-    >
-      <View style={styles.container}>
-        <CustomStatusBar />
-        <View style={styles.content}>
-          <View style={styles.iconContainer}>
-            <MaterialCommunityIcons name="camera-off" size={80} color="#666" />
-          </View>
-
-          <Text style={styles.title}>Camera Standby</Text>
-          <Text style={styles.subtitle}>
-            The camera is on Standby position.
-          </Text>
-
-          <TouchableOpacity
-            style={styles.activateButton}
-            onPress={onActivate}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.activateText}>Activate Camera</Text>
-          </TouchableOpacity>
+    <View style={styles.container}>
+      <CustomStatusBar />
+      <View style={styles.content}>
+        <View style={styles.iconContainer}>
+          <MaterialCommunityIcons name="camera-off" size={80} color="#666" />
         </View>
+
+        <Text style={styles.title}>Camera Standby</Text>
+        <Text style={styles.subtitle}>
+          The camera is on Standby position.
+        </Text>
+
+        <TouchableOpacity
+          style={styles.activateButton}
+          onPress={onActivate}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.activateText}>Activate Camera</Text>
+        </TouchableOpacity>
       </View>
-    </Modal>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: '#000',
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: 9500,
+    elevation: 9500,
   },
   content: {
     width: '85%',
