@@ -43,7 +43,6 @@ import {
 import ConfirmationModal from '../modals/ConfirmationModal';
 import BluetoothShareModal from '../modals/BluetoothShareModal';
 import { showInAppToast } from '../utils/Helpers';
-import CustomStatusBar from '../Components/CustomStatusBar';
 
 // Import your icons (make sure these paths are correct)
 import backIcon from '../assets/icon_back.png';
@@ -682,6 +681,92 @@ const GalleryScreen = ({ route, navigation }) => {
     }
   }, []);
 
+  // Fast bulk delete: removes many files/folders in a SINGLE root shell call,
+  // updates UI-critical state immediately, and defers slow bookkeeping
+  // (S3 + registry + AsyncStorage) to the background. This keeps deleting
+  // 100-200 images/albums in the 2-3s range instead of minutes.
+  const batchDeleteFiles = useCallback(async (rawPaths) => {
+    const paths = Array.from(
+      new Set(
+        (rawPaths || [])
+          .map((p) => (p || '').replace('file://', ''))
+          .filter(Boolean)
+      )
+    );
+    if (paths.length === 0) return;
+
+    const { SystemTimeModule } = NativeModules;
+
+    // 1. Fast path: one-shot root delete of everything (rm -rf handles files
+    //    AND folders) in a single su shell.
+    let rooted = false;
+    try {
+      if (SystemTimeModule && SystemTimeModule.deletePathsRoot) {
+        rooted = await SystemTimeModule.deletePathsRoot(paths);
+      }
+    } catch (e) {
+      console.warn('Batch root delete failed, falling back:', e);
+    }
+
+    // 2. Fallback (older native build without deletePathsRoot): delete each
+    //    path with root in PARALLEL, then unlink any leftovers. Still far
+    //    faster than the old sequential loop.
+    if (!rooted) {
+      await Promise.all(
+        paths.map(async (p) => {
+          try {
+            if (SystemTimeModule && SystemTimeModule.deleteFileRoot) {
+              await SystemTimeModule.deleteFileRoot(p);
+            }
+          } catch (_) { }
+          try {
+            if (await RNFS.exists(p)) await RNFS.unlink(p);
+          } catch (_) { }
+        })
+      );
+    }
+
+    // 3. Update in-memory caches + soft-deleted set in one pass (fast, sync).
+    paths.forEach((p) => {
+      IMAGE_CACHE.delete(p);
+      IMAGE_CACHE.delete(`file://${p}`);
+    });
+    setDeletedFiles((prev) => {
+      const next = new Set(prev);
+      paths.forEach((p) => next.add(p));
+      return next;
+    });
+
+    // 4. Slow bookkeeping in the background so the UI returns immediately.
+    (async () => {
+      try {
+        // S3 cleanup must run before we drop the registry records.
+        await Promise.all(
+          paths.map(async (p) => {
+            try {
+              const image = await ImageDatabase.getImageByFilePath(p);
+              if (image && image.uploadStatus === 'UPLOADED') {
+                const { fullKey } = buildS3PathFromImage(image);
+                await deleteObjectFromS3(fullKey).catch(() => { });
+              }
+            } catch (_) { }
+          })
+        );
+      } finally {
+        try {
+          await ImageDatabase.removeImagesByFilePaths(paths);
+        } catch (_) { }
+        await Promise.all(
+          paths.map(async (p) => {
+            try {
+              await AsyncStorage.removeItem(`uploaded_${p}`);
+            } catch (_) { }
+          })
+        );
+      }
+    })();
+  }, []);
+
   const getBasePath = useCallback(() => {
     if (isGuest) {
       return getGuestPhotosDir();
@@ -768,37 +853,16 @@ const GalleryScreen = ({ route, navigation }) => {
       return results;
     };
 
-    const imageFiles = await getAllImageFilesRecursive(fullPath);
-    for (const file of imageFiles) {
-      try {
-        await deleteFileWithCleanup(`file://${file.path}`);
-      } catch (e) {
-        console.log('Error deleting image:', file.path, e);
-      }
-    }
+    // Collect image paths for bookkeeping (fast metadata read), then delete the
+    // whole album folder + its files in ONE root call via batchDeleteFiles.
+    let imagePaths = [];
+    try {
+      const imageFiles = await getAllImageFilesRecursive(fullPath);
+      imagePaths = imageFiles.map((f) => f.path);
+    } catch (_) { }
 
-    await deleteFolderRecursive(fullPath);
-
-    const unlinkAlbumDir = async () => {
-      try {
-        await RNFS.unlink(fullPath);
-      } catch (e) {
-        if (Platform.OS === 'android') {
-          try {
-            const { SystemTimeModule } = NativeModules;
-            if (SystemTimeModule && SystemTimeModule.deleteFileRoot) {
-              await SystemTimeModule.deleteFileRoot(fullPath);
-            }
-          } catch (rootE) {
-            console.log('Could not remove album dir:', fullPath, e);
-          }
-        } else {
-          console.log('Could not remove album dir:', fullPath, e);
-        }
-      }
-    };
-    await unlinkAlbumDir();
-  }, [getBasePath, deleteFileWithCleanup, deleteFolderRecursive]);
+    await batchDeleteFiles([...imagePaths, fullPath]);
+  }, [getBasePath, batchDeleteFiles]);
 
   const toggleAlbumSelection = useCallback((pathKey) => {
     setSelectedAlbumPaths(prev =>
@@ -1229,7 +1293,7 @@ const GalleryScreen = ({ route, navigation }) => {
       onConfirm: async () => {
         try {
           setIsDeleting(true);
-          await deleteFileWithCleanup(targetPhoto.path);
+          await batchDeleteFiles([targetPhoto.path]);
 
           // Remove the deleted photo from local state — no full gallery reload needed
           setCapturedPhotos(prev => {
@@ -1254,7 +1318,7 @@ const GalleryScreen = ({ route, navigation }) => {
       }
     });
     setConfirmModalVisible(true);
-  }, [fullScreenPhoto, deleteFileWithCleanup]);
+  }, [fullScreenPhoto, batchDeleteFiles]);
 
   // Delete multiple images
   const handleDeleteSelected = useCallback(() => {
@@ -1275,20 +1339,15 @@ const GalleryScreen = ({ route, navigation }) => {
       onConfirm: async () => {
         try {
           setIsDeleting(true);
-          const deletedPaths = [];
+          const targets = [...selectedPhotos];
 
-          for (const path of selectedPhotos) {
-            try {
-              await deleteFileWithCleanup(path);
-              deletedPaths.push(path);
-            } catch (error) {
-              console.error(`Failed to delete ${path}:`, error);
-            }
-          }
+          // Single bulk delete for all selected images (one root shell call).
+          await batchDeleteFiles(targets);
 
+          const normTargets = new Set(targets.map(p => (p || '').replace('file://', '')));
           // Remove deleted photos from local state — no full gallery reload needed
           setCapturedPhotos(prev => {
-            const nextPhotos = prev.filter(img => !deletedPaths.includes(img.path));
+            const nextPhotos = prev.filter(img => !normTargets.has((img.path || '').replace('file://', '')));
             if (nextPhotos.length === 0) setFullScreenPhoto(null);
             return nextPhotos;
           });
@@ -1296,7 +1355,7 @@ const GalleryScreen = ({ route, navigation }) => {
           setIsSelectionMode(false);
 
           showInAppToast(
-            `${deletedPaths.length} image(s) deleted!`,
+            `${targets.length} image(s) deleted!`,
             { durationMs: 2000, position: 'bottom' }
           );
         } catch (error) {
@@ -1311,7 +1370,7 @@ const GalleryScreen = ({ route, navigation }) => {
       }
     });
     setConfirmModalVisible(true);
-  }, [selectedPhotos, fullScreenPhoto, deleteFileWithCleanup]);
+  }, [selectedPhotos, fullScreenPhoto, batchDeleteFiles]);
 
   const getShareLabel = useCallback((photo) => {
     if (!photo || !photo.name) return '';
@@ -2137,7 +2196,6 @@ const FullScreenGalleryModal = React.memo(({
       statusBarTranslucent={true}
     >
       <GestureHandlerRootView style={styles.fullScreenModalBackground}>
-        {showOverlays && <CustomStatusBar />}
 
         <View style={styles.gestureContainer}>
           <FlatList

@@ -505,36 +505,47 @@ const App = () => {
   }, [kioskPinModalVisible]);
 
   const lastPowerPressRef = useRef(0);
-  const prevBrightnessRef = useRef(null);
   const isBlackScreenVisibleRef = useRef(false);
-
+  const usedRootBacklightRef = useRef(false);
+   
   // "Lock" simulation: instead of really sleeping the device (which lets Android
   // kill this kiosk process and crash on resume), cover the screen with a full
-  // black overlay and dim brightness so it looks off. Only the physical power
-  // button can restore it; touch input is consumed by the overlay.
-  const handleSimulatedLock = useCallback(async () => {
-    // Render black immediately (no animation) so the screen goes dark instantly.
+  // black overlay AND kill the backlight for a true "screen off" look.
+  //
+  // For the backlight we write the hardware sysfs node via root (blackoutScreen),
+  // which is INSTANT and bypasses DisplayPowerController's ramp animation — that
+  // ramp is what caused the slow fade with setAppBrightness. Only if root/sysfs
+  // is unavailable do we fall back to setAppBrightness (which fades).
+  const handleSimulatedLock = useCallback(() => {
     isBlackScreenVisibleRef.current = true;
     setIsBlackScreenVisible(true);
     setIsPowerModalVisible(false);
     DeviceEventEmitter.emit('onPowerMenuClosed');
 
-    // Dim the backlight to reinforce the "off" look. Note: this version of
-    // react-native-system-setting resolves getAppBrightness() as a promise but
-    // setAppBrightness() returns void, so never chain .catch/.then on the setter.
-    try {
-      const current = await SystemSetting.getAppBrightness();
-      prevBrightnessRef.current = typeof current === 'number' ? current : null;
-      if (isBlackScreenVisibleRef.current) {
-        SystemSetting.setAppBrightness(0);
-      }
-    } catch (e) {
-      console.warn('Failed to dim brightness for lock overlay:', e);
+    const pm = NativeModules?.SystemPowerModule;
+    if (pm?.blackoutScreen) {
+      pm.blackoutScreen()
+        .then((ok) => {
+          usedRootBacklightRef.current = !!ok;
+          // Only touch window brightness if the instant root path failed and
+          // the overlay is still up (user hasn't already unlocked).
+          if (!ok && isBlackScreenVisibleRef.current) {
+            try { SystemSetting.setAppBrightness(0); } catch (e) {}
+          }
+        })
+        .catch(() => {
+          usedRootBacklightRef.current = false;
+          if (isBlackScreenVisibleRef.current) {
+            try { SystemSetting.setAppBrightness(0); } catch (e) {}
+          }
+        });
+    } else {
+      usedRootBacklightRef.current = false;
+      try { SystemSetting.setAppBrightness(0); } catch (e) {}
     }
   }, []);
 
   const handleDismissBlackScreen = useCallback(() => {
-    // Remove the overlay instantly (no animation) and restore brightness.
     isBlackScreenVisibleRef.current = false;
     setIsBlackScreenVisible(false);
 
@@ -542,14 +553,24 @@ const App = () => {
     // after this same press that woke the screen.
     lastPowerPressRef.current = Date.now();
 
-    const prev = prevBrightnessRef.current;
-    prevBrightnessRef.current = null;
-    try {
-      SystemSetting.setAppBrightness(prev != null ? prev : 1);
-    } catch (e) {
-      console.warn('Failed to restore brightness after lock overlay:', e);
+    const pm = NativeModules?.SystemPowerModule;
+    if (usedRootBacklightRef.current && pm?.restoreScreen) {
+      usedRootBacklightRef.current = false;
+      pm.restoreScreen(); // instant sysfs restore
+    } else {
+      try { SystemSetting.setAppBrightness(-1); } catch (e) {}
     }
     DeviceEventEmitter.emit(SESSION_ACTIVITY_EVENT);
+
+    // The same power press that dismissed the overlay is also received by
+    // CameraScreen's onPowerButtonPressed handler, which flips it into a
+    // transient "power-menu/default" state (globalPowerMenuOpen=true, light off).
+    // Since we consumed the press just to unlock, emit onPowerMenuClosed AFTER
+    // those synchronous handlers run (setTimeout 0) so CameraScreen snaps back
+    // to the real live state instead of briefly showing a stale/default frame.
+    setTimeout(() => {
+      DeviceEventEmitter.emit('onPowerMenuClosed');
+    }, 0);
   }, []);
 
   // Orientation lock: portrait only; re-lock when app becomes active

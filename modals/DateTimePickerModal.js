@@ -8,7 +8,6 @@ import {
   Image,
   Alert,
   ScrollView,
-  Dimensions,
   FlatList
 } from 'react-native';
 import { showInAppToast } from '../utils/Helpers';
@@ -16,12 +15,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import EventEmitter from 'events';
 import { changeTime } from '../Components/CustomStatusBar';
 import moment from 'moment-timezone';
-import CustomStatusBar from '../Components/CustomStatusBar';
 import dateIcon from '../assets/icon_calendar.png';
 import timeIcon from '../assets/icon_clock.png';
 import backIcon from '../assets/icon_back.png';
 
-const { width, height } = Dimensions.get('window');
 const dateEventEmitter = new EventEmitter();
 
 const AndroidShell = {
@@ -400,8 +397,8 @@ const DateTimePickerModal = ({ visible, onClose, onConfirm, ...props }) => {
       transparent={true}
       statusBarTranslucent={true}
     >
-      <View style={{ flex: 1, backgroundColor: 'transparent' }}>
-        <View style={[styles.modalOverlay, { marginTop: 40 }]}>
+      <View style={{ flex: 1, backgroundColor: '#000' }}>
+        <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             {/* Header */}
             <View style={styles.header}>
@@ -506,37 +503,31 @@ const DateTimePickerModal = ({ visible, onClose, onConfirm, ...props }) => {
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.85)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: '#000',
+    paddingTop: 44,
   },
   modalContent: {
-    width: width * 0.92,
-    maxHeight: height * 0.88,
-    backgroundColor: '#0d0d0d',
-    borderRadius: 20,
+    flex: 1,
+    width: '100%',
+    backgroundColor: '#000',
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: '#161616',
-    borderBottomWidth: 1,
-    borderBottomColor: '#2a2a2a',
-    minHeight: 60,
+    paddingTop: 0,
+    paddingBottom: 16,
+    backgroundColor: 'transparent',
+    minHeight: 40,
   },
   backButton: {
     position: 'absolute',
-    left: 16,
-    top: '88%',
-    marginTop: -18,
-    height: 36,
-    width: 36,
+    left: 20,
+    top: 0,
+    height: 40,
+    width: 40,
     justifyContent: 'center',
     alignItems: 'center',
     borderRadius: 10,
@@ -546,12 +537,12 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   backButtonIcon: {
-    height: 18,
-    width: 18,
+    height: 22,
+    width: 22,
     tintColor: '#FFFFFF',
   },
   title: {
-    fontSize: 18,
+    fontSize: 26,
     fontFamily: 'ProductSans-Bold',
     color: '#ffffff',
     textAlign: 'center',

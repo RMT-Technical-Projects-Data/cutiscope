@@ -23,7 +23,6 @@ import CustomKeyboard from '../Components/CustomKeyboard';
 import { useCustomKeyboard } from '../context/CustomKeyboardContext';
 import backIcon from '../assets/icon_back.png';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-import CustomStatusBar from '../Components/CustomStatusBar';
 import { getPatients, createPatient, getNextPatientId } from '../services/patientsService';
 import { applyCappedTextChange } from '../utils/textInputLimits';
 
@@ -357,7 +356,6 @@ const PatientBoxModal = ({
     >
       {/* Simple container like PowerOffModal */}
       <View style={styles.container}>
-        <CustomStatusBar />
         <View style={[styles.modalView, hasFocusedInput && styles.modalViewKeyboardOpen]}>
           {/* Header with back button */}
           <View style={styles.header}>

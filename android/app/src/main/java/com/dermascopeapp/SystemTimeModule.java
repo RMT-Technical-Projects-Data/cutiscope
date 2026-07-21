@@ -427,6 +427,44 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
         }
     }
 
+    /**
+     * Batch-delete many files/folders in a SINGLE root shell.
+     * This avoids spawning one `su` process (and one media-scan broadcast) per
+     * file, which made deleting 100-200 images take minutes. `rm -rf` handles
+     * both files and directories, and we trigger just one media scan per unique
+     * parent directory instead of one per file.
+     */
+    @ReactMethod
+    public void deletePathsRoot(com.facebook.react.bridge.ReadableArray paths, com.facebook.react.bridge.Promise promise) {
+        try {
+            Process process = Runtime.getRuntime().exec("su");
+            DataOutputStream os = new DataOutputStream(process.getOutputStream());
+
+            java.util.HashSet<String> parents = new java.util.HashSet<>();
+            for (int i = 0; i < paths.size(); i++) {
+                String p = paths.getString(i);
+                if (p == null || p.isEmpty()) continue;
+                os.writeBytes("rm -rf \"" + p + "\"\n");
+                int slash = p.lastIndexOf('/');
+                if (slash > 0) parents.add(p.substring(0, slash));
+            }
+
+            // One media-scan per parent directory (far fewer than per-file).
+            for (String parent : parents) {
+                os.writeBytes("am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \"file://" + parent + "\"\n");
+            }
+
+            os.writeBytes("exit\n");
+            os.flush();
+            os.close();
+
+            int exitCode = process.waitFor();
+            promise.resolve(exitCode == 0);
+        } catch (Exception e) {
+            promise.reject("DELETE_ERROR", e.getMessage());
+        }
+    }
+
     @ReactMethod
     public void setBluetoothState(boolean enable, com.facebook.react.bridge.Promise promise) {
         BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();

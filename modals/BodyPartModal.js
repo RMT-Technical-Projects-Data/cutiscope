@@ -10,7 +10,6 @@ import {
 import KioskTextInput from '../Components/KioskTextInput';
 import CustomKeyboard from '../Components/CustomKeyboard';
 import { useCustomKeyboard } from '../context/CustomKeyboardContext';
-import CustomStatusBar from '../Components/CustomStatusBar';
 import { applyCappedTextChange } from '../utils/textInputLimits';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -78,7 +77,6 @@ const BodyPartModal = ({ visible, onClose, onSave, initialValue = '' }) => {
       statusBarTranslucent
     >
       <View style={styles.root}>
-        <CustomStatusBar />
         <View style={styles.modalLayer}>
           <View style={styles.modalView}>
             <Text style={styles.title}>Enter Body Part</Text>

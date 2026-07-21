@@ -9,6 +9,7 @@ import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.Promise
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import java.util.concurrent.atomic.AtomicBoolean
 import com.facebook.react.bridge.LifecycleEventListener
@@ -253,6 +254,52 @@ class SystemPowerModule(private val reactContext: ReactApplicationContext) : Rea
 
     override fun onHostDestroy() {
         isLocking = false
+    }
+
+    // Instantly force the hardware backlight to 0 by writing the LED/backlight
+    // sysfs node directly via root. This bypasses DisplayPowerController's ramp
+    // animation (which is what makes setAppBrightness fade slowly). The current
+    // value is saved so it can be restored instantly on wake. We do NOT touch the
+    // window brightness / Settings so DPC's own target stays unchanged and it
+    // won't animate anything. Resolves true only if a node was found & written.
+    @ReactMethod
+    fun blackoutScreen(promise: Promise) {
+        Thread {
+            try {
+                val script =
+                    "for f in /sys/class/leds/lcd-backlight/brightness " +
+                    "/sys/class/backlight/*/brightness; do " +
+                    "if [ -f \"\$f\" ]; then " +
+                    "cat \"\$f\" > /data/local/tmp/dscope_bl 2>/dev/null; " +
+                    "echo 0 > \"\$f\" 2>/dev/null; echo OK; break; fi; done"
+                val p = Runtime.getRuntime().exec(arrayOf("su", "-c", script))
+                val out = p.inputStream.bufferedReader().readText()
+                p.waitFor()
+                promise.resolve(out.contains("OK"))
+            } catch (e: Exception) {
+                Log.e("SystemPowerModule", "blackoutScreen failed: ${e.message}")
+                promise.resolve(false)
+            }
+        }.start()
+    }
+
+    // Restore the hardware backlight to the value saved by blackoutScreen().
+    @ReactMethod
+    fun restoreScreen() {
+        Thread {
+            try {
+                val script =
+                    "for f in /sys/class/leds/lcd-backlight/brightness " +
+                    "/sys/class/backlight/*/brightness; do " +
+                    "if [ -f \"\$f\" ]; then " +
+                    "if [ -s /data/local/tmp/dscope_bl ]; then " +
+                    "cat /data/local/tmp/dscope_bl > \"\$f\" 2>/dev/null; " +
+                    "else echo 255 > \"\$f\" 2>/dev/null; fi; break; fi; done"
+                Runtime.getRuntime().exec(arrayOf("su", "-c", script)).waitFor()
+            } catch (e: Exception) {
+                Log.e("SystemPowerModule", "restoreScreen failed: ${e.message}")
+            }
+        }.start()
     }
 
     @ReactMethod

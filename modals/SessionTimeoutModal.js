@@ -1,6 +1,5 @@
 import React from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import CustomStatusBar from '../Components/CustomStatusBar';
 
 const SessionTimeoutModal = ({
   visible,
@@ -17,7 +16,6 @@ const SessionTimeoutModal = ({
     onRequestClose={onStayLoggedIn}
   >
     <View style={styles.overlay}>
-      <CustomStatusBar />
       <View style={styles.card}>
         <Text style={styles.title}>Session Expiring</Text>
         <Text style={styles.message}>

@@ -119,7 +119,9 @@ class MainActivity : ReactActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         Log.i("MainActivity", "!!! onCreate START !!!")
-        super.onCreate(savedInstanceState)
+        // Pass null so Android does not restore react-native-screens fragments
+        // (they throw: "Screen fragments should never be restored").
+        super.onCreate(null)
         instance = this
 
         // Lock to portrait always (kiosk); overrides any rotation

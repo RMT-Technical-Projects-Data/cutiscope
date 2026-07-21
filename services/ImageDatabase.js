@@ -172,6 +172,20 @@ export const removeImageByFilePath = async (filePath) => {
 };
 
 /**
+ * Batch-remove many images in a single registry rewrite. Much faster than
+ * calling removeImageByFilePath in a loop (which rewrites the whole JSON file
+ * once per image).
+ */
+export const removeImagesByFilePaths = async (filePaths) => {
+  if (!Array.isArray(filePaths) || filePaths.length === 0) return;
+  const reg = await loadRegistry();
+  const cleanSet = new Set(filePaths.map(normalizePath));
+  reg.images = reg.images.filter((i) => !cleanSet.has(normalizePath(i.filePath)));
+  cacheDirty = true;
+  await saveRegistry();
+};
+
+/**
  * Get a map of file path -> uploadStatus for batch UI (e.g. gallery).
  */
 export const getUploadStatusMap = async () => {
@@ -195,6 +209,7 @@ export default {
   updateUploadStatus,
   updateUploadStatusByFilePath,
   removeImageByFilePath,
+  removeImagesByFilePaths,
   getUploadStatusMap,
   UPLOAD_STATUS,
 };

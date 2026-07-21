@@ -8,7 +8,7 @@ import DateTimePickerModal from './DateTimePickerModal';
 import ConfirmationModal from './ConfirmationModal';
 import { StatusBar } from 'react-native';
 import backIcon from '../assets/icon_back.png';
-import CustomStatusBar, { changeTime } from '../Components/CustomStatusBar';
+import { changeTime } from '../Components/CustomStatusBar';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '@react-navigation/native';
 import { UserMessages } from '../utils/userMessages';
@@ -188,17 +188,20 @@ const SettingsMenu = () => {
                 <View style={styles.modalContainer}>
                     <ScrollView style={styles.container} contentContainerStyle={styles.containerContent} showsVerticalScrollIndicator={false}>
 
-                        {/* Header */}
-                        <View style={styles.headerContainer}>
-                            <TouchableOpacity
-                                style={styles.backButtonOne}
-                                onPress={onClose}
-                                activeOpacity={0.7}
-                            >
-                                <Image source={backIcon} style={styles.backButtonIcon} />
-                            </TouchableOpacity>
-                            <Text style={styles.title}>Settings</Text>
-                        </View>
+                        {/* Sub-screens render their own heading/back button. Hide
+                            the parent header so titles never overlap. */}
+                        {!wifiMenuVisible && !bluetoothMenuVisible && !dateAndTimeMenuVisible && (
+                            <View style={styles.headerContainer}>
+                                <TouchableOpacity
+                                    style={styles.backButtonOne}
+                                    onPress={onClose}
+                                    activeOpacity={0.7}
+                                >
+                                    <Image source={backIcon} style={styles.backButtonIcon} />
+                                </TouchableOpacity>
+                                <Text style={styles.title}>Settings</Text>
+                            </View>
+                        )}
 
                         {/* Profile section – avatar, name, email (logged-in only) */}
                         {!isGuest && (
@@ -389,7 +392,6 @@ const SettingsMenu = () => {
                             onRequestClose={() => setInactivityMenuVisible(false)}
                         >
                             <View style={styles.timeoutOverlay}>
-                                <CustomStatusBar />
                                 <View style={styles.timeoutModal}>
                                     <Text style={styles.timeoutTitle}>Inactivity Timer</Text>
                                     <Text style={styles.timeoutDescription}>

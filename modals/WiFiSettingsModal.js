@@ -28,7 +28,6 @@ const { SystemTimeModule } = NativeModules;
 import { Camera, useCameraDevice, useCameraPermission, useCodeScanner } from 'react-native-vision-camera';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import CustomStatusBar from '../Components/CustomStatusBar';
 import VerticalDivider from '../Components/VerticalDivider';
 import backIcon from '../assets/icon_back.png';
 import menuIcon from '../assets/icon_back.png';
@@ -1907,24 +1906,25 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+    backgroundColor: '#000000',
   },
   innerFullScreen: {
     flex: 1,
     backgroundColor: '#000000',
-    marginTop: 40,
+    paddingTop: 44,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 20,
+    paddingTop: 0,
+    paddingBottom: 16,
     backgroundColor: 'transparent',
   },
   backButton: {
-    height: 44,
-    width: 44,
+    height: 40,
+    width: 40,
     left: 1,
     top: 0,
     padding: 8,
@@ -1933,9 +1933,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#333333',
   },
-  backButtonIcon: { width: 25, height: 25, tintColor: '#FFFFFF' },
+  backButtonIcon: { width: 22, height: 22, tintColor: '#FFFFFF' },
   title: {
-    fontSize: 24,
+    fontSize: 26,
     fontFamily: 'ProductSans-Bold',
     color: '#FFFFFF',
     letterSpacing: 0.5,
