@@ -264,7 +264,7 @@ const styles = StyleSheet.create({
     height: 40,
     paddingTop: Platform.OS === 'android' ? 0 : 0,
     position: 'absolute',
-    top: 3,
+    top: 3.5,
     left: 0,
     right: 0,
     zIndex: 9999,

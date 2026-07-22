@@ -96,6 +96,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
+  const [connectingTargetSSID, setConnectingTargetSSID] = useState(null);
   const [appState, setAppState] = useState(AppState.currentState);
 
   // Refs for robust scanning
@@ -108,11 +109,45 @@ const WifiSettingsModal = ({ visible, onClose }) => {
   const missedScanCountsRef = useRef({}); // Track consecutive missed scans for aging
   const scanSessionStartRef = useRef(0);
   const isConnectingRef = useRef(false);
+  const connectingTargetRef = useRef(null);
+  const connectAttemptRef = useRef(0);
   const lastNetworkFingerprintRef = useRef('');
   const scanNetworksRef = useRef(null);
   // Use a very short debounce so new networks appear almost immediately,
   // while still avoiding excessive re-renders.
   const debouncedNetworks = useDebounce(networks, 100);
+
+  const beginConnectAttempt = useCallback((ssid) => {
+    const normalized = normalizeSSID(ssid);
+    connectAttemptRef.current += 1;
+    connectingTargetRef.current = normalized;
+    setConnectingTargetSSID(normalized);
+    setConnectionStatus('connecting');
+    return connectAttemptRef.current;
+  }, []);
+
+  const clearConnectAttempt = useCallback((attemptId) => {
+    if (attemptId !== undefined && attemptId !== connectAttemptRef.current) {
+      return false;
+    }
+    connectingTargetRef.current = null;
+    setConnectingTargetSSID(null);
+    return true;
+  }, []);
+
+  const isActiveConnectAttempt = useCallback((attemptId) => {
+    return attemptId === connectAttemptRef.current;
+  }, []);
+
+  const isConnectingToSSID = useCallback((ssid) => {
+    if (!connectingTargetSSID) return false;
+    if (!ssidsMatch(connectingTargetSSID, ssid)) return false;
+    return (
+      isConnecting ||
+      connectionStatus === 'connecting' ||
+      connectionStatus === 'verifying'
+    );
+  }, [connectingTargetSSID, isConnecting, connectionStatus]);
 
   const inputRef = useRef(null);
   const savedInputRef = useRef(null);
@@ -674,12 +709,11 @@ const WifiSettingsModal = ({ visible, onClose }) => {
 
   // Improved Connect to network with root fallback
   const connectToNetwork = useCallback(async (network, enteredPassword, skipConnectCheck = false) => {
-    if (isConnecting && !skipConnectCheck) return;
+    const attemptId = beginConnectAttempt(network.SSID);
 
     isConnectingRef.current = true;
     pauseScanning();
     setIsConnecting(true);
-    setConnectionStatus('connecting');
     setPasswordModalVisible(false);
     const finalPassword = enteredPassword || password;
 
@@ -690,11 +724,13 @@ const WifiSettingsModal = ({ visible, onClose }) => {
           network.capabilities.includes('WEP')) ? 'Secured' : 'Open';
 
       if (securityType === 'Secured' && (!finalPassword || finalPassword.trim() === '')) {
+        if (!isActiveConnectAttempt(attemptId)) return;
         showInAppToast('Password is required', { durationMs: 2000 });
         setIsConnecting(false);
         isConnectingRef.current = false;
+        clearConnectAttempt(attemptId);
         setConnectionStatus('disconnected');
-        setShowPassword(false); // Default to hidden when reopening
+        setShowPassword(false);
         setPasswordModalVisible(true);
         resumeScanning();
         return;
@@ -704,6 +740,8 @@ const WifiSettingsModal = ({ visible, onClose }) => {
       if (securityType === 'Secured' && finalPassword && finalPassword.trim() !== '') {
         await savePasswordToStorage(network.SSID, finalPassword);
       }
+
+      if (!isActiveConnectAttempt(attemptId)) return;
 
       showInAppToast(`Connecting to ${network.SSID}...`, { durationMs: 2500 });
 
@@ -717,6 +755,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
         await SystemTimeModule.connectToWifi(cleanSSID, finalPassword || '', securityType);
         console.log("Root WiFi Connection Successful in Modal");
       } catch (rootError) {
+        if (!isActiveConnectAttempt(attemptId)) return;
         console.warn("Root connection failed in Modal, fallback to standard:", rootError);
         let cleanSSID = network.SSID;
         if (cleanSSID.startsWith('"') && cleanSSID.endsWith('"')) {
@@ -724,6 +763,8 @@ const WifiSettingsModal = ({ visible, onClose }) => {
         }
         await WifiManager.connectToProtectedSSID(cleanSSID, finalPassword || '', false, false);
       }
+
+      if (!isActiveConnectAttempt(attemptId)) return;
 
       setConnectionStatus('verifying');
 
@@ -733,6 +774,8 @@ const WifiSettingsModal = ({ visible, onClose }) => {
         cleanSSID = cleanSSID.substring(1, cleanSSID.length - 1);
       }
       const isConnected = await verifyConnection(cleanSSID);
+
+      if (!isActiveConnectAttempt(attemptId)) return;
 
       if (isConnected) {
         setConnectionStatus('connected');
@@ -751,6 +794,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
         }
       }
     } catch (error) {
+      if (!isActiveConnectAttempt(attemptId)) return;
       console.warn('Connection error in Modal:', error);
       setConnectionStatus('disconnected');
 
@@ -776,10 +820,13 @@ const WifiSettingsModal = ({ visible, onClose }) => {
       setSelectedNetwork(network);
       resumeScanning(true);
     } finally {
-      setIsConnecting(false);
-      isConnectingRef.current = false;
+      if (isActiveConnectAttempt(attemptId)) {
+        setIsConnecting(false);
+        isConnectingRef.current = false;
+        clearConnectAttempt(attemptId);
+      }
     }
-  }, [password, fetchCurrentNetwork, verifyConnection, savePasswordToStorage, saveNetworkToSavedList, pauseScanning, resumeScanning, scheduleNextScan, isConnecting, showPasswordModalToast]);
+  }, [password, fetchCurrentNetwork, verifyConnection, savePasswordToStorage, saveNetworkToSavedList, pauseScanning, resumeScanning, scheduleNextScan, showPasswordModalToast, beginConnectAttempt, clearConnectAttempt, isActiveConnectAttempt]);
 
   // Disconnect from network
   const disconnectFromNetwork = async () => {
@@ -1041,8 +1088,6 @@ const WifiSettingsModal = ({ visible, onClose }) => {
 
   // Handle network press
   const handleNetworkPress = async (network) => {
-    if (isConnecting) return;
-
     const isConnected = ssidsMatch(currentNetwork?.SSID, network.SSID);
 
     // Do nothing when tapping the currently connected network
@@ -1050,17 +1095,8 @@ const WifiSettingsModal = ({ visible, onClose }) => {
       return;
     }
 
-    const lookupSSID = normalizeSSID(network.SSID);
-    const isInScan = networks.some((net) => ssidsMatch(net.SSID, network.SSID));
-
-    // Saved network not currently visible in scan — use saved-network connect flow
-    if (isNetworkSaved(lookupSSID) && !isInScan) {
-      handleSavedNetworkPress({ SSID: lookupSSID });
-      return;
-    }
-
     setSelectedNetwork(network);
-    setConnectionStatus('connecting');
+    const lookupSSID = normalizeSSID(network.SSID);
 
     const requiresPassword =
       network.capabilities &&
@@ -1072,14 +1108,13 @@ const WifiSettingsModal = ({ visible, onClose }) => {
       const savedPwd = getPasswordForSSID(networkPasswords, lookupSSID);
 
       if (savedPwd) {
-        showInAppToast(`Connecting to ${lookupSSID}...`, { durationMs: 2500 });
         connectToNetwork(network, savedPwd);
       } else {
-        // Clear password and show modal
+        clearConnectAttempt();
         setConnectionStatus('disconnected');
         setPassword('');
         setPasswordError('');
-        setShowPassword(false); // Always default to hidden when opening
+        setShowPassword(false);
         setPasswordModalVisible(true);
 
         setTimeout(() => {
@@ -1150,37 +1185,16 @@ const WifiSettingsModal = ({ visible, onClose }) => {
     });
   };
 
-  // Available list includes scanned networks plus saved networks (in-range or not)
+  // Available list: scanned networks only.
+  // Saved networks appear here when in range; out-of-range saved stay in Saved Networks only.
   const getAvailableNetworksForMainList = () => {
-    const fromScan = networks.filter(
+    return networks.filter(
       (net) => !ssidsMatch(currentNetwork?.SSID, net.SSID)
     );
-
-    const scannedSSIDs = new Set(
-      fromScan.map((net) => normalizeSSID(net.SSID)).filter(Boolean)
-    );
-
-    const savedNotInScan = getSavedNetworks()
-      .filter(
-        (saved) =>
-          !scannedSSIDs.has(normalizeSSID(saved.SSID)) &&
-          !ssidsMatch(saved.SSID, currentNetwork?.SSID)
-      )
-      .map((saved) => ({
-        SSID: saved.SSID,
-        level: -100,
-        capabilities: '[ESS]',
-        BSSID: `saved_${saved.SSID}`,
-        isSavedOnly: true,
-      }));
-
-    return [...fromScan, ...savedNotInScan];
   };
 
   // Handle saved network press
   const handleSavedNetworkPress = async (savedNetwork) => {
-    if (isConnecting) return;
-
     // If this saved network is already the current one, do nothing on tap
     const isCurrentlyConnected =
       ssidsMatch(currentNetwork?.SSID, savedNetwork.SSID) && connectionStatus === 'connected';
@@ -1189,12 +1203,12 @@ const WifiSettingsModal = ({ visible, onClose }) => {
       return;
     }
 
+    const attemptId = beginConnectAttempt(savedNetwork.SSID);
     const lookupSSID = normalizeSSID(savedNetwork.SSID);
 
-    setIsConnecting(true);
     isConnectingRef.current = true;
+    setIsConnecting(true);
     pauseScanning();
-    setConnectionStatus('connecting');
     showInAppToast(`Searching for ${lookupSSID}...`, { durationMs: 2000 });
 
     try {
@@ -1202,7 +1216,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
       let availableNetwork = null;
 
       for (let attempt = 1; attempt <= maxScanAttempts; attempt++) {
-        if (!isMountedRef.current) return;
+        if (!isMountedRef.current || !isActiveConnectAttempt(attemptId)) return;
 
         console.log(`Scan attempt ${attempt} for saved network: ${lookupSSID}`);
 
@@ -1226,32 +1240,30 @@ const WifiSettingsModal = ({ visible, onClose }) => {
         }
 
         if (attempt < maxScanAttempts) {
-          // Wait 2 seconds before the next scan attempt
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
       }
 
+      if (!isActiveConnectAttempt(attemptId)) return;
+
       if (availableNetwork) {
-        // Network found, proceed to connect
         const savedPwd = getPasswordForSSID(networkPasswords, lookupSSID);
         setSelectedNetwork(availableNetwork);
-        showInAppToast(`Connecting to ${lookupSSID}...`, { durationMs: 2500 });
-
-        // Pass the network directly to connectToNetwork
-        // Note: connectToNetwork handles setIsConnecting(false) and connectionStatus resets
         await connectToNetwork(availableNetwork, savedPwd, true);
       } else {
-        // Network still not found after all attempts
         showInAppToast(`${savedNetwork.SSID} is not in range`, { durationMs: 3000 });
         setIsConnecting(false);
         isConnectingRef.current = false;
+        clearConnectAttempt(attemptId);
         setConnectionStatus('disconnected');
         resumeScanning(true);
       }
     } catch (error) {
+      if (!isActiveConnectAttempt(attemptId)) return;
       console.warn('Error in handleSavedNetworkPress:', error);
       setIsConnecting(false);
       isConnectingRef.current = false;
+      clearConnectAttempt(attemptId);
       setConnectionStatus('disconnected');
       resumeScanning(true);
     }
@@ -1304,7 +1316,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
   // Render network item
   const renderNetworkItem = ({ item }) => {
     const isActuallyConnected = ssidsMatch(currentNetwork?.SSID, item.SSID) && connectionStatus === 'connected';
-    const isConnectingToThis = ssidsMatch(selectedNetwork?.SSID, item.SSID) && isConnecting;
+    const isConnectingToThis = isConnectingToSSID(item.SSID);
 
     const isSecure = item.capabilities &&
       (item.capabilities.includes('PSK') ||
@@ -1327,10 +1339,9 @@ const WifiSettingsModal = ({ visible, onClose }) => {
           styles.networkItem,
           isActuallyConnected && styles.connectedNetworkItem,
           isConnectingToThis && styles.connectingNetworkItem,
-          selectedNetwork?.SSID === item.SSID && !isConnecting && !isActuallyConnected && styles.selectedNetworkItem
+          ssidsMatch(connectingTargetSSID, item.SSID) && !isConnectingToThis && !isActuallyConnected && styles.selectedNetworkItem
         ]}
         onPress={() => handleNetworkPress(item)}
-        disabled={isConnecting}
         activeOpacity={0.8}
       >
         <View style={styles.wifiIconContainer}>
@@ -1382,7 +1393,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
   // Render saved network item (for saved networks view)
   const renderSavedNetworkItem = ({ item }) => {
     const isActuallyConnected = ssidsMatch(currentNetwork?.SSID, item.SSID) && connectionStatus === 'connected';
-    const isConnectingToThis = ssidsMatch(selectedNetwork?.SSID, item.SSID) && isConnecting;
+    const isConnectingToThis = isConnectingToSSID(item.SSID);
     const isAvailable = networks.some((net) => ssidsMatch(net.SSID, item.SSID));
 
     return (
@@ -1394,7 +1405,6 @@ const WifiSettingsModal = ({ visible, onClose }) => {
           isConnectingToThis && styles.connectingNetworkItem
         ]}
         onPress={() => handleSavedNetworkPress(item)}
-        disabled={isConnecting}
       >
         <Image
           source={WIFI_ICON}
@@ -1615,7 +1625,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
                   </View>
                   <Text style={styles.searchingText}>Scanning for networks...</Text>
                 </View>
-              ) : (networks.length > 0 || getConnectedNetworkEntries().length > 0 || getSavedNetworks().length > 0) ? (
+              ) : (networks.length > 0 || getConnectedNetworkEntries().length > 0) ? (
                 <SectionList
                   sections={[
                     {

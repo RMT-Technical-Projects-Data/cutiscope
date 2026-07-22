@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import authService from '../services/authService';
 import { deleteGuestPhotos } from '../utils/guestPhotos';
+import { clearGallerySnapshot } from '../services/GalleryMemoryCache';
 
 const LAST_SESSION_WAS_GUEST_KEY = 'last_session_was_guest';
 
@@ -59,6 +60,7 @@ export const AuthProvider = ({ children }) => {
       }
       // Clear any previously selected patient/box when a new user logs in
       await AsyncStorage.removeItem('@patient_box');
+      clearGallerySnapshot();
       await AsyncStorage.setItem('userToken', token.trim());
       await AsyncStorage.setItem('username', name);
       await AsyncStorage.setItem('userEmail', (user && user.email) || name);
@@ -78,11 +80,14 @@ export const AuthProvider = ({ children }) => {
       await authService.logout();
       // Clear any selected patient/box when switching to guest
       await AsyncStorage.removeItem('@patient_box');
+      // Never show the previous user's in-memory gallery albums/photos in guest mode.
+      clearGallerySnapshot();
       await AsyncStorage.setItem(LAST_SESSION_WAS_GUEST_KEY, 'true');
       setUserData(null);
       setIsGuest(true);
     } catch (e) {
       console.error('AuthContext guestLogin:', e);
+      clearGallerySnapshot();
       await AsyncStorage.setItem(LAST_SESSION_WAS_GUEST_KEY, 'true').catch(() => {});
       setUserData(null);
       setIsGuest(true);
@@ -101,6 +106,7 @@ export const AuthProvider = ({ children }) => {
       await authService.logout();
       // Clear any selected patient/box on sign-out
       await AsyncStorage.removeItem('@patient_box');
+      clearGallerySnapshot();
       setUserData(null);
       // Logged out is not guest mode; guestLogin() is the explicit guest path.
       setIsGuest(false);

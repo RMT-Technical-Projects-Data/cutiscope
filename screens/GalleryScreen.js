@@ -38,6 +38,7 @@ import ImageDatabase from '../services/ImageDatabase';
 import {
   getGallerySnapshot,
   setGallerySnapshot,
+  getGalleryOwnerKey,
   GALLERY_PHOTO_ADDED,
   GALLERY_PHOTO_UPDATED,
 } from '../services/GalleryMemoryCache';
@@ -498,7 +499,12 @@ const ThumbnailItem = React.memo(({
 
 const GalleryScreen = ({ route, navigation }) => {
   const { userData, isGuest, getUsername } = useAuth();
-  const initialCache = getGallerySnapshot([]);
+  const galleryOwnerKey = getGalleryOwnerKey({
+    isGuest,
+    userId: userData?.id,
+    username: userData?.username || getUsername(),
+  });
+  const initialCache = getGallerySnapshot([], galleryOwnerKey);
   const [capturedPhotos, setCapturedPhotos] = useState(() => initialCache?.capturedPhotos || []);
   const capturedPhotosRef = React.useRef(capturedPhotos);
   const [selectedPhotos, setSelectedPhotos] = useState([]);
@@ -519,6 +525,22 @@ const GalleryScreen = ({ route, navigation }) => {
   const [albumItems, setAlbumItems] = useState(() => initialCache?.albumItems || []);
   const [selectedAlbumPaths, setSelectedAlbumPaths] = useState([]);
   const [isDeleting, setIsDeleting] = useState(false);
+  const galleryOwnerKeyRef = useRef(galleryOwnerKey);
+
+  // Drop previous session UI/cache when switching user ↔ guest.
+  useEffect(() => {
+    if (galleryOwnerKeyRef.current === galleryOwnerKey) return;
+    galleryOwnerKeyRef.current = galleryOwnerKey;
+    setAlbumPath([]);
+    setAlbumItems([]);
+    setCapturedPhotos([]);
+    setSelectedPhotos([]);
+    setSelectedAlbumPaths([]);
+    setIsSelectionMode(false);
+    setFullScreenPhoto(null);
+    setIsLoading(true);
+    setForceRefreshCounter((c) => c + 1);
+  }, [galleryOwnerKey]);
 
   // Confirmation Modal State
   const [confirmModalVisible, setConfirmModalVisible] = useState(false);
@@ -955,6 +977,22 @@ const GalleryScreen = ({ route, navigation }) => {
     }
   }, [albumItems, albumPath, selectedAlbumPaths]);
 
+  const runWithDeletionLoader = useCallback(async (work) => {
+    setIsDeleting(true);
+    const startedAt = Date.now();
+    try {
+      await work();
+    } finally {
+      // Keep the loader visible briefly so it isn't skipped on fast deletes
+      // (common right after reboot when the first delete finishes too quickly).
+      const remaining = 500 - (Date.now() - startedAt);
+      if (remaining > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remaining));
+      }
+      setIsDeleting(false);
+    }
+  }, []);
+
   const handleDeleteSelectedAlbums = useCallback(() => {
     if (selectedAlbumPaths.length === 0) {
       showInAppToast('No albums selected', { durationMs: 2000, position: 'bottom' });
@@ -970,14 +1008,15 @@ const GalleryScreen = ({ route, navigation }) => {
       isDestructive: true,
       onConfirm: async () => {
         try {
-          setIsDeleting(true);
-          for (const pathKey of selectedAlbumPaths) {
-            const pathSegments = pathKey.split('/').filter(Boolean);
-            await deleteAlbumWithAllImages(pathSegments);
-          }
-          setSelectedAlbumPaths([]);
-          setIsSelectionMode(false);
-          setForceRefreshCounter(c => c + 1);
+          await runWithDeletionLoader(async () => {
+            for (const pathKey of selectedAlbumPaths) {
+              const pathSegments = pathKey.split('/').filter(Boolean);
+              await deleteAlbumWithAllImages(pathSegments);
+            }
+            setSelectedAlbumPaths([]);
+            setIsSelectionMode(false);
+            setForceRefreshCounter(c => c + 1);
+          });
           showInAppToast(
             `${count} album(s) deleted`,
             { durationMs: 2000, position: 'bottom' }
@@ -985,13 +1024,11 @@ const GalleryScreen = ({ route, navigation }) => {
         } catch (error) {
           console.error('Failed to delete albums:', error);
           showInAppToast('Delete failed', { durationMs: 2000, position: 'bottom' });
-        } finally {
-          setIsDeleting(false);
         }
       }
     });
     setConfirmModalVisible(true);
-  }, [selectedAlbumPaths, albumPath.length, deleteAlbumWithAllImages]);
+  }, [selectedAlbumPaths, albumPath.length, deleteAlbumWithAllImages, runWithDeletionLoader]);
 
   const sanitizeFolderName = (s) => {
     if (!s || typeof s !== 'string') return '';
@@ -1000,10 +1037,27 @@ const GalleryScreen = ({ route, navigation }) => {
 
   const loadAlbumContent = useCallback(async (path, isSilent = false) => {
     const gen = ++loadGenRef.current;
+    const ownerKey = galleryOwnerKey;
+    const base = getBasePath();
     try {
       // Instant paint from memory when available (avoid empty flash).
-      const cached = getGallerySnapshot(path);
-      if (cached && (cached.albumItems.length > 0 || cached.capturedPhotos.length > 0)) {
+      // Never reuse another session's cache (logged-in ↔ guest).
+      const cached = getGallerySnapshot(path, ownerKey);
+      const cacheBelongsHere = (entries) => {
+        if (!entries?.length) return false;
+        return entries.every((p) => {
+          const abs = (p.absolutePath || String(p.path || '').replace(/^file:\/\//, '')).split('?')[0];
+          return !abs || abs.startsWith(base);
+        });
+      };
+      const usableCache =
+        cached &&
+        (
+          (cached.albumItems.length > 0 && ownerKey && cached.ownerKey === ownerKey) ||
+          cacheBelongsHere(cached.capturedPhotos)
+        );
+
+      if (usableCache && (cached.albumItems.length > 0 || cached.capturedPhotos.length > 0)) {
         setAlbumItems(cached.albumItems);
         setCapturedPhotos(cached.capturedPhotos);
         setIsLoading(false);
@@ -1011,17 +1065,16 @@ const GalleryScreen = ({ route, navigation }) => {
         setIsLoading(true);
       }
 
-      const base = getBasePath();
       const currentDir = path.length === 0 ? base : `${base}/${path.join('/')}`;
       const exists = await RNFS.exists(currentDir);
       if (gen !== loadGenRef.current) return;
 
       if (!exists) {
-        // Keep showing cache if we have recent captures; only clear when truly empty.
-        if (!cached?.capturedPhotos?.length && !cached?.albumItems?.length) {
-          setAlbumItems([]);
-          setCapturedPhotos([]);
-        }
+        // Guest/user folder missing → show empty for THIS session.
+        // Do not keep previous account albums/photos on screen.
+        setAlbumItems([]);
+        setCapturedPhotos([]);
+        setGallerySnapshot(path, [], [], ownerKey);
         setIsLoading(false);
         return;
       }
@@ -1090,7 +1143,7 @@ const GalleryScreen = ({ route, navigation }) => {
         if (gen !== loadGenRef.current) return;
         setAlbumItems([]);
         setCapturedPhotos(formatted);
-        setGallerySnapshot(path, [], formatted);
+        setGallerySnapshot(path, [], formatted, ownerKey);
         setIsLoading(false);
 
         // Enrich upload status AFTER UI is painted — never blocks gallery open.
@@ -1113,11 +1166,11 @@ const GalleryScreen = ({ route, navigation }) => {
         if (gen !== loadGenRef.current) return;
         setAlbumItems(items);
         setCapturedPhotos([]);
-        setGallerySnapshot(path, items, []);
+        setGallerySnapshot(path, items, [], ownerKey);
         setIsLoading(false);
         fillCoversLater(items, (next) => {
           setAlbumItems(next);
-          setGallerySnapshot(path, next, []);
+          setGallerySnapshot(path, next, [], ownerKey);
         });
       };
 
@@ -1258,7 +1311,7 @@ const GalleryScreen = ({ route, navigation }) => {
         setIsLoading(false);
       }
     }
-  }, [getBasePath]);
+  }, [getBasePath, galleryOwnerKey]);
 
   const loadImages = useCallback(async (isSilent = false) => {
     const granted = await requestStoragePermissionForGallery(require('react-native').PermissionsAndroid);
@@ -1371,14 +1424,15 @@ const GalleryScreen = ({ route, navigation }) => {
       isDestructive: true,
       onConfirm: async () => {
         try {
-          setIsDeleting(true);
-          await batchDeleteFiles([targetPhoto.path]);
+          await runWithDeletionLoader(async () => {
+            await batchDeleteFiles([targetPhoto.path]);
 
-          // Remove the deleted photo from local state — no full gallery reload needed
-          setCapturedPhotos(prev => {
-            const nextPhotos = prev.filter(img => img.path !== targetPhoto.path);
-            if (nextPhotos.length === 0) setFullScreenPhoto(null);
-            return nextPhotos;
+            // Remove the deleted photo from local state — no full gallery reload needed
+            setCapturedPhotos(prev => {
+              const nextPhotos = prev.filter(img => img.path !== targetPhoto.path);
+              if (nextPhotos.length === 0) setFullScreenPhoto(null);
+              return nextPhotos;
+            });
           });
 
           showInAppToast(
@@ -1391,13 +1445,11 @@ const GalleryScreen = ({ route, navigation }) => {
             "Delete failed!",
             { durationMs: 2000, position: 'bottom' }
           );
-        } finally {
-          setIsDeleting(false);
         }
       }
     });
     setConfirmModalVisible(true);
-  }, [fullScreenPhoto, batchDeleteFiles]);
+  }, [fullScreenPhoto, batchDeleteFiles, runWithDeletionLoader]);
 
   // Delete multiple images
   const handleDeleteSelected = useCallback(() => {
@@ -1417,21 +1469,21 @@ const GalleryScreen = ({ route, navigation }) => {
       isDestructive: true,
       onConfirm: async () => {
         try {
-          setIsDeleting(true);
           const targets = [...selectedPhotos];
+          await runWithDeletionLoader(async () => {
+            // Single bulk delete for all selected images (one root shell call).
+            await batchDeleteFiles(targets);
 
-          // Single bulk delete for all selected images (one root shell call).
-          await batchDeleteFiles(targets);
-
-          const normTargets = new Set(targets.map(p => (p || '').replace('file://', '')));
-          // Remove deleted photos from local state — no full gallery reload needed
-          setCapturedPhotos(prev => {
-            const nextPhotos = prev.filter(img => !normTargets.has((img.path || '').replace('file://', '')));
-            if (nextPhotos.length === 0) setFullScreenPhoto(null);
-            return nextPhotos;
+            const normTargets = new Set(targets.map(p => (p || '').replace('file://', '')));
+            // Remove deleted photos from local state — no full gallery reload needed
+            setCapturedPhotos(prev => {
+              const nextPhotos = prev.filter(img => !normTargets.has((img.path || '').replace('file://', '')));
+              if (nextPhotos.length === 0) setFullScreenPhoto(null);
+              return nextPhotos;
+            });
+            setSelectedPhotos([]);
+            setIsSelectionMode(false);
           });
-          setSelectedPhotos([]);
-          setIsSelectionMode(false);
 
           showInAppToast(
             `${targets.length} image(s) deleted!`,
@@ -1443,13 +1495,11 @@ const GalleryScreen = ({ route, navigation }) => {
             "Delete failed!",
             { durationMs: 2000, position: 'bottom' }
           );
-        } finally {
-          setIsDeleting(false);
         }
       }
     });
     setConfirmModalVisible(true);
-  }, [selectedPhotos, fullScreenPhoto, batchDeleteFiles]);
+  }, [selectedPhotos, fullScreenPhoto, batchDeleteFiles, runWithDeletionLoader]);
 
   const getShareLabel = useCallback((photo) => {
     if (!photo || !photo.name) return '';
@@ -2119,8 +2169,17 @@ const GalleryScreen = ({ route, navigation }) => {
           cancelText={confirmConfig.cancelText}
           isDestructive={confirmConfig.isDestructive}
           onConfirm={() => {
-            confirmConfig.onConfirm();
+            const action = confirmConfig.onConfirm;
+            // Close confirm first. Showing DeletionLoader while this Modal is still
+            // dismissing fails on Android (especially cold start after reboot).
             setConfirmModalVisible(false);
+            setTimeout(() => {
+              if (typeof action === 'function') {
+                Promise.resolve(action()).catch((err) => {
+                  console.error('Confirmation action failed:', err);
+                });
+              }
+            }, 320);
           }}
         />
 

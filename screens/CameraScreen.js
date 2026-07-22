@@ -8,7 +8,7 @@ import OptimisedUploadService from '../services/OptimisedUploadService';
 import { registerAndEnqueue } from '../services/CapturePipeline';
 import CaptureQueue from '../services/CaptureQueue';
 import { recordPhotoCapture } from '../services/patientsService';
-import { prependGalleryPhoto, notifyGalleryPhotoUpdated } from '../services/GalleryMemoryCache';
+import { prependGalleryPhoto, notifyGalleryPhotoUpdated, getGalleryOwnerKey } from '../services/GalleryMemoryCache';
 import {
   StyleSheet,
   View,
@@ -2321,7 +2321,11 @@ const CameraScreen = ({ navigation }) => {
         uploadStatus: 'PENDING',
         hasScale: true,
         imageVersion: Date.now(),
-      });
+      }, getGalleryOwnerKey({
+        isGuest: !!job.isGuest,
+        userId: job.userCtx?.id,
+        username: job.userCtx?.username,
+      }));
     }
 
     if (!finalPath) {
