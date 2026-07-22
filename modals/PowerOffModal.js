@@ -6,6 +6,7 @@ import {
     StyleSheet,
     NativeModules,
     Dimensions,
+    Modal,
 } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
@@ -39,13 +40,17 @@ const PowerOffModal = ({ visible, onClose, onLock }) => {
         }
     };
 
-    if (!visible) {
-        return null;
-    }
-
     return (
-        <View style={styles.container}>
-            <View style={styles.modalView}>
+        <Modal
+            visible={!!visible}
+            transparent
+            animationType="none"
+            statusBarTranslucent
+            hardwareAccelerated
+            onRequestClose={onClose}
+        >
+            <View style={styles.container}>
+                <View style={styles.modalView}>
                     <Text style={styles.title}>Power Menu</Text>
 
                     <View style={styles.buttonContainer}>
@@ -83,19 +88,18 @@ const PowerOffModal = ({ visible, onClose, onLock }) => {
                     <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
                         <Text style={styles.cancelText}>Cancel</Text>
                     </TouchableOpacity>
+                </View>
             </View>
-        </View>
+        </Modal>
     );
 };
 
 const styles = StyleSheet.create({
     container: {
-        ...StyleSheet.absoluteFillObject,
+        flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
         backgroundColor: 'rgba(0,0,0,0.8)',
-        zIndex: 10000,
-        elevation: 10000,
     },
     modalView: {
         width: width * 0.85,

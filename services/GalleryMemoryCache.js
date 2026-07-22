@@ -76,11 +76,22 @@ export function notifyGalleryPhotoUpdated(absolutePath) {
   } catch (_) {}
 }
 
+/** Wipe in-memory gallery (used when exiting guest mode). */
+export function clearGallerySnapshot() {
+  snapshot = {
+    albumPathKey: '',
+    albumItems: [],
+    capturedPhotos: [],
+    ts: Date.now(),
+  };
+}
+
 export default {
   getGallerySnapshot,
   setGallerySnapshot,
   prependGalleryPhoto,
   notifyGalleryPhotoUpdated,
+  clearGallerySnapshot,
   GALLERY_PHOTO_ADDED,
   GALLERY_PHOTO_UPDATED,
 };

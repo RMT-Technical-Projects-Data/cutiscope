@@ -182,6 +182,20 @@ class CaptureQueue {
       }
     }
   }
+
+  /** Drop pending guest jobs and persist an empty queue (exit guest mode). */
+  async clearGuestJobs() {
+    const before = this.queue.length;
+    this.queue = this.queue.filter((job) => !job?.isGuest);
+    if (this.queue.length !== before) {
+      this._emit();
+    }
+    // Guest exit should wipe the whole pending list — guest sessions only enqueue guest jobs,
+    // but clear aggressively so nothing re-saves after deleteGuestPhotos.
+    this.queue = [];
+    this._emit();
+    await this._flushPersist();
+  }
 }
 
 export default new CaptureQueue();

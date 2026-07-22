@@ -6,12 +6,10 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
-import android.graphics.Matrix
 import android.graphics.Paint
-import android.graphics.Rect
 import android.graphics.Typeface
+import android.media.ExifInterface
 import android.util.Log
-import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -29,6 +27,52 @@ class ImageProcessorModule(private val reactContext: ReactApplicationContext) : 
 
     override fun getName(): String {
         return "ImageProcessorModule"
+    }
+
+    /**
+     * Degrees needed to make the JPEG upright, matching the locked portrait preview.
+     * Prefer CameraX/VisionCamera EXIF (set from preview targetRotation). Fall back to
+     * VisionCamera orientation string, then force landscape buffers to portrait.
+     */
+    private fun resolveRotationDegrees(path: String, orientation: String?, width: Int, height: Int): Float {
+        val fromExif = try {
+            when (ExifInterface(path).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL
+            )) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                else -> 0f
+            }
+        } catch (e: Exception) {
+            Log.w("ImageProcessor", "EXIF read failed: ${e.message}")
+            0f
+        }
+        if (fromExif != 0f) {
+            Log.d("ImageProcessor", "Rotation from EXIF: $fromExif")
+            return fromExif
+        }
+
+        // JS may force "portrait" for the dermascope (ignore device tilt). Only honor
+        // non-portrait hints when EXIF was missing.
+        val fromOrientation = when (orientation?.lowercase()) {
+            "landscape-left" -> 90f
+            "landscape-right" -> 270f
+            "portrait-upside-down" -> 180f
+            else -> 0f
+        }
+        if (fromOrientation != 0f) {
+            Log.d("ImageProcessor", "Rotation from orientation='$orientation': $fromOrientation")
+            return fromOrientation
+        }
+
+        // Sensor-native landscape buffer with no EXIF: bake 90° so gallery matches preview.
+        if (width > height) {
+            Log.d("ImageProcessor", "FORCE_PORTRAIT: ${width}x${height} -> rotate 90")
+            return 90f
+        }
+        return 0f
     }
 
     @ReactMethod
@@ -54,6 +98,7 @@ class ImageProcessorModule(private val reactContext: ReactApplicationContext) : 
                 }
 
                 // Decode full-res; downscale below if needed to limit peak RAM in bursts.
+                // BitmapFactory does not apply EXIF rotation — we bake it below.
                 val options = BitmapFactory.Options().apply {
                     inPreferredConfig = Bitmap.Config.ARGB_8888
                     inSampleSize = 1
@@ -83,20 +128,13 @@ class ImageProcessorModule(private val reactContext: ReactApplicationContext) : 
 
                 val originalW = bitmap.width
                 val originalH = bitmap.height
+                val rotationAngle = resolveRotationDegrees(cleanPath, orientation, originalW, originalH)
+                val isSideways = rotationAngle == 90f || rotationAngle == 270f || rotationAngle == -90f
 
-                // 2. Calculate Rotation
-                var rotationAngle = 0f
-                var isSideways = false
-
-                // Using the FORCE_PORTRAIT logic from JS
-                if (originalW > originalH) {
-                    isSideways = true
-                    rotationAngle = 90f
-                } else {
-                    isSideways = false
-                    rotationAngle = 0f
-                }
-                Log.d("ImageProcessor", "FORCE_PORTRAIT: raw ${originalW}x${originalH} -> rotate $rotationAngle")
+                Log.d(
+                    "ImageProcessor",
+                    "Upright bake: raw ${originalW}x${originalH}, orient=$orientation, rotate=$rotationAngle"
+                )
 
                 val imgW = if (isSideways) originalH else originalW
                 val imgH = if (isSideways) originalW else originalH
@@ -124,17 +162,21 @@ class ImageProcessorModule(private val reactContext: ReactApplicationContext) : 
                     colorFilter = ColorMatrixColorFilter(colorMatrix)
                 }
 
-                // 5. Draw Image with Rotation
+                // 5. Draw Image with Rotation (baked upright — no leftover EXIF needed)
                 canvas.save()
-                if (rotationAngle == 90f) {
-                    canvas.translate(imgW.toFloat(), 0f)
-                    canvas.rotate(90f)
-                } else if (rotationAngle == -90f) {
-                    canvas.translate(0f, imgH.toFloat())
-                    canvas.rotate(-90f)
-                } else if (rotationAngle == 180f) {
-                    canvas.translate(imgW.toFloat(), imgH.toFloat())
-                    canvas.rotate(180f)
+                when (rotationAngle) {
+                    90f -> {
+                        canvas.translate(imgW.toFloat(), 0f)
+                        canvas.rotate(90f)
+                    }
+                    270f, -90f -> {
+                        canvas.translate(0f, imgH.toFloat())
+                        canvas.rotate(-90f)
+                    }
+                    180f -> {
+                        canvas.translate(imgW.toFloat(), imgH.toFloat())
+                        canvas.rotate(180f)
+                    }
                 }
                 canvas.drawBitmap(bitmap, 0f, 0f, paint)
                 canvas.restore()
@@ -143,11 +185,12 @@ class ImageProcessorModule(private val reactContext: ReactApplicationContext) : 
                 bitmap.recycle()
                 bitmap = null
 
-                // 6. Draw Scale Watermark
-                try {
+                // 6. Draw Scale Watermark (required — matches on-screen MillimeterScale)
+                run {
                     val scaleX = imgW * 0.04f
                     val scaleTop = imgH * 0.1f
                     val scaleHeight = imgH * 0.8f
+                    val safeZoom = if (zoomVal > 0.01) zoomVal else 1.0
 
                     val scalePaint = Paint().apply {
                         color = Color.WHITE
@@ -158,9 +201,9 @@ class ImageProcessorModule(private val reactContext: ReactApplicationContext) : 
 
                     canvas.drawLine(scaleX, scaleTop, scaleX, scaleTop + scaleHeight, scalePaint)
 
-                    val maxMm = 15.0 / zoomVal
+                    val maxMm = 15.0 / safeZoom
                     val textSize = max(30f, imgH / 40f)
-                    
+
                     val textPaint = Paint().apply {
                         color = Color.WHITE
                         this.textSize = textSize
@@ -168,7 +211,7 @@ class ImageProcessorModule(private val reactContext: ReactApplicationContext) : 
                         typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
                     }
 
-                    val totalSteps = (maxMm * 10).toInt()
+                    val totalSteps = (maxMm * 10).toInt().coerceAtLeast(0).coerceAtMost(500)
                     for (step in 0..totalSteps) {
                         val `val` = step / 10.0
                         val valRounded = (`val` * 10).toInt()
@@ -190,8 +233,6 @@ class ImageProcessorModule(private val reactContext: ReactApplicationContext) : 
                         }
                     }
                     canvas.drawText("mm", scaleX, scaleTop + scaleHeight + textSize + 10f, textPaint)
-                } catch (e: Exception) {
-                    Log.e("ImageProcessor", "Scale watermark error", e)
                 }
 
                 // 7. Draw Patient Info Box
@@ -254,8 +295,9 @@ class ImageProcessorModule(private val reactContext: ReactApplicationContext) : 
 
             } catch (e: Exception) {
                 Log.e("ImageProcessor", "Process failed", e)
+                // Never return the unscaled original — gallery must only show watermarked images.
                 withContext(Dispatchers.Main) {
-                    promise.resolve(uri) // fallback to original on error
+                    promise.reject("PROCESS_FAILED", e.message ?: "Image processing failed", e)
                 }
             }
         }

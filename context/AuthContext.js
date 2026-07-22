@@ -117,8 +117,12 @@ export const AuthProvider = ({ children }) => {
       console.log('AuthContext: Exiting Guest Mode - performing cleanup');
       await deleteGuestPhotos();
       await AsyncStorage.setItem(LAST_SESSION_WAS_GUEST_KEY, 'false');
+      setUserData(null);
+      setIsGuest(false);
     } catch (e) {
       console.error('AuthContext exitGuestMode:', e);
+      setUserData(null);
+      setIsGuest(false);
     }
   };
 

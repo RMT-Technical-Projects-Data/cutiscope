@@ -186,6 +186,8 @@ class MainActivity : ReactActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Keep UI + CameraX targetRotation on portrait even after system overlays.
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         // Do not clear deliberate lock while screen is still off — otherwise
         // KEEP_SCREEN_ON / wake-lock restore fights the Lock button.
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager

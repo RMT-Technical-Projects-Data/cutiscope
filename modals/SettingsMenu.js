@@ -21,6 +21,11 @@ import {
     setSessionTimeoutMinutes,
 } from '../utils/sessionSettings';
 
+const STATUS_BAR_HEIGHT = Platform.OS === 'ios' ? 44 : StatusBar.currentHeight || 0;
+const EXTRA_HEADER_PADDING = 40;
+const HEADER_FOOTER_BG = '#000000';
+const PRIMARY_TEXT = '#FFFFFF';
+
 const SettingsMenu = () => {
     const [isPressed, setIsPressed] = useState(null);
     const [wifiMenuVisible, setWifiMenuVisible] = useState(false);
@@ -87,7 +92,7 @@ const SettingsMenu = () => {
         setResultModalVisible(true);
     };
 
-    const { isGuest, signOut, isLoading } = useAuth();
+    const { isGuest, signOut, exitGuestMode, isLoading } = useAuth();
     const navigation = useNavigation();
     const onClose = () => navigation.goBack();
 
@@ -121,8 +126,14 @@ const SettingsMenu = () => {
             confirmText: 'Exit',
             isDestructive: true,
             onConfirm: async () => {
-                await deleteGuestPhotos();
-                await AsyncStorage.setItem('last_session_was_guest', 'false');
+                setConfirmModalVisible(false);
+                // Delete photos / clear queues BEFORE leaving so nothing reappears.
+                try {
+                    await exitGuestMode();
+                } catch (e) {
+                    console.warn('exitGuestMode failed:', e);
+                    await deleteGuestPhotos();
+                }
                 onClose();
                 navigation.reset({
                     index: 0,
@@ -191,15 +202,24 @@ const SettingsMenu = () => {
                         {/* Sub-screens render their own heading/back button. Hide
                             the parent header so titles never overlap. */}
                         {!wifiMenuVisible && !bluetoothMenuVisible && !dateAndTimeMenuVisible && (
-                            <View style={styles.headerContainer}>
+                            <View style={styles.header}>
                                 <TouchableOpacity
-                                    style={styles.backButtonOne}
+                                    style={styles.backButtonContainer}
                                     onPress={onClose}
                                     activeOpacity={0.7}
                                 >
                                     <Image source={backIcon} style={styles.backButtonIcon} />
                                 </TouchableOpacity>
-                                <Text style={styles.title}>Settings</Text>
+                                <View style={styles.titleContainer}>
+                                    <Text
+                                        style={styles.title}
+                                        numberOfLines={1}
+                                        adjustsFontSizeToFit
+                                        minimumFontScale={0.6}
+                                    >
+                                        Settings
+                                    </Text>
+                                </View>
                             </View>
                         )}
 
@@ -478,24 +498,55 @@ const styles = StyleSheet.create({
         backgroundColor: 'transparent',
     },
     containerContent: {
-        paddingTop: 44,
         paddingBottom: 24,
     },
-    headerContainer: {
-        width: '100%',
+    header: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
+        justifyContent: 'flex-start',
+        paddingHorizontal: 15,
+        paddingBottom: 15,
+        paddingTop: STATUS_BAR_HEIGHT + EXTRA_HEADER_PADDING,
+        backgroundColor: HEADER_FOOTER_BG,
+        borderBottomWidth: 1,
+        borderBottomColor: '#333333',
+        shadowColor: '#000',
+        shadowOffset: {
+            width: 0,
+            height: 1,
+        },
+        shadowOpacity: 0.1,
+        shadowRadius: 2,
+        elevation: 2,
         marginBottom: 16,
-        position: 'relative',
-        paddingHorizontal: 10,
+    },
+    backButtonContainer: {
+        height: 44,
+        width: 44,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderRadius: 12,
+        backgroundColor: '#41403D',
+        borderWidth: 1,
+        borderColor: '#333333',
+        marginRight: 6,
+    },
+    titleContainer: {
+        position: 'absolute',
+        top: STATUS_BAR_HEIGHT + EXTRA_HEADER_PADDING,
+        left: 75,
+        right: 75,
+        minHeight: 44,
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: -1,
     },
     title: {
+        color: PRIMARY_TEXT,
         fontSize: 26,
         fontFamily: 'ProductSans-Bold',
-        color: '#FFFFFF',
-        textAlign: 'center',
         letterSpacing: 1,
+        textAlign: 'center',
     },
     profileSection: {
         alignItems: 'center',
@@ -594,20 +645,6 @@ const styles = StyleSheet.create({
         fontFamily: 'ProductSans-Regular',
         color: '#AAAAAA',
         lineHeight: 16,
-    },
-    backButtonOne: {
-        position: 'absolute',
-        height: 40,
-        width: 40,
-        left: 20,
-        top: 0,
-        zIndex: 10,
-        justifyContent: 'center',
-        alignItems: 'center',
-        borderRadius: 12,
-        backgroundColor: '#41403D',
-        borderWidth: 1,
-        borderColor: '#333333',
     },
     backButtonIcon: {
         height: 22,

@@ -573,7 +573,7 @@ const App = () => {
     }, 0);
   }, []);
 
-  // Orientation lock: portrait only; re-lock when app becomes active
+  // Orientation lock: portrait only (matches Camera outputOrientation="preview")
   useEffect(() => {
     Orientation.lockToPortrait();
 
@@ -586,11 +586,11 @@ const App = () => {
       }
       lastPowerPressRef.current = now;
       console.log('🔌 Showing Power Menu Modal');
-      // Notify Camera to hide StandbyModal so it cannot cover this menu.
-      DeviceEventEmitter.emit('onPowerMenuOpened');
-      // Keep the menu in the existing app window so opening it cannot resize or
-      // shift the screen underneath it.
-      setIsPowerModalVisible(true);
+                  // Notify Camera to hide StandbyModal so it cannot cover this menu.
+                  DeviceEventEmitter.emit('onPowerMenuOpened');
+                  // PowerOffModal uses a native Modal window so it stacks above
+                  // gallery fullscreen (and other) Modals.
+                  setIsPowerModalVisible(true);
     };
 
     const handlePhysicalPowerButton = () => {
@@ -827,13 +827,22 @@ const App = () => {
                   }}
                 />
                 {isBlackScreenVisible && (
-                  <View
-                    style={styles.blackScreenOverlay}
-                    onStartShouldSetResponder={() => true}
-                    onMoveShouldSetResponder={() => true}
-                    onResponderTerminationRequest={() => false}
-                    collapsable={false}
-                  />
+                  <Modal
+                    visible
+                    transparent
+                    animationType="none"
+                    statusBarTranslucent
+                    hardwareAccelerated
+                    onRequestClose={() => {}}
+                  >
+                    <View
+                      style={styles.blackScreenOverlay}
+                      onStartShouldSetResponder={() => true}
+                      onMoveShouldSetResponder={() => true}
+                      onResponderTerminationRequest={() => false}
+                      collapsable={false}
+                    />
+                  </Modal>
                 )}
                 <Modal
                   visible={kioskPinModalVisible}
@@ -961,10 +970,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   blackScreenOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    flex: 1,
     backgroundColor: '#000',
-    zIndex: 100000,
-    elevation: 100000,
   },
   kioskPinOverlay: {
     flex: 1,

@@ -18,12 +18,13 @@ import {
   DeviceEventEmitter,
   Animated,
   PanResponder,
+  BackHandler,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import RNFS from 'react-native-fs';
 import NetInfo from '@react-native-community/netinfo';
 import ImageViewer from 'react-native-image-zoom-viewer';
-import { GestureHandlerRootView, Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { GestureHandlerRootView, Gesture, GestureDetector, FlatList as GHFlatList } from 'react-native-gesture-handler';
 import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS, withDelay, useAnimatedReaction } from 'react-native-reanimated';
 import { requestStoragePermissionForGallery } from '../utils/Helpers';
 import { getGuestPhotosDir } from '../utils/guestPhotos';
@@ -77,7 +78,13 @@ const ACCENT_TEAL = '#22B2A6';
 const STATUS_BAR_HEIGHT = Platform.OS === 'ios' ? 44 : StatusBar.currentHeight || 0;
 const EXTRA_HEADER_PADDING = 40;
 
-const ZoomableImage = ({ uri, onTap }) => {
+const normalizePhotoPath = (p) => {
+  if (!p) return '';
+  if (typeof p === 'string') return p.replace(/^file:\/\//, '').split('?')[0];
+  return (p.absolutePath || String(p.path || '').replace(/^file:\/\//, '')).split('?')[0];
+};
+
+const ZoomableImage = ({ uri, version, onTap, onZoomChange }) => {
   const [imgDims, setImgDims] = useState({ w: width, h: screenHeight });
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -108,8 +115,29 @@ const ZoomableImage = ({ uri, onTap }) => {
       }, () => {
         setImgDims({ w: width, h: screenHeight });
       });
+      // Reset zoom when the underlying file is replaced with a watermarked version.
+      scale.value = 1;
+      savedScale.value = 1;
+      translateX.value = 0;
+      translateY.value = 0;
+      savedTranslateX.value = 0;
+      savedTranslateY.value = 0;
     }
-  }, [uri]);
+  }, [uri, version]);
+
+  const notifyZoom = useCallback((zoomed) => {
+    onZoomChange?.(zoomed);
+  }, [onZoomChange]);
+
+  useAnimatedReaction(
+    () => scale.value > 1.01,
+    (zoomed, prev) => {
+      if (zoomed !== prev) {
+        runOnJS(notifyZoom)(zoomed);
+      }
+    },
+    [notifyZoom]
+  );
 
   const { displayedWidth, displayedHeight } = useMemo(() => {
     const screenRatio = width / screenHeight;
@@ -236,9 +264,12 @@ const ZoomableImage = ({ uri, onTap }) => {
     });
 
   const pan = Gesture.Pan()
+    .manualActivation(true)
     .maxPointers(1)
-    .onTouchesMove((e, state) => {
-      if (scale.value <= 1.0) {
+    .onTouchesMove((_, state) => {
+      if (scale.value > 1.01) {
+        state.activate();
+      } else {
         state.fail();
       }
     })
@@ -247,7 +278,7 @@ const ZoomableImage = ({ uri, onTap }) => {
       prevTranslationY.value = 0;
     })
     .onUpdate((e) => {
-      if (scale.value > 1.0) {
+      if (scale.value > 1.01) {
         const dx = e.translationX - prevTranslationX.value;
         const dy = e.translationY - prevTranslationY.value;
         prevTranslationX.value = e.translationX;
@@ -263,14 +294,17 @@ const ZoomableImage = ({ uri, onTap }) => {
       }
     })
     .onEnd(() => {
-      if (scale.value > 1.0) {
+      if (scale.value > 1.01) {
         savedTranslateX.value = translateX.value;
         savedTranslateY.value = translateY.value;
       }
     });
 
-  // Compose all gestures simultaneously so pinch/pan are not blocked or delayed
+  // Native gesture lets the horizontal pager receive swipes when not zoomed.
+  const scrollNative = Gesture.Native();
+
   const composed = Gesture.Simultaneous(
+    scrollNative,
     pinch,
     pan,
     Gesture.Exclusive(doubleTap, singleTap)
@@ -288,6 +322,7 @@ const ZoomableImage = ({ uri, onTap }) => {
     <GestureDetector gesture={composed}>
       <Reanimated.View style={[{ flex: 1, width, height: '100%', justifyContent: 'center', alignItems: 'center' }, animatedStyle]}>
         <Image
+          key={`${uri}::${version || 0}`}
           source={{ uri }}
           style={{ width: '100%', height: '100%' }}
           resizeMode="contain"
@@ -375,17 +410,18 @@ const ThumbnailItem = React.memo(({
   useEffect(() => {
     const uri = photo.path;
     if (!uri) return;
-    if (IMAGE_CACHE.has(uri)) {
-      setImageUri(IMAGE_CACHE.get(uri));
+    const cacheKey = `${uri}::${photo.imageVersion || 0}`;
+    if (IMAGE_CACHE.has(cacheKey)) {
+      setImageUri(IMAGE_CACHE.get(cacheKey));
       return;
     }
     try {
-      IMAGE_CACHE.set(uri, uri);
+      IMAGE_CACHE.set(cacheKey, uri);
       setImageUri(uri);
     } catch (error) {
       console.log('Error loading thumbnail:', error);
     }
-  }, [photo.path, photo.id]);
+  }, [photo.path, photo.imageVersion]);
 
   // Check upload status (DB first, then legacy AsyncStorage)
   useEffect(() => {
@@ -393,13 +429,13 @@ const ThumbnailItem = React.memo(({
       setIsUploaded(true);
       return;
     }
-    if (photo.uploadStatus === 'PENDING' || photo.uploadStatus === 'FAILED') {
+    if (photo.uploadStatus === 'PENDING' || photo.uploadStatus === 'FAILED' || photo.uploadStatus === 'UPLOADING') {
       setIsUploaded(false);
       return;
     }
     const checkUploadStatus = async () => {
       try {
-        const cleanPath = photo.path.replace('file://', '');
+        const cleanPath = (photo.absolutePath || photo.path.replace('file://', '')).split('?')[0];
         const status = await AsyncStorage.getItem(`uploaded_${cleanPath}`);
         setIsUploaded(status === 'true');
       } catch (error) {
@@ -407,7 +443,7 @@ const ThumbnailItem = React.memo(({
       }
     };
     checkUploadStatus();
-  }, [photo.path, photo.uploadStatus]);
+  }, [photo.path, photo.absolutePath, photo.uploadStatus]);
 
   return (
     <TouchableOpacity
@@ -419,7 +455,7 @@ const ThumbnailItem = React.memo(({
     >
       {imageUri && (
         <Image
-          key={photo.id || imageUri}
+          key={`${imageUri}::${photo.imageVersion || 0}`}
           source={{ uri: imageUri }}
           style={[
             styles.thumbnail,
@@ -451,7 +487,14 @@ const ThumbnailItem = React.memo(({
       )}
     </TouchableOpacity>
   );
-});
+}, (prev, next) => (
+  prev.photo.path === next.photo.path
+  && prev.photo.imageVersion === next.photo.imageVersion
+  && prev.photo.uploadStatus === next.photo.uploadStatus
+  && prev.isSelected === next.isSelected
+  && prev.isSelectionMode === next.isSelectionMode
+  && prev.isGuest === next.isGuest
+));
 
 const GalleryScreen = ({ route, navigation }) => {
   const { userData, isGuest, getUsername } = useAuth();
@@ -492,6 +535,16 @@ const GalleryScreen = ({ route, navigation }) => {
   const [bluetoothShareVisible, setBluetoothShareVisible] = useState(false);
   const [bluetoothShareFiles, setBluetoothShareFiles] = useState([]);
   const [bluetoothShareLabels, setBluetoothShareLabels] = useState([]);
+  const [powerMenuOpen, setPowerMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const subOpen = DeviceEventEmitter.addListener('onPowerMenuOpened', () => setPowerMenuOpen(true));
+    const subClose = DeviceEventEmitter.addListener('onPowerMenuClosed', () => setPowerMenuOpen(false));
+    return () => {
+      subOpen.remove();
+      subClose.remove();
+    };
+  }, []);
 
   const handleBluetoothShareSuccess = useCallback(() => {
     setSelectedPhotos([]);
@@ -504,29 +557,49 @@ const GalleryScreen = ({ route, navigation }) => {
     capturedPhotosRef.current = capturedPhotos;
   }, [capturedPhotos]);
 
-  // Listen for background uploads
+  // Listen for background uploads — coalesce status events so mass uploads
+  // do not re-render the whole grid on every single file.
   useEffect(() => {
+    const pendingStatuses = new Map();
+    let flushTimer = null;
+
+    const flushStatuses = () => {
+      flushTimer = null;
+      if (pendingStatuses.size === 0) return;
+      const updates = new Map(pendingStatuses);
+      pendingStatuses.clear();
+      setCapturedPhotos((prev) => {
+        let changed = false;
+        const next = prev.map((p) => {
+          const clean = (p.absolutePath || p.path?.replace('file://', '') || '').split('?')[0];
+          const status = updates.get(clean);
+          if (!status || p.uploadStatus === status) return p;
+          changed = true;
+          return { ...p, uploadStatus: status };
+        });
+        return changed ? next : prev;
+      });
+    };
+
+    const queueStatus = (filePath, status) => {
+      const cleanPath = String(filePath || '').replace('file://', '').split('?')[0];
+      if (!cleanPath || !status) return;
+      pendingStatuses.set(cleanPath, status);
+      if (!flushTimer) {
+        flushTimer = setTimeout(flushStatuses, 350);
+      }
+    };
+
     const subscription = DeviceEventEmitter.addListener('IMAGE_UPLOADED', (filePath) => {
-      const cleanPath = filePath.replace('file://', '');
-      setCapturedPhotos((prev) => prev.map((p) =>
-      ((p.absolutePath || p.path?.replace('file://', '')) === cleanPath
-        ? { ...p, uploadStatus: 'UPLOADED' }
-        : p
-      )
-      ));
+      queueStatus(filePath, 'UPLOADED');
     });
 
     const statusSub = DeviceEventEmitter.addListener('IMAGE_UPLOAD_STATUS_CHANGED', ({ filePath, status }) => {
-      const cleanPath = filePath.replace('file://', '');
-      setCapturedPhotos((prev) => prev.map((p) =>
-      ((p.absolutePath || p.path?.replace('file://', '')) === cleanPath
-        ? { ...p, uploadStatus: status }
-        : p
-      )
-      ));
+      queueStatus(filePath, status);
     });
 
     return () => {
+      if (flushTimer) clearTimeout(flushTimer);
       subscription.remove();
       statusSub.remove();
     };
@@ -1230,16 +1303,22 @@ const GalleryScreen = ({ route, navigation }) => {
     });
     const upd = DeviceEventEmitter.addListener(GALLERY_PHOTO_UPDATED, ({ absolutePath }) => {
       if (!absolutePath) return;
-      // Bust thumbnail identity so the watermarked replace reloads (keep clean file:// URI).
+      // Bust Image cache without changing FlatList identity (keeps scroll stable).
+      const bust = Date.now();
+      IMAGE_CACHE.delete(`file://${absolutePath}`);
+      IMAGE_CACHE.delete(absolutePath);
       setCapturedPhotos((prev) =>
         prev.map((p) => {
-          const abs = p.absolutePath || p.path?.replace(/^file:\/\//, '').split('?')[0];
+          const abs = (p.absolutePath || p.path?.replace(/^file:\/\//, '') || '').split('?')[0];
           if (abs !== absolutePath) return p;
           return {
             ...p,
-            id: `${abs}_${Date.now()}`,
+            // Keep a stable id so FlatList does not remount the cell.
+            id: p.id || abs,
             path: `file://${absolutePath}`,
             absolutePath,
+            // ThumbnailItem watches this to reload without remounting the grid cell.
+            imageVersion: bust,
           };
         })
       );
@@ -1516,7 +1595,7 @@ const GalleryScreen = ({ route, navigation }) => {
 
       showInAppToast('Enqueued for upload', { position: 'bottom', durationMs: 1200 });
 
-      // 3. Update local state to UPLOADING instantly
+      // Keep UPLOADING until the upload service reports UPLOADED/FAILED.
       setCapturedPhotos((prev) => prev.map((p) =>
       ((p.absolutePath || p.path?.replace('file://', '')) === cleanPath
         ? { ...p, uploadStatus: 'UPLOADING' }
@@ -1537,13 +1616,6 @@ const GalleryScreen = ({ route, navigation }) => {
           }
         } catch (_) { }
       }
-
-      setCapturedPhotos((prev) => prev.map((p) =>
-      ((p.absolutePath || p.path?.replace('file://', '')) === cleanPath
-        ? { ...p, uploadStatus: 'PENDING' }
-        : p
-      )
-      ));
 
       let uploadPath = cleanPath;
       const label = image ? getShareLabel(image) : '';
@@ -1767,8 +1839,10 @@ const GalleryScreen = ({ route, navigation }) => {
     [activePhotos, width, screenHeight]
   );
 
-  // Key extractor for FlatList
-  const keyExtractor = useCallback((item) => item.id, []);
+  // Key extractor for FlatList — prefer stable absolute path over changing ids
+  const keyExtractor = useCallback((item) => {
+    return item.absolutePath || String(item.path || '').replace(/^file:\/\//, '').split('?')[0] || item.id;
+  }, []);
 
   const renderFolderItem = useCallback(
     ({ item }) => {
@@ -1959,10 +2033,13 @@ const GalleryScreen = ({ route, navigation }) => {
             ]}
             showsVerticalScrollIndicator={false}
             initialNumToRender={18}
-            maxToRenderPerBatch={12}
-            windowSize={9}
+            maxToRenderPerBatch={9}
+            windowSize={7}
+            updateCellsBatchingPeriod={50}
             removeClippedSubviews={Platform.OS === 'android'}
-            extraData={[selectedPhotos, isSelectionMode, activePhotos]}
+            // Do NOT put activePhotos here — upload status updates must not
+            // force a full grid rebind while the user is scrolling.
+            extraData={`${isSelectionMode}:${selectedPhotos.length}`}
           />
         )}
 
@@ -1976,6 +2053,7 @@ const GalleryScreen = ({ route, navigation }) => {
           onDelete={handleDeleteCurrentImage}
           onUpload={handleUploadImage}
           isGuest={isGuest}
+          powerMenuOpen={powerMenuOpen}
           getShareLabel={getShareLabel}
           onBluetoothShare={(photo) => {
             const label = getShareLabel ? getShareLabel(photo) : '';
@@ -2076,6 +2154,7 @@ const FullScreenGalleryModal = React.memo(({
   onDelete,
   onUpload,
   isGuest,
+  powerMenuOpen,
   getShareLabel,
   onBluetoothShare
 }) => {
@@ -2083,17 +2162,67 @@ const FullScreenGalleryModal = React.memo(({
   const [errorMsg, setErrorMsg] = useState(null);
   const errorTimerRef = useRef(null);
   const flatListRef = useRef(null);
-  const currentPhotoIdRef = useRef(photos[initialIndex]?.path);
+  const currentPhotoIdRef = useRef(photos[initialIndex]?.absolutePath || photos[initialIndex]?.path);
   const wasVisibleRef = useRef(false);
   const [showOverlays, setShowOverlays] = useState(true);
+  const [pagerScrollEnabled, setPagerScrollEnabled] = useState(true);
+  // Latch paths that entered UPLOADING so a transient status flicker never flashes action buttons.
+  const uploadingPathsRef = useRef(new Set());
+
+  const overlaysVisible = showOverlays && !powerMenuOpen;
+
+  // Stable identity of the photo list (ignore uploadStatus-only object churn).
+  const photoPathsKey = useMemo(
+    () => photos.map((p) => normalizePhotoPath(p)).join('|'),
+    [photos]
+  );
+
+  const currentPhoto = useMemo(() => {
+    if (!photos.length) return null;
+    const target = currentPhotoIdRef.current
+      ? normalizePhotoPath(currentPhotoIdRef.current)
+      : null;
+    if (target) {
+      const found = photos.find((p) => normalizePhotoPath(p) === target);
+      if (found) return found;
+    }
+    return photos[Math.min(currentIndex, photos.length - 1)];
+  }, [photos, currentIndex, photoPathsKey]);
+
+  // Keep upload latch in sync — once UPLOADING, stay on loader until UPLOADED/FAILED.
+  useEffect(() => {
+    for (const p of photos) {
+      const path = normalizePhotoPath(p);
+      if (!path) continue;
+      if (p.uploadStatus === 'UPLOADING') {
+        uploadingPathsRef.current.add(path);
+      } else if (p.uploadStatus === 'UPLOADED' || p.uploadStatus === 'FAILED') {
+        uploadingPathsRef.current.delete(path);
+      }
+    }
+  }, [photos]);
+
+  const currentPhotoPath = currentPhoto ? normalizePhotoPath(currentPhoto) : '';
+  const showUploadingFooter = overlaysVisible && (
+    currentPhoto?.uploadStatus === 'UPLOADING' ||
+    (
+      uploadingPathsRef.current.has(currentPhotoPath) &&
+      currentPhoto?.uploadStatus !== 'UPLOADED' &&
+      currentPhoto?.uploadStatus !== 'FAILED'
+    )
+  );
+
+  const handleZoomChange = useCallback((zoomed) => {
+    setPagerScrollEnabled(!zoomed);
+  }, []);
 
   // When opened, reset to initial
   useEffect(() => {
     if (visible && !wasVisibleRef.current && photos.length > 0) {
       setCurrentIndex(initialIndex);
-      currentPhotoIdRef.current = photos[initialIndex]?.path;
+      currentPhotoIdRef.current = photos[initialIndex]?.absolutePath || photos[initialIndex]?.path;
       setShowOverlays(true);
-      // Scroll to the initial index, if flatList is mounted
+      setPagerScrollEnabled(true);
       setTimeout(() => {
         if (flatListRef.current && photos.length > initialIndex) {
           try {
@@ -2103,36 +2232,45 @@ const FullScreenGalleryModal = React.memo(({
       }, 50);
     }
     wasVisibleRef.current = visible;
-  }, [visible, initialIndex]);
+  }, [visible, initialIndex, photos.length]);
 
-  // Handle deletion sync robustly
+  // Re-enable pager swipe after changing photo (zoom resets per item).
+  useEffect(() => {
+    setPagerScrollEnabled(true);
+  }, [currentIndex]);
+
+  // Hardware back closes fullscreen overlay (same window as power menu — no Modal flicker).
+  useEffect(() => {
+    if (!visible) return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      onClose?.();
+      return true;
+    });
+    return () => sub.remove();
+  }, [visible, onClose]);
+
+  // Handle deletion sync — only when the path set changes, not on upload badge updates.
   useEffect(() => {
     if (!visible || photos.length === 0) return;
 
-    const targetId = currentPhotoIdRef.current;
+    const targetId = currentPhotoIdRef.current
+      ? normalizePhotoPath(currentPhotoIdRef.current)
+      : null;
     if (!targetId) return;
 
-    const newIndex = photos.findIndex(p => p.path === targetId);
+    const newIndex = photos.findIndex((p) => normalizePhotoPath(p) === targetId);
 
     if (newIndex !== -1) {
-      // The currently viewed item still exists. It might have shifted index.
       if (newIndex !== currentIndex) {
         setCurrentIndex(newIndex);
       }
     } else {
-      // The currently viewed item WAS DELETED.
-      // Show the NEXT image instead of PREV to prevent the instant flash, since arrays naturally shift left.
       const fallbackIndex = Math.min(currentIndex, photos.length - 1);
-
-      // Update state
       setCurrentIndex(fallbackIndex);
       const nextPhoto = photos[fallbackIndex];
       if (nextPhoto) {
-        currentPhotoIdRef.current = nextPhoto.path;
+        currentPhotoIdRef.current = nextPhoto.absolutePath || nextPhoto.path;
       }
-
-      // Force flatlist to stay at the new index seamlessly
-      // Use setTimeout to ensure the FlatList has processed the updated 'data' prop (photos)
       setTimeout(() => {
         if (flatListRef.current && photos.length > fallbackIndex) {
           try {
@@ -2143,21 +2281,22 @@ const FullScreenGalleryModal = React.memo(({
         }
       }, 0);
     }
-  }, [photos, visible]); // intentionally responding to photos array changing
+  }, [photoPathsKey, visible]);
 
-  const onViewableItemsChanged = useCallback(({ viewableItems }) => {
+  const onViewableItemsChanged = useRef(({ viewableItems }) => {
     if (viewableItems.length > 0) {
       const idx = viewableItems[0].index;
       if (idx !== null && idx >= 0) {
         setCurrentIndex(idx);
-        currentPhotoIdRef.current = viewableItems[0].item.path;
+        const item = viewableItems[0].item;
+        currentPhotoIdRef.current = item.absolutePath || item.path;
       }
     }
-  }, []);
+  }).current;
 
   const viewabilityConfig = useRef({
-    itemVisiblePercentThreshold: 50,
-    minimumViewTime: 50,
+    itemVisiblePercentThreshold: 60,
+    minimumViewTime: 0,
   }).current;
 
   // Preload adjacent items and clear error on swipe
@@ -2165,10 +2304,9 @@ const FullScreenGalleryModal = React.memo(({
     if (photos[currentIndex - 1]) Image.prefetch(photos[currentIndex - 1].path).catch(() => { });
     if (photos[currentIndex + 1]) Image.prefetch(photos[currentIndex + 1].path).catch(() => { });
 
-    // Clear error message when swiping to a new image
     setErrorMsg(null);
     if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
-  }, [currentIndex, photos]);
+  }, [currentIndex, photoPathsKey]);
 
   const getItemLayout = useCallback((data, index) => (
     { length: width, offset: width * index, index }
@@ -2179,46 +2317,57 @@ const FullScreenGalleryModal = React.memo(({
   }, []);
 
   const renderItem = useCallback(({ item }) => (
-    <ZoomableImage uri={item.path} onTap={toggleOverlays} />
-  ), [toggleOverlays]);
+    <View style={styles.fullScreenPage}>
+      <ZoomableImage
+        uri={item.path}
+        version={item.imageVersion || 0}
+        onTap={toggleOverlays}
+        onZoomChange={handleZoomChange}
+      />
+    </View>
+  ), [toggleOverlays, handleZoomChange]);
 
   if (!visible || photos.length === 0) return null;
 
-  const currentPhoto = photos[currentIndex];
   if (!currentPhoto) return null;
 
+  // Absolute overlay (NOT RN Modal): power menu Modal can stack on top without
+  // tearing down / flickering this image surface.
   return (
-    <Modal
-      visible={visible}
-      transparent={true}
-      onRequestClose={onClose}
-      animationType="fade"
-      statusBarTranslucent={true}
-    >
+    <View style={styles.fullScreenOverlayRoot} pointerEvents="box-none">
       <GestureHandlerRootView style={styles.fullScreenModalBackground}>
 
         <View style={styles.gestureContainer}>
-          <FlatList
+          <GHFlatList
             ref={flatListRef}
             data={photos}
-            keyExtractor={(item) => item.path}
+            keyExtractor={(item) => normalizePhotoPath(item)}
             renderItem={renderItem}
             horizontal
             pagingEnabled
+            scrollEnabled={pagerScrollEnabled}
             showsHorizontalScrollIndicator={false}
             initialScrollIndex={initialIndex >= 0 && initialIndex < photos.length ? initialIndex : 0}
             getItemLayout={getItemLayout}
             onViewableItemsChanged={onViewableItemsChanged}
             viewabilityConfig={viewabilityConfig}
+            decelerationRate="fast"
+            snapToInterval={width}
+            snapToAlignment="start"
+            disableIntervalMomentum
+            scrollEventThrottle={16}
+            bounces={false}
+            overScrollMode="never"
+            directionalLockEnabled
             windowSize={5}
             maxToRenderPerBatch={3}
             initialNumToRender={3}
-            removeClippedSubviews={true}
+            removeClippedSubviews={false}
           />
         </View>
 
         {/* Header (Back button, Date and Index) */}
-        {showOverlays && (
+        {overlaysVisible && (
           <View style={styles.fullscreenHeader}>
             <TouchableOpacity
               style={styles.backButtonContainer}
@@ -2296,7 +2445,7 @@ const FullScreenGalleryModal = React.memo(({
         */}
 
         {/* Sub-header (Filename only) - Small, above the image */}
-        {showOverlays && (
+        {overlaysVisible && (
           <View style={styles.fullscreenMetadataSubHeader}>
             <Text style={styles.fullScreenPhotoNameSmall} numberOfLines={1}>
               {currentPhoto.name}
@@ -2305,17 +2454,15 @@ const FullScreenGalleryModal = React.memo(({
         )}
 
         {/* Action buttons (Footer Area) */}
-        {showOverlays && (
+        {overlaysVisible && (
           <View style={styles.actionContainerFull}>
-            {/* Status Indicator / Loader */}
-            {(currentPhoto.uploadStatus === 'PENDING' || currentPhoto.uploadStatus === 'UPLOADING') ? (
+            {showUploadingFooter ? (
               <View style={styles.loaderContainerFull}>
                 <ActivityIndicator size="small" color={ACCENT_TEAL} />
                 <Text style={[styles.btnText, { marginLeft: 10 }]}>Uploading...</Text>
               </View>
             ) : (
               <>
-                {/* Upload / Retry Button */}
                 {!isGuest && currentPhoto.uploadStatus !== 'UPLOADED' && (
                   <TouchableOpacity
                     style={styles.uploadButtonFull}
@@ -2337,7 +2484,6 @@ const FullScreenGalleryModal = React.memo(({
                   </TouchableOpacity>
                 )}
 
-                {/* Bluetooth Share Button */}
                 <TouchableOpacity
                   style={styles.uploadButtonFull}
                   onPress={() => {
@@ -2350,7 +2496,6 @@ const FullScreenGalleryModal = React.memo(({
                   <Text style={styles.btnText}>Share</Text>
                 </TouchableOpacity>
 
-                {/* Delete Button */}
                 <TouchableOpacity
                   style={styles.deleteButton}
                   onPress={() => {
@@ -2372,13 +2517,22 @@ const FullScreenGalleryModal = React.memo(({
           </View>
         )}
       </GestureHandlerRootView>
-    </Modal>
+    </View>
   );
 });
 
 const styles = StyleSheet.create({
   gestureContainer: {
     flex: 1,
+  },
+  fullScreenPage: {
+    width,
+    height: screenHeight,
+  },
+  fullScreenOverlayRoot: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 2000,
+    elevation: 2000,
   },
   container: {
     flex: 1,

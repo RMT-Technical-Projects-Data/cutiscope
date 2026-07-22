@@ -53,6 +53,7 @@ import DeviceInfo from 'react-native-device-info';
 import { UserMessages } from '../utils/userMessages';
 import { ensureGuestPhotosDir, getGuestPhotosDir } from '../utils/guestPhotos';
 import { SESSION_ACTIVITY_EVENT, showInAppToast } from '../utils/Helpers';
+import Orientation from 'react-native-orientation-locker';
 
 // Import Auth Context
 import { useAuth } from '../context/AuthContext';
@@ -431,9 +432,9 @@ const CameraScreen = ({ navigation }) => {
   // Background pipeline (CaptureQueue): the actual per-job work is injected via
   // this ref so the queue always calls the freshest closures without stale state.
   const captureProcessorRef = useRef(null);
-  // After the last shot, wait 3s before watermark/processing so continuous
-  // capture never fights image processing for the shutter / memory.
-  const CAPTURE_PROCESS_DEFER_MS = 3000;
+  // After the last shot, briefly wait before watermark so continuous capture
+  // stays snappy — but keep this short so gallery always gets scaled images soon.
+  const CAPTURE_PROCESS_DEFER_MS = 400;
   // Hold-to-burst: true while finger is down on the capture button.
   const continuousCaptureRef = useRef(false);
   const [onCapturePress, setOnCapturePress] = useState(false);
@@ -651,6 +652,7 @@ const CameraScreen = ({ navigation }) => {
     // When screen comes into focus
     const unsubscribeFocus = navigation.addListener('focus', () => {
       console.log('📸 CameraScreen FOCUSED');
+      Orientation.lockToPortrait();
 
       // Cancel any pending blur timeout if we quickly returned
       if (blurTimeout) {
@@ -1236,6 +1238,26 @@ const CameraScreen = ({ navigation }) => {
 
     } catch (error) {
       console.error('Local save failed:', error);
+
+      // Never fall back to public Pictures for guest — those survive exit-guest cleanup.
+      if (forGuest) {
+        try {
+          const fallbackDir = await ensureGuestPhotosDir();
+          const fallbackPath = `${fallbackDir}/${fileName || `Cutiscope_${Date.now()}.jpg`}`;
+          await RNFS.copyFile(sourcePath, fallbackPath);
+          return {
+            success: true,
+            path: fallbackPath,
+            fileName: targetFileName || fileName,
+            localUrl: `file://${fallbackPath}`,
+            directory: fallbackDir,
+            isCache: true,
+          };
+        } catch (guestFallbackErr) {
+          console.error('Guest save fallback failed:', guestFallbackErr);
+          throw new Error(`Could not save guest image: ${guestFallbackErr.message}`);
+        }
+      }
 
       // Try Pictures directory as fallback
       try {
@@ -2165,30 +2187,33 @@ const CameraScreen = ({ navigation }) => {
   // };
 
   const processImage = async (uri, zoomVal = 1.0, patientName = '', part = '', orientation = null) => {
-    try {
-      console.log('🖼️ processImage: Offloading to Native Module for', uri);
-      
-      const { ImageProcessorModule } = NativeModules;
-      if (!ImageProcessorModule) {
-        console.warn('ImageProcessorModule not found, returning original uri');
-        return uri;
-      }
+    console.log('🖼️ processImage: Offloading to Native Module for', uri);
 
-      // The native module runs asynchronously on a background thread (Dispatchers.IO)
-      // and returns the path to the processed image.
-      const processedUri = await ImageProcessorModule.processImageAsync(
-        uri,
-        zoomVal,
-        patientName,
-        part,
-        orientation
-      );
-      
-      return processedUri;
-    } catch (err) {
-      console.error('❌ Native processImage error:', err);
-      return uri;
+    const { ImageProcessorModule } = NativeModules;
+    if (!ImageProcessorModule) {
+      throw new Error('ImageProcessorModule not found');
     }
+
+    const processedUri = await ImageProcessorModule.processImageAsync(
+      uri,
+      zoomVal,
+      patientName,
+      part,
+      orientation
+    );
+
+    if (!processedUri) {
+      throw new Error('processImage returned empty result');
+    }
+
+    const cleanIn = uri.startsWith('file://') ? uri.slice(7) : uri;
+    const cleanOut = processedUri.startsWith('file://') ? processedUri.slice(7) : processedUri;
+    // Reject silent "return original" behavior — gallery must get a watermarked file.
+    if (cleanOut === cleanIn) {
+      throw new Error('processImage did not produce a watermarked output');
+    }
+
+    return processedUri;
   };
 
   // Move the camera's temp file into a queue-owned staging folder (a fast rename
@@ -2219,8 +2244,8 @@ const CameraScreen = ({ navigation }) => {
 
   // The per-job worker used by CaptureQueue. Kept in a ref (updated every render)
   // so the queue always runs against the freshest functions/state.
-  // Gallery already has an instant copy at job.galleryPath; this step only
-  // watermark/replace that file, then hand off uploads. Never blocks the shutter.
+  // Gallery only receives watermarked images (scale baked in). Upload/network
+  // never decide whether the scale is present on the stored file.
   captureProcessorRef.current = async (job) => {
     if (!job?.rawPath) {
       throw new Error('Capture job missing rawPath');
@@ -2236,36 +2261,33 @@ const CameraScreen = ({ navigation }) => {
       sourceForProcess = job.galleryPath;
     }
 
-    let cleanProcessed = null;
-    try {
-      const processedPath = await processImage(
-        sourceForProcess, job.zoom, job.patientName, job.bodyPart, job.orientation
-      );
-      cleanProcessed = processedPath && processedPath.startsWith('file://')
-        ? processedPath.slice(7) : processedPath;
-    } catch (processErr) {
-      console.warn('processImage failed; keeping instant gallery copy:', processErr?.message || processErr);
+    // Must succeed — CaptureQueue retries on throw. Never leave an unscaled final.
+    const processedPath = await processImage(
+      sourceForProcess,
+      job.zoom > 0 ? job.zoom : 1.0,
+      job.patientName || '',
+      job.bodyPart || '',
+      job.orientation || 'portrait'
+    );
+    const cleanProcessed = processedPath.startsWith('file://')
+      ? processedPath.slice(7)
+      : processedPath;
+
+    if (!(await RNFS.exists(cleanProcessed))) {
+      throw new Error(`Processed file missing: ${cleanProcessed}`);
     }
 
-    let finalPath = job.galleryPath || null;
+    let finalPath = null;
+    let savedFileName = job.fileName;
+    let savedDirectory = '';
 
-    if (cleanProcessed && (await RNFS.exists(cleanProcessed))) {
-      if (job.galleryPath) {
-        // Replace the instant gallery file in place with the watermarked version.
-        try {
-          await RNFS.copyFile(cleanProcessed, job.galleryPath);
-          finalPath = job.galleryPath;
-        } catch (replaceErr) {
-          console.warn('In-place replace failed, saving as new file:', replaceErr?.message || replaceErr);
-          const localResult = await saveImageLocallyOnly(cleanProcessed, job.fileName, {
-            forGuest: job.isGuest,
-            box: job.boxCtx,
-            ctxUserData: job.userCtx,
-            skipScan: true,
-          });
-          finalPath = localResult.path;
-        }
-      } else {
+    if (job.galleryPath) {
+      // Hydrated / legacy jobs that already wrote a raw gallery copy: overwrite with watermarked.
+      try {
+        await RNFS.copyFile(cleanProcessed, job.galleryPath);
+        finalPath = job.galleryPath;
+      } catch (replaceErr) {
+        console.warn('In-place replace failed, saving as new file:', replaceErr?.message || replaceErr);
         const localResult = await saveImageLocallyOnly(cleanProcessed, job.fileName, {
           forGuest: job.isGuest,
           box: job.boxCtx,
@@ -2273,25 +2295,41 @@ const CameraScreen = ({ navigation }) => {
           skipScan: true,
         });
         finalPath = localResult.path;
+        savedFileName = localResult.fileName;
+        savedDirectory = localResult.directory;
       }
-
-      if (cleanProcessed !== job.rawPath && cleanProcessed !== finalPath) {
-        try { if (await RNFS.exists(cleanProcessed)) await RNFS.unlink(cleanProcessed); } catch (_) { }
-      }
-    } else if (!finalPath) {
-      // No instant gallery copy and processing failed — save raw so the shot is not lost.
-      const localResult = await saveImageLocallyOnly(sourceForProcess, job.fileName, {
+      notifyGalleryPhotoUpdated(finalPath);
+    } else {
+      const localResult = await saveImageLocallyOnly(cleanProcessed, job.fileName, {
         forGuest: job.isGuest,
         box: job.boxCtx,
         ctxUserData: job.userCtx,
         skipScan: true,
-        keepSource: true,
       });
       finalPath = localResult.path;
+      savedFileName = localResult.fileName;
+      savedDirectory = localResult.directory;
+
+      // First gallery entry for this shot — always includes scale.
+      prependGalleryPhoto({
+        path: `file://${finalPath}`,
+        absolutePath: finalPath,
+        name: savedFileName,
+        directory: savedDirectory,
+        timestamp: new Date(),
+        mtime: new Date().toISOString(),
+        uploadStatus: 'PENDING',
+        hasScale: true,
+        imageVersion: Date.now(),
+      });
     }
 
     if (!finalPath) {
-      throw new Error('No gallery path after capture processing');
+      throw new Error('No gallery path after watermark processing');
+    }
+
+    if (cleanProcessed !== job.rawPath && cleanProcessed !== finalPath) {
+      try { if (await RNFS.exists(cleanProcessed)) await RNFS.unlink(cleanProcessed); } catch (_) { }
     }
 
     if (Platform.OS === 'android' && !job.isGuest) {
@@ -2302,22 +2340,20 @@ const CameraScreen = ({ navigation }) => {
       setLatestPhotoUri({ path: finalPath });
     }
 
-    notifyGalleryPhotoUpdated(finalPath);
-
-    // Clean up staged raw (gallery copy remains)
     try {
       if (job.rawPath && job.rawPath !== finalPath && (await RNFS.exists(job.rawPath))) {
         await RNFS.unlink(job.rawPath);
       }
     } catch (_) { }
 
+    // Upload is optional and never gates local scale baking.
     if (!job.isGuest) {
       DeviceEventEmitter.emit('CAPTURE_PROCESSED', {
         localResult: {
           path: finalPath,
-          fileName: job.fileName || finalPath.split('/').pop(),
+          fileName: savedFileName || finalPath.split('/').pop(),
         },
-        job
+        job,
       });
     }
   };
@@ -2378,8 +2414,8 @@ const CameraScreen = ({ navigation }) => {
       // letting a 10–15 burst pile up until the user pauses.
       deferGate: () => {
         if (!isFocusedRef.current) return false;
-        // Hold off while shooting, while finger is held for continuous burst,
-        // and for 3s after the last shot so processing never blocks capture.
+        // Hold off while shooting / burst; process quickly afterward so every
+        // gallery image gets its scale watermark without waiting on network.
         return (
           continuousCaptureRef.current ||
           isCapturingRef.current ||
@@ -2387,8 +2423,8 @@ const CameraScreen = ({ navigation }) => {
         );
       },
       maxRetries: 4,
-      // High backlog before forcing process mid-burst — prefer waiting the 3s defer.
-      forceProcessAfter: 30,
+      // Drain watermark queue during longer bursts so unscaled images never pile up.
+      forceProcessAfter: 8,
     });
     CaptureQueue.hydrate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2510,7 +2546,11 @@ const CameraScreen = ({ navigation }) => {
         const guestSnap = isGuest;
         const zoomSnap = zoomBtnValue;
         const bodyPartSnap = bodyPart;
-        const orientationSnap = photo.orientation;
+        // Dermascope + UI are portrait-locked. Never pass device-tilt orientations
+        // (landscape-left/right) into processing — that was inverting captures.
+        const orientationSnap = FORCE_PORTRAIT_NO_DEVICE_TILT_ROTATION
+          ? 'portrait'
+          : photo.orientation;
         const usernameSnap = isGuest ? '' : getUsername();
 
         if (!guestSnap) {
@@ -2521,44 +2561,20 @@ const CameraScreen = ({ navigation }) => {
           }
         }
 
-        // Instant gallery visibility + background watermark/upload — fully detached
-        // from the shutter so a continuous burst never waits on disk/network.
+        // Stage raw + enqueue watermark. Gallery only lists the image AFTER scale
+        // is baked (local) — never depends on upload/network.
         (async () => {
           try {
             const stagedPath = await stageRawForQueue(rawPhotoPath);
 
-            // Copy into the real gallery folder NOW so Gallery never looks empty
-            // while the watermark queue is still catching up.
-            const localResult = await saveImageLocallyOnly(stagedPath, fileName, {
-              forGuest: guestSnap,
-              box: boxSnap,
-              ctxUserData: userSnap,
-              skipScan: true,
-              keepSource: true,
-            });
-
+            // Instant camera-corner preview only (raw). Gallery waits for watermark.
             if (captureSeq >= latestCaptureSeqRef.current) {
-              setLatestPhotoUri({ path: localResult.path });
-            }
-
-            prependGalleryPhoto({
-              path: `file://${localResult.path}`,
-              absolutePath: localResult.path,
-              name: localResult.fileName,
-              directory: localResult.directory,
-              timestamp: new Date(),
-              mtime: new Date().toISOString(),
-              uploadStatus: 'PENDING',
-            });
-
-            if (Platform.OS === 'android' && !guestSnap) {
-              RNFS.scanFile(localResult.path).catch(() => {});
+              setLatestPhotoUri({ path: stagedPath });
             }
 
             CaptureQueue.enqueue({
               rawPath: stagedPath,
-              galleryPath: localResult.path,
-              fileName: localResult.fileName,
+              fileName,
               isGuest: guestSnap,
               captureSeq,
               zoom: zoomSnap,
@@ -2570,8 +2586,7 @@ const CameraScreen = ({ navigation }) => {
               userCtx: userSnap,
             });
           } catch (bgErr) {
-            console.error('Instant gallery save / enqueue failed:', bgErr);
-            // Last resort: still queue the camera temp so the shot isn't lost.
+            console.error('Stage / enqueue failed:', bgErr);
             try {
               const stagedPath = await stageRawForQueue(rawPhotoPath);
               if (captureSeq >= latestCaptureSeqRef.current) {
@@ -2895,7 +2910,10 @@ const CameraScreen = ({ navigation }) => {
                   photoQualityBalance="speed"
                   enableZoomGesture={false}
                   enableFpsGraph={false}
-                  orientation="portrait"
+                  // Lock photo orientation to the portrait-locked preview so a tilted
+                  // phone cannot write landscape-left/right EXIF that flips the shot.
+                  // (VisionCamera v4 default is "device", which ignores the UI lock.)
+                  outputOrientation="preview"
                   // Add explicit focus prop check. 
                   // If showSlider is true (Manual Focus Mode), pass the focus value.
                   // Otherwise, it defaults to auto-focus (or whatever tap-to-focus set).
@@ -3035,15 +3053,16 @@ const CameraScreen = ({ navigation }) => {
           isDestructive={true}
           onConfirm={async () => {
             setExitModalVisible(false);
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'Welcome' }],
-            });
             if (isGuest) {
+              // Cleanup first so CaptureQueue / gallery cache cannot recreate files.
               await exitGuestMode();
             } else {
               await signOut();
             }
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'Welcome' }],
+            });
           }}
         />
 
