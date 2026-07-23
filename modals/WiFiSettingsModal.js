@@ -41,6 +41,7 @@ import {
   getAdaptiveScanInterval,
   getScanFailureBackoffMs,
   getNetworkListFingerprint,
+  mergeWifiScanResults,
 } from '../utils/wifiHelpers';
 
 const { width, height } = Dimensions.get('window');
@@ -113,9 +114,10 @@ const WifiSettingsModal = ({ visible, onClose }) => {
   const connectAttemptRef = useRef(0);
   const lastNetworkFingerprintRef = useRef('');
   const scanNetworksRef = useRef(null);
+  const networksCacheRef = useRef([]);
   // Use a very short debounce so new networks appear almost immediately,
   // while still avoiding excessive re-renders.
-  const debouncedNetworks = useDebounce(networks, 100);
+  const debouncedNetworks = useDebounce(networks, 50);
 
   const beginConnectAttempt = useCallback((ssid) => {
     const normalized = normalizeSSID(ssid);
@@ -852,7 +854,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
     }
   };
 
-  // Ported improved scanNetworks from WifiOnboardingScreen
+  // Fast continuous scan — same approach as onboarding (root scan + poll + merge)
   const scanNetworks = useCallback(async (forceScan = false) => {
     if (scanInProgressRef.current || !isMountedRef.current || isConnectingRef.current) return;
 
@@ -878,6 +880,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
     if (!wifiState) {
       if (isMountedRef.current) {
         setNetworks([]);
+        networksCacheRef.current = [];
         setIsScanning(false);
         setIsRefreshing(false);
       }
@@ -887,13 +890,12 @@ const WifiSettingsModal = ({ visible, onClose }) => {
     scanInProgressRef.current = true;
     if (isMountedRef.current) {
       setIsScanning(true);
-      if (networks.length > 0) {
+      if (networksCacheRef.current.length > 0) {
         setIsRefreshing(true);
       }
     }
 
     let scanSucceeded = false;
-    let hasFadingNetworks = false;
 
     try {
       const locationPermission = await requestLocationPermission();
@@ -906,15 +908,46 @@ const WifiSettingsModal = ({ visible, onClose }) => {
 
       console.log(`Starting WiFi scan in Modal (attempt ${scanAttemptCount + 1})...`);
 
+      const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
       let results = [];
+
       try {
         if (Platform.OS === 'android') {
-          await WifiManager.reScanAndLoadWifiList();
-          results = await WifiManager.loadWifiList();
+          if (SystemTimeModule?.forceWifiScan) {
+            try {
+              await SystemTimeModule.forceWifiScan();
+            } catch (rootScanErr) {
+              console.warn('Root wifi start-scan failed in Modal:', rootScanErr);
+            }
+          }
+
+          try {
+            const rescanResults = await WifiManager.reScanAndLoadWifiList();
+            if (Array.isArray(rescanResults) && rescanResults.length > 0) {
+              results = rescanResults;
+            }
+          } catch (rescanErr) {
+            console.warn('reScanAndLoadWifiList failed in Modal:', rescanErr);
+          }
+
+          for (let attempt = 0; attempt < 3; attempt++) {
+            if (attempt > 0 || results.length === 0) {
+              await sleep(attempt === 0 ? 500 : 400);
+            }
+            try {
+              const cached = await WifiManager.loadWifiList();
+              if (Array.isArray(cached) && cached.length >= results.length) {
+                results = cached;
+              }
+              if (results.length >= 3 && attempt >= 1) break;
+            } catch (loadErr) {
+              console.warn('loadWifiList poll failed in Modal:', loadErr);
+            }
+          }
         } else {
           results = await WifiManager.loadWifiList();
         }
-        scanSucceeded = true;
+        scanSucceeded = Array.isArray(results);
       } catch (error) {
         console.warn('Primary scan failed in Modal:', error);
         try {
@@ -926,87 +959,29 @@ const WifiSettingsModal = ({ visible, onClose }) => {
       }
 
       const scanNow = Date.now();
-
       const validScanResults = (Array.isArray(results) ? results : []).filter(network =>
-        network && network.SSID && network.SSID.trim() !== '' &&
+        network && network.SSID && String(network.SSID).trim() !== '' &&
         network.SSID !== '<unknown ssid>' && network.SSID !== '0x'
       );
 
-      const latestScanMap = new Map();
-      validScanResults.forEach(network => {
-        const ssid = network.SSID;
-        const currentBest = latestScanMap.get(ssid);
-        if (!currentBest || Math.abs(network.level || -100) < Math.abs(currentBest.level || -100)) {
-          latestScanMap.set(ssid, {
-            ...network,
-            BSSID: network.BSSID || `ssid_${ssid}_${scanNow}`,
-            level: network.level || -75,
-            capabilities: network.capabilities || '',
-            timestamp: scanNow,
-            isFading: false,
-            missCount: 0
-          });
-        }
-      });
-
-      const nextMissedScanCounts = { ...missedScanCountsRef.current };
-      const seenSSIDs = new Set(latestScanMap.keys());
-      const agedNetworks = [];
-
-      networks.forEach(oldNet => {
-        const ssid = oldNet.SSID;
-        if (seenSSIDs.has(ssid)) {
-          // Network still visible: latestScanMap version will be used
-        } else {
-          const missCount = (nextMissedScanCounts[ssid] || 0) + 1;
-          const firstMissedAt = oldNet.firstMissedAt || scanNow;
-          const timeSinceFirstMiss = scanNow - firstMissedAt;
-
-          if (missCount <= 3 && timeSinceFirstMiss < 15000) {
-            agedNetworks.push({
-              ...oldNet,
-              isFading: true,
-              missCount: missCount,
-              firstMissedAt: firstMissedAt
-            });
-            nextMissedScanCounts[ssid] = missCount;
-            hasFadingNetworks = true;
-          } else {
-            delete nextMissedScanCounts[ssid];
-          }
-        }
-      });
-
-      latestScanMap.forEach((net, ssid) => {
-        agedNetworks.push(net);
-        nextMissedScanCounts[ssid] = 0;
-      });
-
-      const finalUniqueMap = new Map();
-      agedNetworks.forEach(net => {
-        const ssid = net.SSID;
-        const existing = finalUniqueMap.get(ssid);
-        if (!existing || (!net.isFading && existing.isFading) ||
-          (net.isFading === existing.isFading && Math.abs(net.level || -100) < Math.abs(existing.level || -100))) {
-          finalUniqueMap.set(ssid, net);
-        }
-      });
-
-      const finalSortedList = Array.from(finalUniqueMap.values()).sort((a, b) =>
-        Math.abs(a.level || -100) - Math.abs(b.level || -100)
+      const merged = mergeWifiScanResults(
+        networksCacheRef.current,
+        validScanResults,
+        scanNow
       );
+      const hasFadingNetworks = merged.some((n) => n.isFading);
 
       if (isMountedRef.current) {
-        const nextFingerprint = getNetworkListFingerprint(finalSortedList);
+        const nextFingerprint = getNetworkListFingerprint(merged);
         const networksChanged = nextFingerprint !== lastNetworkFingerprintRef.current;
         lastNetworkFingerprintRef.current = nextFingerprint;
 
-        setNetworks(finalSortedList);
-        missedScanCountsRef.current = nextMissedScanCounts;
+        setNetworks(merged);
+        networksCacheRef.current = merged;
         setLastScanTime(scanNow);
-        lastNetworkCountRef.current = finalSortedList.length;
+        lastNetworkCountRef.current = merged.length;
 
-        if (scanSucceeded) {
+        if (scanSucceeded && validScanResults.length > 0) {
           scanRetryCountRef.current = 0;
         } else {
           scanRetryCountRef.current += 1;
@@ -1014,10 +989,11 @@ const WifiSettingsModal = ({ visible, onClose }) => {
 
         await fetchCurrentNetwork();
 
+        // Keep scanning continuously while the modal is open.
         if (wifiEnabled && !isConnectingRef.current) {
           scheduleNextScan({
             resetAdaptive: networksChanged,
-            useFailureBackoff: !scanSucceeded,
+            useFailureBackoff: !scanSucceeded || validScanResults.length === 0,
             hasFadingNetworks,
           });
         }
@@ -1025,16 +1001,8 @@ const WifiSettingsModal = ({ visible, onClose }) => {
     } catch (error) {
       console.warn('Scan error in Modal:', error);
       scanRetryCountRef.current += 1;
-      if (isMountedRef.current) {
-        const errorMissCounts = { ...missedScanCountsRef.current };
-        networks.forEach(net => {
-          errorMissCounts[net.SSID] = (errorMissCounts[net.SSID] || 0) + 1;
-        });
-        missedScanCountsRef.current = errorMissCounts;
-
-        if (wifiEnabled && !isConnectingRef.current) {
-          scheduleNextScan({ useFailureBackoff: true });
-        }
+      if (isMountedRef.current && wifiEnabled && !isConnectingRef.current) {
+        scheduleNextScan({ useFailureBackoff: true });
       }
     } finally {
       if (isMountedRef.current) {
@@ -1043,7 +1011,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
         setIsRefreshing(false);
       }
     }
-  }, [lastScanTime, scanAttemptCount, fetchCurrentNetwork, networks, wifiEnabled, scheduleNextScan]);
+  }, [lastScanTime, scanAttemptCount, fetchCurrentNetwork, wifiEnabled, scheduleNextScan]);
 
   scanNetworksRef.current = scanNetworks;
 
@@ -1128,7 +1096,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
     }
   };
 
-  // Get saved networks (persisted SSIDs, passwords, and active connection)
+  // Saved Networks tab: always list every saved SSID (in range or not).
   const getSavedNetworks = () => {
     const savedBySSID = new Map();
 
@@ -1146,21 +1114,28 @@ const WifiSettingsModal = ({ visible, onClose }) => {
     };
 
     savedNetworkSSIDs.forEach(addEntry);
-    Object.keys(networkPasswords).forEach(addEntry);
+    Object.keys(networkPasswords || {}).forEach(addEntry);
     if (currentNetwork?.SSID) {
       addEntry(currentNetwork.SSID);
     }
 
-    return Array.from(savedBySSID.values());
+    const list = Array.from(savedBySSID.values());
+    list.sort((a, b) => {
+      const rank = (item) => (item.isConnected ? 0 : item.isAvailable ? 1 : 2);
+      const diff = rank(a) - rank(b);
+      return diff !== 0 ? diff : String(a.SSID).localeCompare(String(b.SSID));
+    });
+    return list;
   };
 
   const getConnectedNetworkEntries = () => {
     if (!currentNetwork?.SSID) return [];
 
     const normalized = normalizeSSID(currentNetwork.SSID);
-    const fromScan = networks.filter((net) => ssidsMatch(net.SSID, normalized));
+    const fromScan = networks.filter((net) => ssidsMatch(net.SSID, normalized) && !net.isFading);
     if (fromScan.length > 0) return fromScan;
 
+    // Still associated according to OS — keep showing until fetchCurrentNetwork clears it.
     if (connectionStatus === 'connected' || connectionStatus === 'verifying') {
       return [{
         SSID: normalized,
@@ -1185,8 +1160,7 @@ const WifiSettingsModal = ({ visible, onClose }) => {
     });
   };
 
-  // Available list: scanned networks only.
-  // Saved networks appear here when in range; out-of-range saved stay in Saved Networks only.
+  // Available list: currently scanned networks only (gone APs drop after merge aging).
   const getAvailableNetworksForMainList = () => {
     return networks.filter(
       (net) => !ssidsMatch(currentNetwork?.SSID, net.SSID)

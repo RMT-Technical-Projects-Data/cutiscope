@@ -320,6 +320,30 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
         }
     }
 
+    /**
+     * Trigger a privileged Wi-Fi scan (bypasses normal app scan throttling on many builds).
+     * Results still come from WifiManager scan cache — call loadWifiList shortly after.
+     */
+    @ReactMethod
+    public void forceWifiScan(com.facebook.react.bridge.Promise promise) {
+        try {
+            Process process = Runtime.getRuntime().exec("su");
+            DataOutputStream os = new DataOutputStream(process.getOutputStream());
+            os.writeBytes("cmd wifi start-scan\n");
+            os.writeBytes("exit\n");
+            os.flush();
+            os.close();
+            int exitCode = process.waitFor();
+            if (exitCode == 0) {
+                promise.resolve(true);
+            } else {
+                promise.reject("SCAN_FAILED", "Root wifi start-scan failed with exit code " + exitCode);
+            }
+        } catch (Exception e) {
+            promise.reject("SCAN_ERROR", e.getMessage());
+        }
+    }
+
     private String normalizeSsid(String ssid) {
         if (ssid == null) {
             return "";

@@ -22,12 +22,14 @@ import { showInAppToast, IN_APP_TOAST_EVENT } from '../utils/Helpers';
 import KioskTextInput from '../Components/KioskTextInput';
 import CustomKeyboard from '../Components/CustomKeyboard';
 import WifiManager from 'react-native-wifi-reborn';
-const { SystemTimeModule } = NativeModules;
+const { SystemTimeModule, ConnectivityModule } = NativeModules;
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import VerticalDivider from '../Components/VerticalDivider';
+import { getBaseUrl } from '../services/authService';
 import {
   normalizeSSID,
+  ssidsMatch,
   getPasswordForSSID,
   normalizePasswordMap,
   getAdaptiveScanInterval,
@@ -35,11 +37,63 @@ import {
   getNetworkListFingerprint,
   persistSavedNetworkSSID,
   removePersistedSavedNetworkSSID,
+  mergeWifiScanResults,
 } from '../utils/wifiHelpers';
 
 const WIFI_ICON = require('../assets/icon_wifi.png');
 
 const { width, height } = Dimensions.get('window');
+
+/** Wait for DHCP + native validation after Wi-Fi association. */
+const INTERNET_GRACE_MS = 12000;
+const INTERNET_POLL_MS = 2000;
+
+const probeInternetNative = async () => {
+  if (Platform.OS === 'android' && ConnectivityModule?.forceValidateNetwork) {
+    try {
+      if (ConnectivityModule.disableCaptivePortalChecks) {
+        await ConnectivityModule.disableCaptivePortalChecks();
+      }
+      const status = await ConnectivityModule.forceValidateNetwork(
+        `${getBaseUrl()}/api/health`
+      );
+      console.log('WifiOnboardingScreen - ConnectivityModule status:', status);
+      return status === 'WIFI_INTERNET' || status === 'CELLULAR_INTERNET';
+    } catch (error) {
+      console.warn('WifiOnboardingScreen - ConnectivityModule failed:', error);
+    }
+  }
+
+  const net = await NetInfo.fetch();
+  return !!(net?.isConnected && net.isInternetReachable !== false);
+};
+
+const logConnectivitySnapshot = async (label, extra = {}) => {
+  try {
+    const net = await NetInfo.fetch();
+    let ssid = null;
+    let ip = null;
+    try {
+      ssid = await WifiManager.getCurrentWifiSSID();
+      ip = await WifiManager.getIP();
+    } catch {
+      // SSID/IP may be unavailable without location permission
+    }
+    console.log(label, {
+      type: net.type,
+      isConnected: net.isConnected,
+      isInternetReachable: net.isInternetReachable,
+      details: net.details,
+      ssid,
+      ip,
+      ...extra,
+    });
+    return net;
+  } catch (error) {
+    console.warn(label, 'failed', error);
+    return null;
+  }
+};
 
 // Debounce utility function
 const useDebounce = (value, delay) => {
@@ -81,7 +135,9 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
   const [passwordModalToast, setPasswordModalToast] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  // isConnected = Internet available (NetInfo validated). Separate from Wi-Fi association.
   const [isConnected, setIsConnected] = useState(false);
+  const [internetStatus, setInternetStatus] = useState('idle'); // idle | waiting | available | unavailable
   const [checkingConnection, setCheckingConnection] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [lastScanTime, setLastScanTime] = useState(0);
@@ -104,6 +160,87 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
   const lastNetworkFingerprintRef = useRef('');
   const scanNetworksRef = useRef(null);
   const passwordToastTimerRef = useRef(null);
+  const internetGraceTimerRef = useRef(null);
+  const internetPollTimerRef = useRef(null);
+  const connectionStatusRef = useRef(connectionStatus);
+  const currentNetworkRef = useRef(currentNetwork);
+
+  useEffect(() => {
+    connectionStatusRef.current = connectionStatus;
+  }, [connectionStatus]);
+
+  useEffect(() => {
+    currentNetworkRef.current = currentNetwork;
+  }, [currentNetwork]);
+
+  const clearInternetGraceTimers = useCallback(() => {
+    if (internetGraceTimerRef.current) {
+      clearTimeout(internetGraceTimerRef.current);
+      internetGraceTimerRef.current = null;
+    }
+    if (internetPollTimerRef.current) {
+      clearInterval(internetPollTimerRef.current);
+      internetPollTimerRef.current = null;
+    }
+  }, []);
+
+  const markInternetAvailable = useCallback(() => {
+    clearInternetGraceTimers();
+    if (!isMountedRef.current) return;
+    setIsConnected(true);
+    setInternetStatus('available');
+  }, [clearInternetGraceTimers]);
+
+  const markInternetUnavailable = useCallback(() => {
+    clearInternetGraceTimers();
+    if (!isMountedRef.current) return;
+    setIsConnected(false);
+    setInternetStatus('unavailable');
+  }, [clearInternetGraceTimers]);
+
+  const startInternetGraceCheck = useCallback(async () => {
+    clearInternetGraceTimers();
+    if (!isMountedRef.current) return;
+
+    setInternetStatus('waiting');
+    setIsConnected(false);
+
+    await logConnectivitySnapshot('WifiOnboardingScreen - Internet grace start', {
+      connectionStatus: connectionStatusRef.current,
+      currentNetwork: currentNetworkRef.current?.SSID,
+    });
+
+    if (await probeInternetNative()) {
+      markInternetAvailable();
+      return;
+    }
+
+    const startedAt = Date.now();
+
+    internetPollTimerRef.current = setInterval(async () => {
+      if (await probeInternetNative()) {
+        markInternetAvailable();
+      }
+    }, INTERNET_POLL_MS);
+
+    internetGraceTimerRef.current = setTimeout(async () => {
+      // Clear poll first so we don't leave orphaned intervals.
+      if (internetPollTimerRef.current) {
+        clearInterval(internetPollTimerRef.current);
+        internetPollTimerRef.current = null;
+      }
+      internetGraceTimerRef.current = null;
+
+      if (await probeInternetNative()) {
+        markInternetAvailable();
+      } else {
+        console.log('WifiOnboardingScreen - Wi-Fi associated but Internet still unavailable after grace', {
+          elapsedMs: Date.now() - startedAt,
+        });
+        markInternetUnavailable();
+      }
+    }, INTERNET_GRACE_MS);
+  }, [clearInternetGraceTimers, markInternetAvailable, markInternetUnavailable]);
 
   const showPasswordModalToast = useCallback((message, durationMs = 3500) => {
     if (!message) return;
@@ -121,8 +258,9 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
       if (passwordToastTimerRef.current) {
         clearTimeout(passwordToastTimerRef.current);
       }
+      clearInternetGraceTimers();
     };
-  }, []);
+  }, [clearInternetGraceTimers]);
 
   useEffect(() => {
     if (!passwordModalVisible) {
@@ -140,7 +278,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
   }, [passwordModalVisible, showPasswordModalToast]);
 
   // Debounced networks to prevent flickering
-  const debouncedNetworks = useDebounce(networks, 500);
+  const debouncedNetworks = useDebounce(networks, 100);
 
   // === PERSISTENCE FUNCTIONS ===
   const loadSavedPasswords = async () => {
@@ -276,67 +414,112 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
     scheduleNextScan({ resetAdaptive });
   }, [scheduleNextScan]);
 
-  // Check internet connection
-  const checkInternetConnection = useCallback(async () => {
-    setCheckingConnection(true);
-    try {
-      const state = await NetInfo.fetch();
-      // On Android, isInternetReachable can be null or unreliable
-      const connected = state.isConnected && (state.isInternetReachable !== false);
-      console.log('WifiOnboardingScreen - Initial connection check:', {
-        isConnected: state.isConnected,
-        isInternetReachable: state.isInternetReachable,
-        type: state.type,
-        connected
-      });
-      setIsConnected(connected);
-      if (connected && connectionStatus !== 'verifying' && connectionStatus !== 'connecting') {
-        setConnectionStatus('connected');
-      }
-    } catch (error) {
-      console.error('Error checking internet:', error);
-      setIsConnected(false);
-    } finally {
-      setCheckingConnection(false);
-    }
-  }, [connectionStatus]);
-
+  // One-shot initial Internet probe — do not re-run when connectionStatus changes.
   useEffect(() => {
-    checkInternetConnection();
+    let cancelled = false;
 
-    const unsubscribe = NetInfo.addEventListener(state => {
-      // On Android, isInternetReachable can be null or unreliable
-      const connected = state.isConnected && (state.isInternetReachable !== false);
+    const runInitialCheck = async () => {
+      setCheckingConnection(true);
+      try {
+        await logConnectivitySnapshot('WifiOnboardingScreen - Initial connection check');
+        const ok = await probeInternetNative();
+        if (cancelled || !isMountedRef.current) return;
+        if (ok) {
+          markInternetAvailable();
+        } else {
+          setIsConnected(false);
+          setInternetStatus('idle');
+        }
+      } catch (error) {
+        console.error('Error checking internet:', error);
+        if (!cancelled && isMountedRef.current) {
+          setIsConnected(false);
+          setInternetStatus('idle');
+        }
+      } finally {
+        if (!cancelled && isMountedRef.current) {
+          setCheckingConnection(false);
+        }
+      }
+    };
+
+    runInitialCheck();
+
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      const wifiAssociated =
+        connectionStatusRef.current === 'connected' && !!currentNetworkRef.current;
+
       console.log('WifiOnboardingScreen - NetInfo state changed:', {
+        type: state.type,
         isConnected: state.isConnected,
         isInternetReachable: state.isInternetReachable,
-        type: state.type,
-        connected
+        wifiAssociated,
+        connectionStatus: connectionStatusRef.current,
+        currentNetwork: currentNetworkRef.current?.SSID,
       });
-      setIsConnected(connected);
-      if (connected) {
-        setConnectionStatus('connected');
+
+      // NetInfo alone is unreliable on Limited Wi-Fi — let grace/native probe handle it.
+      if (wifiAssociated) {
+        if (!internetGraceTimerRef.current && !internetPollTimerRef.current) {
+          startInternetGraceCheck();
+        }
+        return;
       }
+
+      // Quick accept if Android already says Internet is fine.
+      if (state.isConnected && state.isInternetReachable !== false) {
+        startInternetGraceCheck();
+        return;
+      }
+
+      clearInternetGraceTimers();
+      setIsConnected(false);
+      setInternetStatus('idle');
     });
 
-    return () => unsubscribe();
-  }, [checkInternetConnection]);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [clearInternetGraceTimers, markInternetAvailable, startInternetGraceCheck]);
 
-  // Auto-navigate to WelcomeScreen when connected
+  // After Wi-Fi association, wait briefly for Android Internet validation.
+  useEffect(() => {
+    if (connectionStatus !== 'connected' || !currentNetwork) {
+      return;
+    }
+    if (
+      isConnected ||
+      internetStatus === 'waiting' ||
+      internetStatus === 'available' ||
+      internetStatus === 'unavailable'
+    ) {
+      return;
+    }
+    startInternetGraceCheck();
+  }, [
+    connectionStatus,
+    currentNetwork,
+    isConnected,
+    internetStatus,
+    startInternetGraceCheck,
+  ]);
+
+  // Auto-navigate only when Internet is available (app needs APIs/S3/updates).
   useEffect(() => {
     console.log('Auto-navigation check:', {
       isConnected,
+      internetStatus,
       currentNetwork: currentNetwork?.SSID,
       connectionStatus,
       isIntentional,
-      hasUserSuccessfullyConnected
+      hasUserSuccessfullyConnected,
     });
 
     if (isConnected && currentNetwork && (!isIntentional || hasUserSuccessfullyConnected)) {
       console.log('WiFi connected with internet, auto-navigating to WelcomeScreen');
       showInAppToast('Connected! Proceeding to app...', { durationMs: 2000 });
 
-      // Delay navigation slightly for smooth UX
       const navigationTimer = setTimeout(() => {
         console.log('Calling onContinue() to navigate away from WiFi screen');
         onContinue();
@@ -344,7 +527,15 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
 
       return () => clearTimeout(navigationTimer);
     }
-  }, [isConnected, currentNetwork, onContinue, isIntentional, hasUserSuccessfullyConnected]);
+  }, [
+    isConnected,
+    currentNetwork,
+    onContinue,
+    isIntentional,
+    hasUserSuccessfullyConnected,
+    internetStatus,
+    connectionStatus,
+  ]);
 
   // Helper functions
   const getSignalStrengthLabel = (level) => {
@@ -576,7 +767,8 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
             setHasUserSuccessfullyConnected(true);
             setPasswordError(false);
             await fetchCurrentNetwork();
-            setIsConnected(true);
+            // Do not force Internet=true — Android validation may still be pending.
+            startInternetGraceCheck();
             shouldForceScanRef.current = true;
             scheduleNextScan({ resetAdaptive: true });
           } else {
@@ -625,10 +817,10 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
         isConnectingRef.current = false;
       }
     },
-    [password, fetchCurrentNetwork, verifyConnection, savePasswordToStorage, pauseScanning, scheduleNextScan, resumeScanning, showPasswordModalToast]
+    [password, fetchCurrentNetwork, verifyConnection, savePasswordToStorage, pauseScanning, scheduleNextScan, resumeScanning, showPasswordModalToast, startInternetGraceCheck]
   );
 
-  // Improved scanNetworks function
+  // Improved scanNetworks function — fast refresh + merge so new hotspots appear quickly
   const scanNetworks = useCallback(async (forceScan = false) => {
     if (scanInProgressRef.current) {
       console.log('Scan already in progress, skipping');
@@ -644,7 +836,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
     const now = Date.now();
     const timeSinceLastScan = now - lastScanTime;
     const minScanInterval = forceScan || shouldForceScanRef.current || isManualRefresh
-      ? (isManualRefresh ? 3000 : 0)
+      ? (isManualRefresh ? 1500 : 0)
       : getAdaptiveScanInterval(scanSessionStartRef.current, false);
 
     if (!forceScan && !shouldForceScanRef.current && timeSinceLastScan < minScanInterval) {
@@ -658,13 +850,9 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
       return;
     }
 
-    // Reset force scan flag
     shouldForceScanRef.current = false;
-
-    // Update scan attempt count
     setScanAttemptCount(prev => prev + 1);
 
-    // Check WiFi state
     const wifiState = await checkWifiState();
     if (!wifiState) {
       if (isMountedRef.current) {
@@ -676,49 +864,75 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
       return;
     }
 
-    // Start scanning
     scanInProgressRef.current = true;
     if (isMountedRef.current) {
       setIsScanning(true);
-      if (networks.length > 0) {
+      if (networksCacheRef.current.length > 0) {
         setIsRefreshing(true);
       }
-      // Removed setNetworks([]) to prevent blinking
     }
 
     try {
-      // Request permissions
       const locationPermission = await requestLocationPermission();
       if (!locationPermission) {
         showInAppToast('Location permission required', { durationMs: 2000 });
         return;
       }
 
-      // Request WiFi permission for Android 13+
       await requestNearbyWifiPermission();
 
       console.log(`Starting WiFi scan (attempt ${scanAttemptCount + 1})...`);
 
-      // Add delay to ensure stable scanning
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Try to scan networks
       let results = [];
       let scanError = null;
 
+      const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
       try {
-        // Use reScanAndLoadWifiList for better results on Android
         if (Platform.OS === 'android') {
-          await WifiManager.reScanAndLoadWifiList();
-          results = await WifiManager.loadWifiList();
+          // Prefer privileged scan on kiosk/root builds — less Android throttle.
+          if (SystemTimeModule?.forceWifiScan) {
+            try {
+              await SystemTimeModule.forceWifiScan();
+            } catch (rootScanErr) {
+              console.warn('Root wifi start-scan failed, using WifiManager:', rootScanErr);
+            }
+          }
+
+          // reScanAndLoadWifiList returns the list — do not discard it.
+          try {
+            const rescanResults = await WifiManager.reScanAndLoadWifiList();
+            if (Array.isArray(rescanResults) && rescanResults.length > 0) {
+              results = rescanResults;
+            }
+          } catch (rescanErr) {
+            console.warn('reScanAndLoadWifiList failed (often throttle):', rescanErr);
+          }
+
+          // Poll cache briefly — Android scan results arrive asynchronously.
+          for (let attempt = 0; attempt < 3; attempt++) {
+            if (attempt > 0 || results.length === 0) {
+              await sleep(attempt === 0 ? 600 : 500);
+            }
+            try {
+              const cached = await WifiManager.loadWifiList();
+              if (Array.isArray(cached) && cached.length >= results.length) {
+                results = cached;
+              }
+              // Stop early once we have a healthy list.
+              if (results.length >= 3 && attempt >= 1) {
+                break;
+              }
+            } catch (loadErr) {
+              console.warn('loadWifiList poll failed:', loadErr);
+            }
+          }
         } else {
           results = await WifiManager.loadWifiList();
         }
       } catch (error) {
         scanError = error;
         console.warn('Primary scan failed:', error);
-
-        // Try alternative method
         try {
           results = await WifiManager.loadWifiList();
         } catch (fallbackError) {
@@ -727,96 +941,53 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
         }
       }
 
-      if (Array.isArray(results) && results.length > 0) {
-        console.log(`Found ${results.length} networks in scan`);
+      const scanNow = Date.now();
+      const validResults = (Array.isArray(results) ? results : []).filter(network =>
+        network && network.SSID && String(network.SSID).trim() !== '' &&
+        network.SSID !== '<unknown ssid>' && network.SSID !== '0x'
+      );
 
-        // Filter valid networks
-        const validResults = results.filter(network =>
-          network && network.SSID && network.SSID.trim() !== '' &&
-          network.SSID !== '<unknown ssid>' && network.SSID !== '0x'
+      console.log(`Found ${validResults.length} networks in scan`);
+
+      if (validResults.length > 0 || networksCacheRef.current.length > 0) {
+        const merged = mergeWifiScanResults(
+          networksCacheRef.current,
+          validResults,
+          scanNow
         );
 
-        if (validResults.length > 0) {
-          // Sort by signal strength (strongest first)
-          const sortedResults = validResults.sort((a, b) => {
-            const levelA = Math.abs(a.level || -100);
-            const levelB = Math.abs(b.level || -100);
-            return levelA - levelB;
-          });
+        if (isMountedRef.current) {
+          const nextFingerprint = getNetworkListFingerprint(merged);
+          const networksChanged = nextFingerprint !== lastNetworkFingerprintRef.current;
+          lastNetworkFingerprintRef.current = nextFingerprint;
 
-          // Remove duplicates by SSID
-          const uniqueNetworks = [];
-          const seenSSIDs = new Set();
+          setNetworks(merged);
+          setLastScanTime(scanNow);
+          scanRetryCountRef.current = validResults.length > 0 ? 0 : scanRetryCountRef.current + 1;
+          lastNetworkCountRef.current = merged.length;
+          networksCacheRef.current = merged;
+          lastNetworksUpdateRef.current = scanNow;
 
-          sortedResults.forEach(network => {
-            if (network.SSID && !seenSSIDs.has(network.SSID)) {
-              seenSSIDs.add(network.SSID);
-              uniqueNetworks.push({
-                ...network,
-                SSID: network.SSID,
-                BSSID: network.BSSID || `bssid_${network.SSID}_${Date.now()}`,
-                level: network.level || -75,
-                capabilities: network.capabilities || '',
-                timestamp: Date.now()
-              });
-            }
-          });
-
-          if (isMountedRef.current) {
-            const nextFingerprint = getNetworkListFingerprint(uniqueNetworks);
-            const networksChanged = nextFingerprint !== lastNetworkFingerprintRef.current;
-            lastNetworkFingerprintRef.current = nextFingerprint;
-
-            setNetworks(uniqueNetworks);
-            setLastScanTime(Date.now());
-            scanRetryCountRef.current = 0;
-            lastNetworkCountRef.current = uniqueNetworks.length;
-            networksCacheRef.current = uniqueNetworks;
-            lastNetworksUpdateRef.current = Date.now();
-
-            if (uniqueNetworks.length > 0 && (forceScan || isManualRefresh)) {
-              showInAppToast(`Found ${uniqueNetworks.length} networks`, { durationMs: 2000 });
-            }
-
-            if (!isConnectingRef.current) {
-              scheduleNextScan({ resetAdaptive: networksChanged });
-            }
+          if (validResults.length > 0 && (forceScan || isManualRefresh)) {
+            showInAppToast(`Found ${validResults.length} networks`, { durationMs: 1500 });
           }
-        } else {
-          console.log('No valid networks found');
-          if (isMountedRef.current) {
-            // Only clear if we really have no networks at all
-            if (networksCacheRef.current.length === 0) {
-              setNetworks([]);
-            }
-            setLastScanTime(Date.now());
 
-            // If we had networks before but now don't, increment retry count
-            if (lastNetworkCountRef.current > 0) {
-              scanRetryCountRef.current++;
-              if (scanRetryCountRef.current <= 3) {
-                showInAppToast('No networks found, retrying...', { durationMs: 2000 });
-              }
-            }
-
-            if (!isConnectingRef.current) {
-              scheduleNextScan({ useFailureBackoff: scanRetryCountRef.current > 0 });
-            }
+          if (!isConnectingRef.current) {
+            // Keep scanning brisk so new hotspots show up quickly.
+            scheduleNextScan({
+              resetAdaptive: networksChanged,
+              useFailureBackoff: validResults.length === 0 && scanRetryCountRef.current > 0,
+            });
           }
         }
       } else {
         console.log('No networks found in scan results');
         if (isMountedRef.current) {
-          if (networksCacheRef.current.length === 0) {
-            setNetworks([]);
-          }
-          setLastScanTime(Date.now());
-
+          setLastScanTime(scanNow);
           scanRetryCountRef.current++;
           if (scanRetryCountRef.current <= 3) {
-            showInAppToast('Scan failed, retrying...', { durationMs: 2000 });
+            showInAppToast('No networks found, retrying...', { durationMs: 1500 });
           }
-
           if (!isConnectingRef.current) {
             scheduleNextScan({ useFailureBackoff: true });
           }
@@ -825,6 +996,9 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
 
       await fetchCurrentNetwork();
 
+      if (scanError && validResults.length === 0) {
+        console.warn('Scan completed with error and empty results:', scanError);
+      }
     } catch (error) {
       console.warn('Scan error:', error);
       showInAppToast('Failed to scan networks', { durationMs: 2000 });
@@ -847,7 +1021,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
         scanInProgressRef.current = false;
       }
     }
-  }, [lastScanTime, scanAttemptCount, isManualRefresh, fetchCurrentNetwork, networks, scheduleNextScan]);
+  }, [lastScanTime, scanAttemptCount, isManualRefresh, fetchCurrentNetwork, scheduleNextScan]);
 
   scanNetworksRef.current = scanNetworks;
 
@@ -929,11 +1103,11 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
   };
 
   const renderNetworkItem = ({ item }) => {
-    const isActuallyConnected = currentNetwork?.SSID === item.SSID && connectionStatus === 'connected';
-    const isConnectingToThis = selectedNetwork?.SSID === item.SSID && isConnecting;
-    const signalStrengthLabel = getSignalStrengthLabel(item.level);
+    const isActuallyConnected = ssidsMatch(currentNetwork?.SSID, item.SSID) && connectionStatus === 'connected';
+    const isConnectingToThis = ssidsMatch(selectedNetwork?.SSID, item.SSID) && isConnecting;
+    const signalStrengthLabel = item.isFading ? 'Leaving…' : getSignalStrengthLabel(item.level);
     const securityType = getSecurityType(item.capabilities);
-    const isSaved = getPasswordForSSID(networkPasswords, item.SSID) && !isActuallyConnected;
+    const isSaved = !!getPasswordForSSID(networkPasswords, item.SSID) && !isActuallyConnected;
 
     return (
       <TouchableOpacity
@@ -941,7 +1115,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
           styles.networkItem,
           isActuallyConnected && styles.connectedNetworkItem,
           isConnectingToThis && styles.connectingNetworkItem,
-          selectedNetwork?.SSID === item.SSID && !isConnecting && !isActuallyConnected && styles.selectedNetworkItem
+          ssidsMatch(selectedNetwork?.SSID, item.SSID) && !isConnecting && !isActuallyConnected && styles.selectedNetworkItem
         ]}
         onPress={() => handleNetworkPress(item)}
         activeOpacity={0.8}
@@ -972,7 +1146,9 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
             </Text>
           ) : (
             <View style={styles.networkDetails}>
-              <Text style={styles.signalStrength}>{signalStrengthLabel}</Text>
+              <Text style={[styles.signalStrength, item.isFading && { color: '#FFA000' }]}>
+                {signalStrengthLabel}
+              </Text>
               <VerticalDivider color="#555555" />
               <Text style={styles.securityText}>{securityType}</Text>
               {isSaved && (
@@ -1017,17 +1193,41 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
     }
 
     if (currentNetwork && connectionStatus === 'connected') {
+      const checkingInternet = internetStatus === 'waiting';
+      const noInternet = internetStatus === 'unavailable';
+
       return (
-        <View style={styles.connectedContainer}>
+        <View style={[
+          styles.connectedContainer,
+          noInternet && { borderColor: '#E6A817' },
+        ]}>
           <View style={styles.connectedHeader}>
             <View style={styles.iconContainer}>
               <Image source={WIFI_ICON} style={styles.connectedIcon} />
             </View>
             <View style={styles.connectedInfo}>
-              <Text style={styles.connectedLabel}>Connected to</Text>
+              <Text style={styles.connectedLabel}>
+                {checkingInternet
+                  ? 'Connected — checking Internet...'
+                  : noInternet
+                    ? 'Connected to Wi-Fi, but Internet is unavailable'
+                    : 'Connected to'}
+              </Text>
               <Text style={styles.connectedSSID}>{currentNetwork.SSID}</Text>
             </View>
             <View style={styles.connectedStatus}>
+              {checkingInternet && (
+                <ActivityIndicator size="small" color="#22B2A6" />
+              )}
+              {noInternet && (
+                <TouchableOpacity
+                  style={styles.retryInternetButton}
+                  onPress={startInternetGraceCheck}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.retryInternetButtonText}>Retry</Text>
+                </TouchableOpacity>
+              )}
               {isConnected && (
                 <TouchableOpacity
                   style={styles.continueButton}
@@ -1071,7 +1271,9 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
       <View style={styles.headerContainer}>
         <Text style={styles.title}>Connect to WiFi</Text>
         <Text style={styles.subtitle}>
-          Please connect to WiFi to continue using the app
+          {internetStatus === 'unavailable' && currentNetwork
+            ? 'Wi-Fi is connected, but Internet is required for login, uploads, and updates'
+            : 'Please connect to WiFi to continue using the app'}
         </Text>
 
       </View>
@@ -1106,17 +1308,19 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
             sections={[
               {
                 title: 'Connected Network',
-                data: debouncedNetworks.filter(net => currentNetwork?.SSID === net.SSID)
+                data: debouncedNetworks.filter(net =>
+                  ssidsMatch(currentNetwork?.SSID, net.SSID)
+                ),
               },
               {
-                title: 'Saved Networks',
-                data: debouncedNetworks.filter(net => getPasswordForSSID(networkPasswords, net.SSID) && currentNetwork?.SSID !== net.SSID)
-              },
-              {
+                // Saved networks that are in range appear here with a "Saved" label —
+                // do not show a separate Saved section, and never list offline saved SSIDs.
                 title: 'Available Networks',
-                data: debouncedNetworks.filter(net => !getPasswordForSSID(networkPasswords, net.SSID) && currentNetwork?.SSID !== net.SSID)
-              }
-            ].filter(section => section.data.length > 0 || (section.title === 'Available Networks' && debouncedNetworks.length > 0))}
+                data: debouncedNetworks.filter(net =>
+                  !ssidsMatch(currentNetwork?.SSID, net.SSID)
+                ),
+              },
+            ].filter(section => section.data.length > 0)}
             keyExtractor={(item) => item.BSSID + item.SSID + (item.timestamp || '')}
             renderItem={renderNetworkItem}
             renderSectionHeader={({ section: { title } }) => (
@@ -1357,6 +1561,21 @@ const styles = StyleSheet.create({
   },
   continueButtonText: {
     color: '#22B2A6',
+    fontSize: 14,
+    fontWeight: 'bold',
+    fontFamily: 'ProductSans-Bold',
+  },
+  retryInternetButton: {
+    backgroundColor: '#2a241a',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E6A817',
+    marginLeft: 12,
+  },
+  retryInternetButtonText: {
+    color: '#E6A817',
     fontSize: 14,
     fontWeight: 'bold',
     fontFamily: 'ProductSans-Bold',

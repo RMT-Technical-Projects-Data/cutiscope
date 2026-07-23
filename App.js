@@ -26,6 +26,7 @@ import KioskMode from './utils/KioskMode';
 import { IN_APP_TOAST_EVENT, SESSION_ACTIVITY_EVENT, showInAppToast } from './utils/Helpers';
 import { useAuth } from './context/AuthContext';
 import firebaseAuthService from './services/firebaseAuthService';
+import { getBaseUrl } from './services/authService';
 import {
   DEFAULT_SESSION_TIMEOUT_MINUTES,
   SESSION_TIMEOUT_CHANGED_EVENT,
@@ -331,26 +332,104 @@ const App = () => {
     checkAuth();
   }, []);
 
-  // Check network connectivity
-  const checkNetworkConnection = async () => {
+  // Prefer native ConnectivityModule over NetInfo — Android "Limited" is often a false negative.
+  const internetLossTimerRef = useRef(null);
+  const isConnectedRef = useRef(isConnected);
+
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
+
+  const probeInternet = useCallback(async () => {
+    const { ConnectivityModule } = NativeModules;
+    if (Platform.OS === 'android' && ConnectivityModule?.forceValidateNetwork) {
+      try {
+        // Ensure captive-portal checks are off, then probe backend + Google 204.
+        if (ConnectivityModule.disableCaptivePortalChecks) {
+          await ConnectivityModule.disableCaptivePortalChecks();
+        }
+        const status = await ConnectivityModule.forceValidateNetwork(
+          `${getBaseUrl()}/api/health`
+        );
+        console.log('App - ConnectivityModule status:', status);
+        return status === 'WIFI_INTERNET' || status === 'CELLULAR_INTERNET';
+      } catch (error) {
+        console.warn('App - ConnectivityModule probe failed, falling back to NetInfo:', error);
+      }
+    }
+
+    const state = await NetInfo.fetch();
+    return !!(state?.isConnected && state.isInternetReachable !== false);
+  }, []);
+
+  const checkNetworkConnection = useCallback(async () => {
     try {
+      const reachable = await probeInternet();
+      console.log('App - Internet reachable:', reachable);
+      if (reachable) {
+        if (internetLossTimerRef.current) {
+          clearTimeout(internetLossTimerRef.current);
+          internetLossTimerRef.current = null;
+        }
+        setIsConnected(true);
+        return;
+      }
+
       const state = await NetInfo.fetch();
-      const connected = state.isConnected && (state.isInternetReachable !== false);
-      setIsConnected(connected);
+      // Truly offline — fail fast.
+      if (!state?.isConnected || state.type === 'none') {
+        if (internetLossTimerRef.current) {
+          clearTimeout(internetLossTimerRef.current);
+          internetLossTimerRef.current = null;
+        }
+        setIsConnected(false);
+        return;
+      }
+
+      // Linked but probe failed. Cold start → onboarding. Was online → short grace.
+      if (isConnectedRef.current !== true) {
+        setIsConnected(false);
+        return;
+      }
+
+      if (internetLossTimerRef.current) {
+        return;
+      }
+
+      internetLossTimerRef.current = setTimeout(async () => {
+        internetLossTimerRef.current = null;
+        try {
+          const ok = await probeInternet();
+          console.log('App - Internet grace expired, reachable:', ok);
+          setIsConnected(ok);
+        } catch (error) {
+          console.error('Error rechecking network after grace:', error);
+          setIsConnected(false);
+        }
+      }, 10000);
     } catch (error) {
       console.error('Error checking network:', error);
       setIsConnected(false);
     }
-  };
+  }, [probeInternet]);
 
   useEffect(() => {
     checkNetworkConnection();
-    const unsubscribeNetInfo = NetInfo.addEventListener(state => {
-      const connected = state.isConnected && (state.isInternetReachable !== false);
-      setIsConnected(connected);
+    let debounceTimer = null;
+    const unsubscribeNetInfo = NetInfo.addEventListener(() => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        checkNetworkConnection();
+      }, 2000);
     });
-    return () => unsubscribeNetInfo();
-  }, []);
+    return () => {
+      unsubscribeNetInfo();
+      if (debounceTimer) clearTimeout(debounceTimer);
+      if (internetLossTimerRef.current) {
+        clearTimeout(internetLossTimerRef.current);
+      }
+    };
+  }, [checkNetworkConnection]);
 
   // Check for serial number on launch
   useEffect(() => {

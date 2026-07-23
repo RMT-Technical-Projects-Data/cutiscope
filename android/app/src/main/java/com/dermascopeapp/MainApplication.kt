@@ -39,6 +39,14 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
+    // Disable Android captive-portal / "Limited connection" checks ASAP on kiosk images.
+    Thread {
+      try {
+        ConnectivityModule.disableCaptivePortalDetection(this)
+      } catch (e: Exception) {
+        android.util.Log.w("MainApplication", "Captive portal disable failed: ${e.message}")
+      }
+    }.start()
     BluetoothOppCleanup.scheduleBootCleanup(this)
     loadReactNative(this)
   }

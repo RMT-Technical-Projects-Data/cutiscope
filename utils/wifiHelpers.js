@@ -41,22 +41,73 @@ export function normalizePasswordMap(passwords) {
   return normalizedPasswords;
 }
 
-/** Adaptive interval: 4s → 8s → 15s based on how long the scan session has been open. */
+/** Adaptive interval while Wi-Fi picker is open (keep responsive like Android Settings). */
 export function getAdaptiveScanInterval(scanSessionStartMs, hasFadingNetworks = false) {
-  const elapsed = Date.now() - scanSessionStartMs;
-  let baseInterval = 4000;
-  if (elapsed >= 120000) {
-    baseInterval = 15000;
-  } else if (elapsed >= 30000) {
-    baseInterval = 8000;
+  const elapsed = Date.now() - (scanSessionStartMs || Date.now());
+  let baseInterval = 2000; // first ~60s: aggressive
+  if (elapsed >= 180000) {
+    baseInterval = 4500; // after 3 min
+  } else if (elapsed >= 60000) {
+    baseInterval = 3000; // 1–3 min
   }
-  return hasFadingNetworks ? Math.min(baseInterval, 3000) : baseInterval;
+  return hasFadingNetworks ? Math.min(baseInterval, 1500) : baseInterval;
 }
 
-/** Exponential backoff after scan failures: 4s → 8s → 16s (capped). */
+/** Short backoff after scan failures — still stay responsive. */
 export function getScanFailureBackoffMs(retryCount) {
-  if (retryCount <= 0) return 4000;
-  return Math.min(4000 * Math.pow(2, retryCount - 1), 16000);
+  if (retryCount <= 0) return 2000;
+  return Math.min(2000 * Math.pow(2, retryCount - 1), 6000);
+}
+
+/**
+ * Merge a fresh scan with the previous list so newly appeared SSIDs show up
+ * immediately and briefly-missed SSIDs don't flicker away.
+ */
+export function mergeWifiScanResults(previousNetworks, scannedNetworks, scanNow = Date.now()) {
+  const latestScanMap = new Map();
+  (scannedNetworks || []).forEach((network) => {
+    const ssid = normalizeSSID(network?.SSID);
+    if (!ssid || ssid === '<unknown ssid>' || ssid === '0x') return;
+    const currentBest = latestScanMap.get(ssid);
+    const level = network.level || -75;
+    if (!currentBest || Math.abs(level) < Math.abs(currentBest.level || -100)) {
+      latestScanMap.set(ssid, {
+        ...network,
+        SSID: network.SSID?.trim?.() ? network.SSID.trim() : ssid,
+        BSSID: network.BSSID || `ssid_${ssid}_${scanNow}`,
+        level,
+        capabilities: network.capabilities || '',
+        timestamp: scanNow,
+        isFading: false,
+        missCount: 0,
+      });
+    }
+  });
+
+  const merged = [];
+  const seen = new Set(latestScanMap.keys());
+
+  (previousNetworks || []).forEach((oldNet) => {
+    const ssid = normalizeSSID(oldNet?.SSID);
+    if (!ssid || seen.has(ssid)) return;
+    const missCount = (oldNet.missCount || 0) + 1;
+    const firstMissedAt = oldNet.firstMissedAt || scanNow;
+    // One missed scan / ~2.5s — drop gone hotspots quickly without heavy flicker.
+    if (missCount <= 1 && scanNow - firstMissedAt < 2500) {
+      merged.push({
+        ...oldNet,
+        isFading: true,
+        missCount,
+        firstMissedAt,
+      });
+    }
+  });
+
+  latestScanMap.forEach((net) => merged.push(net));
+
+  return merged.sort(
+    (a, b) => Math.abs(a.level || -100) - Math.abs(b.level || -100)
+  );
 }
 
 export function getNetworkListFingerprint(networks) {
