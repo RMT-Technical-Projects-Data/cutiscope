@@ -822,7 +822,6 @@ const App = () => {
                 onTouchStart={() => DeviceEventEmitter.emit(SESSION_ACTIVITY_EVENT)}
                 collapsable={false}
               >
-                <CustomStatusBar />
                 {showWifiScreen ? (
                   <WifiOnboardingScreen
                     onContinue={handleWifiContinue}
@@ -875,6 +874,8 @@ const App = () => {
                     </Stack.Navigator>
                   </NavigationContainer>
                 )}
+                {/* Render after main UI so it always stays above Camera/Welcome. */}
+                <CustomStatusBar />
                 <SessionManager
                   active={isLoggedIn}
                   navigationRef={navigationRef}

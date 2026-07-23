@@ -166,7 +166,6 @@ const CustomStatusBar = ({
   }, []);
 
 
-
   // Effect to handle loading timezone and time updates
   useEffect(() => {
     loadTimezone();
@@ -261,13 +260,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     backgroundColor: '#000',
     alignItems: 'center',
-    height: 40,
-    paddingTop: Platform.OS === 'android' ? 0 : 0,
+    height: 58,
+    paddingTop: Platform.OS === 'android' ? 8 : 8,
     position: 'absolute',
-    top: 3.5,
+    top: 10,
     left: 0,
     right: 0,
-    zIndex: 9999,
+    zIndex: 99999,
+    elevation: 100,
   },
   time: {
     color: '#fff',
