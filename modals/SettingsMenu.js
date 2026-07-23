@@ -1,4 +1,4 @@
-import { View, Text, Modal, TouchableOpacity, StyleSheet, Image, Dimensions, Alert, Platform, ScrollView } from 'react-native'
+import { View, Text, Modal, TouchableOpacity, StyleSheet, Image, ScrollView } from 'react-native'
 import React, { useState, useEffect } from 'react'
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import WifiSettingsModal from './WiFiSettingsModal';
@@ -6,7 +6,6 @@ import BluetoothSettingsModal from './BluetoothSettingsModal';
 import { deleteGuestPhotos } from '../utils/guestPhotos';
 import DateTimePickerModal from './DateTimePickerModal';
 import ConfirmationModal from './ConfirmationModal';
-import { StatusBar } from 'react-native';
 import backIcon from '../assets/icon_back.png';
 import { changeTime } from '../Components/CustomStatusBar';
 import { useAuth } from '../context/AuthContext';
@@ -21,10 +20,8 @@ import {
     setSessionTimeoutMinutes,
 } from '../utils/sessionSettings';
 
-const STATUS_BAR_HEIGHT = Platform.OS === 'ios' ? 44 : StatusBar.currentHeight || 0;
-const EXTRA_HEADER_PADDING = 40;
-const HEADER_FOOTER_BG = '#000000';
-const PRIMARY_TEXT = '#FFFFFF';
+/** Matches App CustomStatusBar height so overlays sit below it. */
+const APP_STATUS_BAR_HEIGHT = 62;
 
 const SettingsMenu = () => {
     const [isPressed, setIsPressed] = useState(null);
@@ -193,35 +190,29 @@ const SettingsMenu = () => {
         }
     };
 
+    // Wi‑Fi / Bluetooth / DateTime / Inactivity replace Settings entirely (full screen).
+    // Do not hide only the header — that shifts the avatar to the top.
+    const subScreenOpen =
+        wifiMenuVisible || bluetoothMenuVisible || dateAndTimeMenuVisible || inactivityMenuVisible;
+
     return (
         <>
             <View style={styles.fullScreenBackground}>
                 <View style={styles.modalContainer}>
+                    {!subScreenOpen && (
                     <ScrollView style={styles.container} contentContainerStyle={styles.containerContent} showsVerticalScrollIndicator={false}>
 
-                        {/* Sub-screens render their own heading/back button. Hide
-                            the parent header so titles never overlap. */}
-                        {!wifiMenuVisible && !bluetoothMenuVisible && !dateAndTimeMenuVisible && (
-                            <View style={styles.header}>
-                                <TouchableOpacity
-                                    style={styles.backButtonContainer}
-                                    onPress={onClose}
-                                    activeOpacity={0.7}
-                                >
-                                    <Image source={backIcon} style={styles.backButtonIcon} />
-                                </TouchableOpacity>
-                                <View style={styles.titleContainer}>
-                                    <Text
-                                        style={styles.title}
-                                        numberOfLines={1}
-                                        adjustsFontSizeToFit
-                                        minimumFontScale={0.6}
-                                    >
-                                        Settings
-                                    </Text>
-                                </View>
-                            </View>
-                        )}
+                        <View style={styles.header}>
+                            <TouchableOpacity
+                                style={styles.backButton}
+                                onPress={onClose}
+                                activeOpacity={0.7}
+                            >
+                                <Image source={backIcon} style={styles.backButtonIcon} />
+                            </TouchableOpacity>
+                            <Text style={styles.title}>Settings</Text>
+                            <View style={styles.headerSpacer} />
+                        </View>
 
                         {/* Profile section – avatar, name, email (logged-in only) */}
                         {!isGuest && (
@@ -387,96 +378,107 @@ const SettingsMenu = () => {
                             </>
                         )}
 
-                        {/* Modals */}
-                        <WifiSettingsModal
-                            visible={wifiMenuVisible}
-                            onClose={() => setWifiMenuVisible(false)}
-                        />
-
-                        <BluetoothSettingsModal
-                            visible={bluetoothMenuVisible}
-                            onClose={() => setBluetoothMenuVisible(false)}
-                        />
-
-                        <DateTimePickerModal
-                            visible={dateAndTimeMenuVisible}
-                            onClose={() => setDateAndTimeVisible(false)}
-                            onConfirm={handleConfirmDate}
-                        />
-
-                        <Modal
-                            visible={inactivityMenuVisible}
-                            transparent
-                            animationType="fade"
-                            statusBarTranslucent
-                            onRequestClose={() => setInactivityMenuVisible(false)}
-                        >
-                            <View style={styles.timeoutOverlay}>
-                                <View style={styles.timeoutModal}>
-                                    <Text style={styles.timeoutTitle}>Inactivity Timer</Text>
-                                    <Text style={styles.timeoutDescription}>
-                                        After this idle time, a 10-second logout warning appears:
-                                    </Text>
-                                    <View style={styles.timeoutOptions}>
-                                        {SESSION_TIMEOUT_OPTIONS.map((minutes) => {
-                                            const selected = minutes === inactivityMinutes;
-                                            return (
-                                                <TouchableOpacity
-                                                    key={minutes}
-                                                    style={[
-                                                        styles.timeoutOption,
-                                                        selected && styles.timeoutOptionSelected,
-                                                    ]}
-                                                    onPress={() => handleInactivityTimerChange(minutes)}
-                                                >
-                                                    <Text style={[
-                                                        styles.timeoutOptionText,
-                                                        selected && styles.timeoutOptionTextSelected,
-                                                    ]}>
-                                                        {minutes} minutes
-                                                    </Text>
-                                                </TouchableOpacity>
-                                            );
-                                        })}
-                                    </View>
-                                    <TouchableOpacity
-                                        style={styles.timeoutCancel}
-                                        onPress={() => setInactivityMenuVisible(false)}
-                                    >
-                                        <Text style={styles.timeoutCancelText}>Cancel</Text>
-                                    </TouchableOpacity>
-                                </View>
-                            </View>
-                        </Modal>
-
-                        <ConfirmationModal
-                            visible={confirmModalVisible}
-                            onClose={() => setConfirmModalVisible(false)}
-                            title={confirmConfig.title}
-                            message={confirmConfig.message}
-                            confirmText={confirmConfig.confirmText}
-                            isDestructive={confirmConfig.isDestructive}
-                            onConfirm={() => {
-                                confirmConfig.onConfirm();
-                                setConfirmModalVisible(false);
-                            }}
-                        />
-
-                        {/* Result feedback modal (replaces Alert.alert) */}
-                        <ConfirmationModal
-                            visible={resultModalVisible}
-                            onClose={() => setResultModalVisible(false)}
-                            title={resultConfig.title}
-                            message={resultConfig.message}
-                            confirmText="OK"
-                            cancelText={null}
-                            isDestructive={resultConfig.isDestructive}
-                            onConfirm={() => setResultModalVisible(false)}
-                        />
-
                         {/* On-screen keyboard for kiosk/settings modal */}
                         <CustomKeyboard />
                     </ScrollView>
+                    )}
+
+                    {/* Full-screen sub-screens — outside ScrollView so they cover Settings completely */}
+                    <WifiSettingsModal
+                        visible={wifiMenuVisible}
+                        onClose={() => setWifiMenuVisible(false)}
+                        inline
+                    />
+
+                    <BluetoothSettingsModal
+                        visible={bluetoothMenuVisible}
+                        onClose={() => setBluetoothMenuVisible(false)}
+                    />
+
+                    <DateTimePickerModal
+                        visible={dateAndTimeMenuVisible}
+                        onClose={() => setDateAndTimeVisible(false)}
+                        onConfirm={handleConfirmDate}
+                    />
+
+                    <Modal
+                        visible={inactivityMenuVisible}
+                        transparent
+                        animationType="slide"
+                        statusBarTranslucent
+                        onRequestClose={() => setInactivityMenuVisible(false)}
+                    >
+                        <View style={styles.timeoutRoot}>
+                            <View style={styles.timeoutStatusBarSpacer} />
+                            <View style={styles.timeoutScreen}>
+                                <View style={styles.header}>
+                                    <TouchableOpacity
+                                        style={styles.backButton}
+                                        onPress={() => setInactivityMenuVisible(false)}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Image source={backIcon} style={styles.backButtonIcon} />
+                                    </TouchableOpacity>
+                                    <Text style={styles.title}>Inactivity Timer</Text>
+                                    <View style={styles.headerSpacer} />
+                                </View>
+
+                                <View style={styles.timeoutContent}>
+                                    <Text style={styles.timeoutDescription}>
+                                        After this idle time, a 10-second logout warning appears:
+                                    </Text>
+                                    {SESSION_TIMEOUT_OPTIONS.map((minutes) => {
+                                        const selected = inactivityMinutes === minutes;
+                                        return (
+                                            <TouchableOpacity
+                                                key={minutes}
+                                                style={[
+                                                    styles.timeoutOption,
+                                                    selected && styles.timeoutOptionSelected,
+                                                ]}
+                                                onPress={() => handleInactivityTimerChange(minutes)}
+                                                activeOpacity={0.8}
+                                            >
+                                                <Text
+                                                    style={[
+                                                        styles.timeoutOptionText,
+                                                        selected && styles.timeoutOptionTextSelected,
+                                                    ]}
+                                                >
+                                                    {minutes} minutes
+                                                </Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+                            </View>
+                        </View>
+                    </Modal>
+
+                    <ConfirmationModal
+                        visible={confirmModalVisible}
+                        onClose={() => setConfirmModalVisible(false)}
+                        title={confirmConfig.title}
+                        message={confirmConfig.message}
+                        confirmText={confirmConfig.confirmText}
+                        isDestructive={confirmConfig.isDestructive}
+                        onConfirm={() => {
+                            confirmConfig.onConfirm();
+                            setConfirmModalVisible(false);
+                        }}
+                    />
+
+                    {/* Result feedback modal (replaces Alert.alert) */}
+                    <ConfirmationModal
+                        visible={resultModalVisible}
+                        onClose={() => setResultModalVisible(false)}
+                        title={resultConfig.title}
+                        message={resultConfig.message}
+                        confirmText="OK"
+                        cancelText={null}
+                        isDestructive={resultConfig.isDestructive}
+                        onConfirm={() => setResultModalVisible(false)}
+                    />
                 </View>
             </View>
         </>
@@ -503,49 +505,32 @@ const styles = StyleSheet.create({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'flex-start',
-        paddingHorizontal: 15,
-        paddingBottom: 15,
-        paddingTop: STATUS_BAR_HEIGHT + EXTRA_HEADER_PADDING,
-        backgroundColor: HEADER_FOOTER_BG,
-        borderBottomWidth: 1,
-        borderBottomColor: '#333333',
-        shadowColor: '#000',
-        shadowOffset: {
-            width: 0,
-            height: 1,
-        },
-        shadowOpacity: 0.1,
-        shadowRadius: 2,
-        elevation: 2,
-        marginBottom: 16,
+        justifyContent: 'space-between',
+        paddingHorizontal: 20,
+        paddingTop: 8,
+        paddingBottom: 16,
+        backgroundColor: 'transparent',
+        marginBottom: 8,
     },
-    backButtonContainer: {
-        height: 44,
-        width: 44,
-        justifyContent: 'center',
-        alignItems: 'center',
+    backButton: {
+        height: 40,
+        width: 40,
+        padding: 8,
         borderRadius: 12,
         backgroundColor: '#41403D',
         borderWidth: 1,
         borderColor: '#333333',
-        marginRight: 6,
     },
-    titleContainer: {
-        position: 'absolute',
-        top: STATUS_BAR_HEIGHT + EXTRA_HEADER_PADDING,
-        left: 75,
-        right: 75,
-        minHeight: 44,
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: -1,
+    headerSpacer: {
+        width: 40,
+        height: 40,
     },
     title: {
-        color: PRIMARY_TEXT,
+        color: '#FFFFFF',
         fontSize: 26,
         fontFamily: 'ProductSans-Bold',
-        letterSpacing: 1,
+        letterSpacing: 0.5,
+        flex: 1,
         textAlign: 'center',
     },
     profileSection: {
@@ -672,46 +657,38 @@ const styles = StyleSheet.create({
         fontFamily: 'ProductSans-Bold',
         marginRight: 8,
     },
-    timeoutOverlay: {
+    timeoutRoot: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.78)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: 20,
+        backgroundColor: 'transparent',
     },
-    timeoutModal: {
-        width: '100%',
-        maxWidth: 340,
-        backgroundColor: '#1C1C1E',
-        borderRadius: 20,
-        borderWidth: 1,
-        borderColor: '#3A3A3C',
-        padding: 24,
+    timeoutStatusBarSpacer: {
+        height: APP_STATUS_BAR_HEIGHT,
+        backgroundColor: 'transparent',
     },
-    timeoutTitle: {
-        color: '#FFFFFF',
-        fontSize: 21,
-        fontFamily: 'ProductSans-Bold',
-        textAlign: 'center',
-        marginBottom: 8,
+    timeoutScreen: {
+        flex: 1,
+        backgroundColor: '#000000',
+    },
+    timeoutContent: {
+        flex: 1,
+        paddingHorizontal: 20,
+        paddingTop: 8,
     },
     timeoutDescription: {
         color: '#AAAAAA',
-        fontSize: 15,
+        fontSize: 14,
         fontFamily: 'ProductSans-Regular',
-        textAlign: 'center',
-        marginBottom: 20,
-    },
-    timeoutOptions: {
-        width: '100%',
+        marginBottom: 16,
+        lineHeight: 20,
     },
     timeoutOption: {
         width: '100%',
         paddingVertical: 14,
+        paddingHorizontal: 16,
         borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#3A3A3C',
-        backgroundColor: '#2A2A2C',
+        borderWidth: 1.5,
+        borderColor: '#333333',
+        backgroundColor: '#41403D',
         alignItems: 'center',
         marginBottom: 10,
     },
@@ -721,24 +698,11 @@ const styles = StyleSheet.create({
     },
     timeoutOptionText: {
         color: '#FFFFFF',
-        fontSize: 16,
+        fontSize: 15,
         fontFamily: 'ProductSans-Bold',
     },
     timeoutOptionTextSelected: {
         color: '#22B2A6',
-    },
-    timeoutCancel: {
-        width: '100%',
-        paddingVertical: 13,
-        borderRadius: 12,
-        backgroundColor: '#333333',
-        alignItems: 'center',
-        marginTop: 4,
-    },
-    timeoutCancelText: {
-        color: '#FFFFFF',
-        fontSize: 16,
-        fontFamily: 'ProductSans-Bold',
     },
     divider: {
         width: '100%',

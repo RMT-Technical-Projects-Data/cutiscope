@@ -19,6 +19,9 @@ import dateIcon from '../assets/icon_calendar.png';
 import timeIcon from '../assets/icon_clock.png';
 import backIcon from '../assets/icon_back.png';
 
+/** Matches App CustomStatusBar height so content sits below it without moving it. */
+const APP_STATUS_BAR_HEIGHT = 62;
+
 const dateEventEmitter = new EventEmitter();
 
 const AndroidShell = {
@@ -397,7 +400,8 @@ const DateTimePickerModal = ({ visible, onClose, onConfirm, ...props }) => {
       transparent={true}
       statusBarTranslucent={true}
     >
-      <View style={{ flex: 1, backgroundColor: '#000' }}>
+      <View style={styles.modalRoot}>
+        <View style={styles.statusBarSpacer} />
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             {/* Header */}
@@ -406,6 +410,7 @@ const DateTimePickerModal = ({ visible, onClose, onConfirm, ...props }) => {
                 <Image source={backIcon} style={styles.backButtonIcon} />
               </TouchableOpacity>
               <Text style={styles.title}>Date & Time</Text>
+              <View style={styles.headerSpacer} />
             </View>
 
             {/* Main Content */}
@@ -501,10 +506,18 @@ const DateTimePickerModal = ({ visible, onClose, onConfirm, ...props }) => {
 };
 
 const styles = StyleSheet.create({
+  modalRoot: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  statusBarSpacer: {
+    height: APP_STATUS_BAR_HEIGHT,
+    backgroundColor: 'transparent',
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: '#000',
-    paddingTop: 44,
+    paddingTop: 0,
   },
   modalContent: {
     flex: 1,
@@ -515,36 +528,37 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingTop: 0,
+    paddingTop: 8,
     paddingBottom: 16,
     backgroundColor: 'transparent',
-    minHeight: 40,
+    marginBottom: 8,
   },
   backButton: {
-    position: 'absolute',
-    left: 20,
-    top: 0,
     height: 40,
     width: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 10,
-    backgroundColor: '#222222',
+    padding: 8,
+    borderRadius: 12,
+    backgroundColor: '#41403D',
     borderWidth: 1,
     borderColor: '#333333',
-    zIndex: 10,
   },
   backButtonIcon: {
     height: 22,
     width: 22,
     tintColor: '#FFFFFF',
   },
+  headerSpacer: {
+    width: 40,
+    height: 40,
+  },
   title: {
+    color: '#FFFFFF',
     fontSize: 26,
     fontFamily: 'ProductSans-Bold',
-    color: '#ffffff',
+    letterSpacing: 0.5,
+    flex: 1,
     textAlign: 'center',
   },
   content: {

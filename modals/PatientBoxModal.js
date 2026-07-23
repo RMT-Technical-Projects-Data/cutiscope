@@ -20,6 +20,10 @@ import NetInfo from '@react-native-community/netinfo';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import KioskTextInput from '../Components/KioskTextInput';
 import CustomKeyboard from '../Components/CustomKeyboard';
+import CustomStatusBar, {
+  suppressAppStatusBar,
+  releaseAppStatusBar,
+} from '../Components/CustomStatusBar';
 import { useCustomKeyboard } from '../context/CustomKeyboardContext';
 import backIcon from '../assets/icon_back.png';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -104,6 +108,13 @@ const PatientBoxModal = ({
       hideSub.remove();
     };
   }, []);
+
+  // Modal has its own status bar — hide the App-level one.
+  useEffect(() => {
+    if (!visible) return undefined;
+    suppressAppStatusBar();
+    return () => releaseAppStatusBar();
+  }, [visible]);
 
   const tabNew = isBlank ? TAB_NEW_BLANK : TAB_NEW_SET;
   const tabExisting = isBlank ? TAB_EXISTING_BLANK : TAB_EXISTING_SET;
@@ -356,7 +367,9 @@ const PatientBoxModal = ({
     >
       {/* Simple container like PowerOffModal */}
       <View style={styles.container}>
-        <View style={[styles.modalView, hasFocusedInput && styles.modalViewKeyboardOpen]}>
+        <CustomStatusBar />
+        <View style={styles.modalBody}>
+          <View style={[styles.modalView, hasFocusedInput && styles.modalViewKeyboardOpen]}>
           {/* Header with back button */}
           <View style={styles.header}>
             <TouchableOpacity onPress={handleBackdrop} style={styles.backBtn}>
@@ -646,6 +659,7 @@ const PatientBoxModal = ({
             )}
           </View>
         </View>
+        </View>
       </View>
       <CustomKeyboard localHost />
     </Modal>
@@ -656,9 +670,13 @@ const styles = StyleSheet.create({
   // Container like PowerOffModal - full screen with dark background
   container: {
     flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.8)', // Same as PowerOffModal
+  },
+  modalBody: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.8)', // Same as PowerOffModal
+    paddingTop: 8,
   },
   modalView: {
     width: SCREEN_WIDTH * 0.92,

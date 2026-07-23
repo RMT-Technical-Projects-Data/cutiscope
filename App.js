@@ -16,7 +16,9 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import WifiOnboardingScreen from './screens/WifiOnboardingScreen';
 import Orientation from 'react-native-orientation-locker';
 import SystemSetting from 'react-native-system-setting';
-import CustomStatusBar from './Components/CustomStatusBar';
+import CustomStatusBar, {
+  APP_STATUS_BAR_SUPPRESS_EVENT,
+} from './Components/CustomStatusBar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import SerialNumberModal from './modals/SerialNumberModal';
 import UpdateModal from './modals/UpdateModal';
@@ -297,8 +299,17 @@ const App = () => {
   const [serialInputError, setSerialInputError] = useState('');
   const [currentSerialNumber, setCurrentSerialNumber] = useState('');
   const [isKioskActive, setIsKioskActive] = useState(Platform.OS === 'android');
+  const [suppressAppStatusBar, setSuppressAppStatusBar] = useState(false);
   const serialInputRef = useRef(null);
   const navigationRef = useRef(null);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(
+      APP_STATUS_BAR_SUPPRESS_EVENT,
+      (suppressed) => setSuppressAppStatusBar(!!suppressed)
+    );
+    return () => sub.remove();
+  }, []);
 
   // Security requirement: every cold app start/device restart begins logged out.
   // Clear the previous local session before mounting AuthProvider/navigation.
@@ -822,6 +833,8 @@ const App = () => {
                 onTouchStart={() => DeviceEventEmitter.emit(SESSION_ACTIVITY_EVENT)}
                 collapsable={false}
               >
+                {/* Relative status bar must be first so it stays at the top. */}
+                {!suppressAppStatusBar && <CustomStatusBar />}
                 {showWifiScreen ? (
                   <WifiOnboardingScreen
                     onContinue={handleWifiContinue}
@@ -874,8 +887,6 @@ const App = () => {
                     </Stack.Navigator>
                   </NavigationContainer>
                 )}
-                {/* Render after main UI so it always stays above Camera/Welcome. */}
-                <CustomStatusBar />
                 <SessionManager
                   active={isLoggedIn}
                   navigationRef={navigationRef}

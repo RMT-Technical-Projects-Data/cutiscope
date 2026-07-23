@@ -23,6 +23,8 @@ import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityI
 
 const { SystemTimeModule } = NativeModules;
 const { width, height } = Dimensions.get('window');
+/** Matches App CustomStatusBar height so content sits below it without moving it. */
+const APP_STATUS_BAR_HEIGHT = 62;
 
 const BluetoothSettingsModal = ({ visible, onClose }) => {
   const [bluetoothEnabled, setBluetoothEnabled] = useState(false);
@@ -321,18 +323,23 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
       onRequestClose={onClose}
       statusBarTranslucent={true}
     >
-      <View style={styles.modalContainer}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={onClose} style={styles.backButton}>
-            <Image source={backIcon} style={styles.backIcon} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Bluetooth</Text>
-          <TouchableOpacity onPress={() => setShowMenu(prev => !prev)} style={styles.kebabButton}>
-            <MaterialCommunityIcons name="dots-vertical" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-        </View>
+      <View style={styles.modalRoot}>
+        {/* Transparent gap so the App CustomStatusBar stays put and visible */}
+        <View style={styles.statusBarSpacer} />
+        <View style={styles.modalContainer}>
+          <View style={styles.header}>
+            <TouchableOpacity onPress={onClose} style={styles.backButton} activeOpacity={0.7}>
+              <Image source={backIcon} style={styles.backButtonIcon} />
+            </TouchableOpacity>
+            <Text style={styles.title}>Bluetooth</Text>
+            <View style={styles.headerRight}>
+              <TouchableOpacity onPress={() => setShowMenu(prev => !prev)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <MaterialCommunityIcons name="dots-vertical" size={28} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+          </View>
 
-        <View style={styles.content}>
+          <View style={styles.content}>
           <View style={[styles.toggleRow, isTransitioning && { opacity: 0.6 }]}>
             <Text style={styles.toggleText}>Bluetooth</Text>
             <ToggleSwitch
@@ -376,6 +383,7 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
             </Text>
           )}
         </View>
+        </View>
       </View>
 
       {showMenu && (
@@ -399,13 +407,17 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
       )}
 
       {showPairedDevicesScreen && (
-        <View style={[StyleSheet.absoluteFillObject, { backgroundColor: '#000000', zIndex: 2000, marginTop: 40 }]}>
+        <View style={[StyleSheet.absoluteFillObject, styles.pairedScreen]}>
           <View style={styles.header}>
-            <TouchableOpacity onPress={() => setShowPairedDevicesScreen(false)} style={styles.backButton}>
-              <Image source={backIcon} style={styles.backIcon} />
+            <TouchableOpacity
+              onPress={() => setShowPairedDevicesScreen(false)}
+              style={styles.backButton}
+              activeOpacity={0.7}
+            >
+              <Image source={backIcon} style={styles.backButtonIcon} />
             </TouchableOpacity>
-            <Text style={styles.headerTitle}>Paired Devices</Text>
-            <View style={{ width: 44 }} />
+            <Text style={styles.title}>Paired Devices</Text>
+            <View style={styles.headerSpacer} />
           </View>
 
           <View style={styles.content}>
@@ -455,47 +467,68 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
 };
 
 const styles = StyleSheet.create({
+  modalRoot: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  statusBarSpacer: {
+    height: APP_STATUS_BAR_HEIGHT,
+    backgroundColor: 'transparent',
+  },
   modalContainer: {
     flex: 1,
     backgroundColor: '#000000',
-    paddingTop: 44,
+  },
+  pairedScreen: {
+    backgroundColor: '#000000',
+    zIndex: 2000,
+    top: APP_STATUS_BAR_HEIGHT,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingTop: 0,
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 8,
     paddingBottom: 16,
     backgroundColor: 'transparent',
-    paddingHorizontal: 20,
+    marginBottom: 8,
   },
   backButton: {
     height: 40,
     width: 40,
+    padding: 8,
     borderRadius: 12,
     backgroundColor: '#41403D',
     borderWidth: 1,
     borderColor: '#333333',
-    justifyContent: 'center',
-    alignItems: 'center',
-    // left: 1,
-    // top: 0,
   },
-  backIcon: {
+  backButtonIcon: {
     width: 22,
     height: 22,
     tintColor: '#FFFFFF',
   },
-  headerTitle: {
+  title: {
     color: '#FFFFFF',
     fontSize: 26,
     fontFamily: 'ProductSans-Bold',
     letterSpacing: 0.5,
     flex: 1,
-    // marginLeft: 15,
     textAlign: 'center',
   },
+  headerRight: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerSpacer: {
+    width: 40,
+    height: 40,
+  },
   content: {
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingTop: 0,
     flex: 1,
   },
   toggleRow: {
@@ -506,6 +539,7 @@ const styles = StyleSheet.create({
     padding: 20,
     borderRadius: 12,
     marginBottom: 20,
+    marginHorizontal: 0,
   },
   toggleText: {
     color: '#ffffff',
@@ -624,16 +658,6 @@ const styles = StyleSheet.create({
     color: '#a4b0be',
     fontSize: 16,
     fontFamily: 'ProductSans-Regular',
-  },
-  kebabButton: {
-    height: 44,
-    width: 44,
-    borderRadius: 12,
-    backgroundColor: '#41403D',
-    borderWidth: 1,
-    borderColor: '#333333',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   menuOverlay: {
     position: 'absolute',

@@ -75,9 +75,8 @@ const PRIMARY_TEXT = '#FFFFFF';
 const SECONDARY_TEXT = '#AAAAAA';
 const ACCENT_TEAL = '#22B2A6';
 
-// Safe area padding
+// Safe area padding (used by fullscreen viewer overlays)
 const STATUS_BAR_HEIGHT = Platform.OS === 'ios' ? 44 : StatusBar.currentHeight || 0;
-const EXTRA_HEADER_PADDING = 40;
 
 const normalizePhotoPath = (p) => {
   if (!p) return '';
@@ -1966,43 +1965,35 @@ const GalleryScreen = ({ route, navigation }) => {
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity
-            style={styles.backButtonContainer}
+            style={styles.backButton}
             onPress={handleBackPress}
             activeOpacity={0.7}
           >
             <Image source={backIcon} style={styles.backButtonIcon} />
           </TouchableOpacity>
 
-          <View style={[
-            styles.titleContainer,
-            {
-              left: 75,
-              right: isSelectionMode ? 125 : 75
-            }
-          ]}>
-            <Text
-              style={styles.galleryTitle}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.6}
-            >
-              {albumPath.length === 0
-                ? 'Gallery'
-                : isSelectionMode && activePhotos.length > 0
-                  ? `Photos (${selectedPhotos.length} selected)`
-                  : isSelectionMode && isFolderLevel
-                    ? `Albums (${selectedAlbumPaths.length} selected)`
-                    : (() => {
-                      const lastId = albumPath[albumPath.length - 1];
-                      const item = albumItems.find((f) => f.id === lastId);
-                      if (item) return item.nameLabel || item.idLabel;
-                      if (lastId && lastId.startsWith('W')) return `Week ${lastId.slice(1)}`;
-                      return lastId || 'Gallery';
-                    })()}
-            </Text>
-          </View>
+          <Text
+            style={styles.title}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.6}
+          >
+            {albumPath.length === 0
+              ? 'Gallery'
+              : isSelectionMode && activePhotos.length > 0
+                ? `Photos (${selectedPhotos.length} selected)`
+                : isSelectionMode && isFolderLevel
+                  ? `Albums (${selectedAlbumPaths.length} selected)`
+                  : (() => {
+                    const lastId = albumPath[albumPath.length - 1];
+                    const item = albumItems.find((f) => f.id === lastId);
+                    if (item) return item.nameLabel || item.idLabel;
+                    if (lastId && lastId.startsWith('W')) return `Week ${lastId.slice(1)}`;
+                    return lastId || 'Gallery';
+                  })()}
+          </Text>
 
-          {isSelectionMode && isPhotoLevel && activePhotos.length > 0 && (
+          {isSelectionMode && isPhotoLevel && activePhotos.length > 0 ? (
             <TouchableOpacity
               style={[
                 styles.selectAllButton,
@@ -2014,8 +2005,7 @@ const GalleryScreen = ({ route, navigation }) => {
                 {selectedPhotos.length === activePhotos.length ? 'Unselect All' : 'Select All'}
               </Text>
             </TouchableOpacity>
-          )}
-          {isSelectionMode && isFolderLevel && albumItems.length > 0 && (
+          ) : isSelectionMode && isFolderLevel && albumItems.length > 0 ? (
             <TouchableOpacity
               style={[
                 styles.selectAllButton,
@@ -2027,6 +2017,8 @@ const GalleryScreen = ({ route, navigation }) => {
                 {selectedAlbumPaths.length === albumItems.length ? 'Unselect All' : 'Select All'}
               </Text>
             </TouchableOpacity>
+          ) : (
+            <View style={styles.headerSpacer} />
           )}
         </View>
 
@@ -2429,7 +2421,7 @@ const FullScreenGalleryModal = React.memo(({
         {overlaysVisible && (
           <View style={styles.fullscreenHeader}>
             <TouchableOpacity
-              style={styles.backButtonContainer}
+              style={styles.backButton}
               onPress={onClose}
             >
               <Image source={backIcon} style={[styles.backButtonIcon, { tintColor: PRIMARY_TEXT }]} />
@@ -2600,64 +2592,47 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-start',
-    paddingHorizontal: 15,
-    paddingBottom: 15,
-    paddingTop: STATUS_BAR_HEIGHT + EXTRA_HEADER_PADDING,
-    backgroundColor: HEADER_FOOTER_BG,
-    borderBottomWidth: 1,
-    borderBottomColor: '#333333',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 16,
+    backgroundColor: 'transparent',
+    marginBottom: 8,
   },
-  backButtonContainer: {
-    height: 44,
-    width: 44,
-    justifyContent: 'center',
-    alignItems: 'center',
+  backButton: {
+    height: 40,
+    width: 40,
+    padding: 8,
     borderRadius: 12,
     backgroundColor: '#41403D',
     borderWidth: 1,
     borderColor: '#333333',
-    marginRight: 6,
   },
   backButtonIcon: {
     height: 22,
     width: 22,
     tintColor: '#FFFFFF',
   },
-  titleContainer: {
-    position: 'absolute',
-    top: STATUS_BAR_HEIGHT + EXTRA_HEADER_PADDING,
-    left: 0,
-    right: 0,
-    minHeight: 44,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: -1,
+  headerSpacer: {
+    width: 40,
+    height: 40,
   },
-  galleryTitle: {
+  title: {
     color: PRIMARY_TEXT,
     fontSize: 26,
     fontFamily: 'ProductSans-Bold',
-    letterSpacing: 1,
+    letterSpacing: 0.5,
+    flex: 1,
     textAlign: 'center',
-    marginRight: 0,
   },
   selectAllButton: {
-    marginLeft: 'auto',
     backgroundColor: '#41403D',
-    paddingHorizontal: 13,
-    paddingVertical: 13,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#333333',
+    maxWidth: 110,
   },
   unselectAllButton: {
     backgroundColor: '#333333',

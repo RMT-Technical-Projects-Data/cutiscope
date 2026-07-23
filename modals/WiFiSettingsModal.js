@@ -21,6 +21,10 @@ import {
 import { showInAppToast, IN_APP_TOAST_EVENT } from '../utils/Helpers';
 import KioskTextInput from '../Components/KioskTextInput';
 import CustomKeyboard from '../Components/CustomKeyboard';
+import CustomStatusBar, {
+  suppressAppStatusBar,
+  releaseAppStatusBar,
+} from '../Components/CustomStatusBar';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 import WifiManager from 'react-native-wifi-reborn';
@@ -72,7 +76,7 @@ const useDebounce = (value, delay) => {
   return debouncedValue;
 };
 
-const WifiSettingsModal = ({ visible, onClose }) => {
+const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
   const [wifiEnabled, setWifiEnabled] = useState(true);
   const [networks, setNetworks] = useState([]);
   const [isScanning, setIsScanning] = useState(false);
@@ -199,6 +203,13 @@ const WifiSettingsModal = ({ visible, onClose }) => {
     if (visible) {
       loadSavedPasswords();
     }
+  }, [visible]);
+
+  // Modal has its own status bar — hide the App-level one.
+  useEffect(() => {
+    if (!visible) return undefined;
+    suppressAppStatusBar();
+    return () => releaseAppStatusBar();
   }, [visible]);
 
   const loadSavedPasswords = async () => {
@@ -1500,21 +1511,15 @@ const WifiSettingsModal = ({ visible, onClose }) => {
     return () => subscription.remove();
   }, [appState, visible, wifiEnabled]);
 
-  return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      onRequestClose={onClose}
-      statusBarTranslucent={true}
-      transparent={true}
-    >
+  const wifiScreen = (
       <View
-        style={styles.fullScreenContainer}
+        style={[styles.fullScreenContainer, inline && styles.inlineOverlay]}
         onStartShouldSetResponder={() => {
           DeviceEventEmitter.emit('userActivity');
           return false;
         }}
       >
+        <CustomStatusBar />
         <View style={styles.innerFullScreen}>
           {/* Header */}
           <View style={styles.header}>
@@ -1877,25 +1882,44 @@ const WifiSettingsModal = ({ visible, onClose }) => {
           <CustomKeyboard />
         </View>
       </View>
-    </Modal >
+  );
+
+  if (inline) {
+    if (!visible) return null;
+    return wifiScreen;
+  }
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      onRequestClose={onClose}
+      statusBarTranslucent
+      transparent={false}
+      presentationStyle="fullScreen"
+      hardwareAccelerated
+    >
+      {wifiScreen}
+    </Modal>
   );
 };
 
 const styles = StyleSheet.create({
   fullScreenContainer: {
-    width: Dimensions.get('screen').width,
-    height: Dimensions.get('screen').height,
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    flex: 1,
+    width: '100%',
+    height: '100%',
     backgroundColor: '#000000',
+  },
+  inlineOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 10000,
+    elevation: 10000,
   },
   innerFullScreen: {
     flex: 1,
     backgroundColor: '#000000',
-    paddingTop: 44,
+    paddingTop: 8,
   },
   header: {
     flexDirection: 'row',

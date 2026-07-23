@@ -9,6 +9,10 @@ import {
 } from 'react-native';
 import KioskTextInput from '../Components/KioskTextInput';
 import CustomKeyboard from '../Components/CustomKeyboard';
+import CustomStatusBar, {
+  suppressAppStatusBar,
+  releaseAppStatusBar,
+} from '../Components/CustomStatusBar';
 import { useCustomKeyboard } from '../context/CustomKeyboardContext';
 import { applyCappedTextChange } from '../utils/textInputLimits';
 
@@ -53,6 +57,13 @@ const BodyPartModal = ({ visible, onClose, onSave, initialValue = '' }) => {
     return () => clearTimeout(t);
   }, [visible]);
 
+  // Modal has its own status bar — hide the App-level one.
+  useEffect(() => {
+    if (!visible) return undefined;
+    suppressAppStatusBar();
+    return () => releaseAppStatusBar();
+  }, [visible]);
+
   const handleClose = () => {
     dismissKeyboard();
     onClose();
@@ -77,47 +88,50 @@ const BodyPartModal = ({ visible, onClose, onSave, initialValue = '' }) => {
       statusBarTranslucent
     >
       <View style={styles.root}>
-        <View style={styles.modalLayer}>
-          <View style={styles.modalView}>
-            <Text style={styles.title}>Enter Body Part</Text>
-            <KioskTextInput
-              ref={inputRef}
-              style={styles.input}
-              value={value}
-              onChangeText={(text) => {
-                setValue((prev) => applyCappedTextChange(
-                  prev,
-                  text,
-                  BODY_PART_MAX_LENGTH,
-                  (value) => value.replace(/[^a-zA-Z\s]/g, '')
-                ));
-              }}
-              placeholder="e.g. Left Arm, Back"
-              placeholderTextColor="#666"
-              autoCapitalize="words"
-              autoCorrect={false}
-              maxLength={BODY_PART_MAX_LENGTH}
-              contextMenuHidden
-              selectTextOnFocus={false}
-              showDismiss
-              hostKeyboardLocally
-            />
-            <View style={styles.buttonRow}>
-              <TouchableOpacity style={styles.cancelBtn} onPress={handleClose}>
-                <Text style={styles.cancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.saveBtn, !canSave && styles.saveBtnDisabled]}
-                onPress={handleSave}
-                disabled={!canSave}
-              >
-                <Text style={styles.saveText}>Save</Text>
-              </TouchableOpacity>
+        <CustomStatusBar />
+        <View style={styles.modalBody}>
+          <View style={styles.modalLayer}>
+            <View style={styles.modalView}>
+              <Text style={styles.title}>Enter Body Part</Text>
+              <KioskTextInput
+                ref={inputRef}
+                style={styles.input}
+                value={value}
+                onChangeText={(text) => {
+                  setValue((prev) => applyCappedTextChange(
+                    prev,
+                    text,
+                    BODY_PART_MAX_LENGTH,
+                    (value) => value.replace(/[^a-zA-Z\s]/g, '')
+                  ));
+                }}
+                placeholder="e.g. Left Arm, Back"
+                placeholderTextColor="#666"
+                autoCapitalize="words"
+                autoCorrect={false}
+                maxLength={BODY_PART_MAX_LENGTH}
+                contextMenuHidden
+                selectTextOnFocus={false}
+                showDismiss
+                hostKeyboardLocally
+              />
+              <View style={styles.buttonRow}>
+                <TouchableOpacity style={styles.cancelBtn} onPress={handleClose}>
+                  <Text style={styles.cancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.saveBtn, !canSave && styles.saveBtnDisabled]}
+                  onPress={handleSave}
+                  disabled={!canSave}
+                >
+                  <Text style={styles.saveText}>Save</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
-        </View>
-        <View style={styles.keyboardLayer} pointerEvents="box-none">
-          <CustomKeyboard localHost />
+          <View style={styles.keyboardLayer} pointerEvents="box-none">
+            <CustomKeyboard localHost />
+          </View>
         </View>
       </View>
     </Modal>
@@ -129,12 +143,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.85)',
   },
+  modalBody: {
+    flex: 1,
+  },
   modalLayer: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: H_PAD,
     paddingBottom: MODAL_BOTTOM_OFFSET,
+    paddingTop: 8,
   },
   keyboardLayer: {
     position: 'absolute',

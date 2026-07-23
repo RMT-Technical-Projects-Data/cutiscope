@@ -16,6 +16,23 @@ import { DeviceEventEmitter } from 'react-native';
 import SystemSetting from 'react-native-system-setting';
 import bluetoothIcon from '../assets/icons8-bluetooth-100.png';
 
+export const APP_STATUS_BAR_SUPPRESS_EVENT = 'appStatusBarSuppress';
+
+let appStatusBarSuppressCount = 0;
+
+/** Hide the App-level CustomStatusBar while a modal shows its own. */
+export function suppressAppStatusBar() {
+  appStatusBarSuppressCount += 1;
+  DeviceEventEmitter.emit(APP_STATUS_BAR_SUPPRESS_EVENT, true);
+}
+
+export function releaseAppStatusBar() {
+  appStatusBarSuppressCount = Math.max(0, appStatusBarSuppressCount - 1);
+  DeviceEventEmitter.emit(
+    APP_STATUS_BAR_SUPPRESS_EVENT,
+    appStatusBarSuppressCount > 0
+  );
+}
 
 // Simple event emitter for custom events
 class SimpleEventEmitter {
@@ -71,30 +88,58 @@ const CustomStatusBar = ({
 
 
   const renderBatteryImage = () => {
-    const pct = batteryPercentage != null ? batteryPercentage : 0;
-    const isCharging = batteryState === 'charging' || batteryState === 'full';
+    const pct =
+      typeof batteryPercentage === 'number' && !Number.isNaN(batteryPercentage)
+        ? Math.max(0, Math.min(100, batteryPercentage))
+        : 0;
+    // Only the active charging state uses the bolt icon.
+    const isCharging = String(batteryState || '').toLowerCase() === 'charging';
+
+    let source = emptyBattery;
+    let sourceKey = 'empty';
     if (isCharging) {
-      return <Image source={chargingBattery} style={styles.batteryImage} />;
+      source = chargingBattery;
+      sourceKey = 'charging';
+    } else if (pct >= 90) {
+      source = fullBattery;
+      sourceKey = 'full';
+    } else if (pct >= 80) {
+      source = belowfullBattery;
+      sourceKey = 'below90';
+    } else if (pct >= 50) {
+      source = halfBattery;
+      sourceKey = 'half';
+    } else if (pct >= 20) {
+      source = belowHalfBattery;
+      sourceKey = 'belowHalf';
+    } else if (pct >= 1) {
+      source = lowBattery;
+      sourceKey = 'low';
     }
-    if (pct >= 90) return <Image source={fullBattery} style={styles.batteryImage} />;
-    if (pct >= 80) return <Image source={belowfullBattery} style={styles.batteryImage} />;
-    if (pct >= 50) return <Image source={halfBattery} style={styles.batteryImage} />;
-    if (pct >= 20) return <Image source={belowHalfBattery} style={styles.batteryImage} />;
-    if (pct >= 1) return <Image source={lowBattery} style={styles.batteryImage} />;
-    return <Image source={emptyBattery} style={styles.batteryImage} />;
+
+    // Low-battery asset has a red fill — don't tint it white.
+    const tintStyle = source === lowBattery ? null : { tintColor: '#FFFFFF' };
+
+    return (
+      <Image
+        // Remount when asset changes — Android Image often stays blank after source swaps.
+        key={sourceKey}
+        source={source}
+        style={[styles.batteryImage, tintStyle]}
+        resizeMode="contain"
+      />
+    );
   };
 
   const renderWifiIcon = () => {
-    if (!wifiEnabled) {
-      return null; // Don't show anything if WiFi is off
+    if (!wifiEnabled || !connected) {
+      return null;
     }
-    // console.log(connected);
-
-    // Show different icons based on connection status
     return (
       <Image
         style={styles.wifiIcon}
-        source={connected && connectedWifi}
+        source={connectedWifi}
+        resizeMode="contain"
       />
     );
   };
@@ -174,10 +219,21 @@ const CustomStatusBar = ({
     if (isCustomTimeSet && customTime) updateTime(customTime);
     else updateTime();
 
-    DeviceInfo.getPowerState().then(powerState => {
-      setBatteryPercentage(Math.round(powerState.batteryLevel * 100));
-      setBatteryState(powerState.batteryState);
-    });
+    const updateBattery = () => {
+      DeviceInfo.getPowerState()
+        .then(powerState => {
+          const level = powerState?.batteryLevel;
+          if (typeof level === 'number' && level >= 0) {
+            setBatteryPercentage(Math.round(level * 100));
+          }
+          if (powerState?.batteryState) {
+            setBatteryState(powerState.batteryState);
+          }
+        })
+        .catch(() => {});
+    };
+
+    updateBattery();
     checkWifiStatus();
     checkBluetoothStatus();
 
@@ -191,14 +247,9 @@ const CustomStatusBar = ({
       } else {
         updateTime(); // Use the current system time if no custom time is set
       }
-      // Get battery information
-      DeviceInfo.getPowerState().then(powerState => {
-        setBatteryPercentage(Math.round(powerState.batteryLevel * 100)); // Set battery percentage
-        setBatteryState(powerState.batteryState); // Set battery status (charging, discharging, full, etc.)
-      });
+      updateBattery();
       checkWifiStatus();
       checkBluetoothStatus();
-      // console.log(batteryPercentage);
     }, 1000);
 
     // Listen for the 'timeChange' event
@@ -260,12 +311,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     backgroundColor: '#000',
     alignItems: 'center',
-    height: 58,
+    height: 62,
     paddingTop: Platform.OS === 'android' ? 8 : 8,
-    position: 'absolute',
-    top: 10,
-    left: 0,
-    right: 0,
+    position: 'relative',
+    width: '100%',
     zIndex: 99999,
     elevation: 100,
   },
@@ -295,8 +344,9 @@ const styles = StyleSheet.create({
     fontSize: 18,
   },
   batteryImage: {
-    width: 29,
-    height: 29,
+    width: 28,
+    height: 28,
+    marginLeft: 4,
     transform: [{ rotate: '90deg' }],
   },
   wifiIcon: {

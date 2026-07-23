@@ -6,16 +6,15 @@ import {
   StyleSheet,
 } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-import CustomStatusBar from '../Components/CustomStatusBar';
 
 const StandbyModal = ({ visible, onActivate }) => {
   if (!visible) {
     return null;
   }
 
+  // Use only the App-level CustomStatusBar (do not embed or suppress it).
   return (
     <View style={styles.container}>
-      <CustomStatusBar />
       <View style={styles.content}>
         <View style={styles.iconContainer}>
           <MaterialCommunityIcons name="camera-off" size={80} color="#666" />
