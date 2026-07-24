@@ -235,9 +235,8 @@ const SettingsMenu = () => {
     }, [navigation, subScreenOpen, wifiMenuVisible, bluetoothMenuVisible, dateAndTimeMenuVisible, inactivityMenuVisible]);
 
     return (
-        <>
-            <View style={styles.fullScreenBackground}>
-                <View style={styles.modalContainer}>
+        <View style={styles.fullScreenBackground}>
+            <View style={styles.modalContainer}>
                     {!subScreenOpen && (
                     <ScrollView style={styles.container} contentContainerStyle={styles.containerContent} showsVerticalScrollIndicator={false}>
 
@@ -501,9 +500,8 @@ const SettingsMenu = () => {
                         isDestructive={resultConfig.isDestructive}
                         onConfirm={() => setResultModalVisible(false)}
                     />
-                </View>
             </View>
-        </>
+        </View>
     );
 };
 

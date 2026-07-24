@@ -9,7 +9,6 @@ import {
   PermissionsAndroid,
   Dimensions,
   ActivityIndicator,
-  Modal,
   VirtualizedList,
   NativeModules,
   AppState,
@@ -28,7 +27,10 @@ import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import VerticalDivider from '../../shared/ui/VerticalDivider';
 import { CancelButton, PrimaryButton, PasswordField } from '../../shared/ui';
-import CustomStatusBar from '../../shared/ui/CustomStatusBar';
+import CustomStatusBar, {
+  suppressAppStatusBar,
+  releaseAppStatusBar,
+} from '../../shared/ui/CustomStatusBar';
 import { getBaseUrl } from '../auth/authService';
 import {
   normalizeSSID,
@@ -1067,6 +1069,13 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
     };
   }, []);
 
+  // Password overlay is full-screen absolute (covers onboarding like Bluetooth Share).
+  useEffect(() => {
+    if (!passwordModalVisible) return undefined;
+    suppressAppStatusBar();
+    return () => releaseAppStatusBar();
+  }, [passwordModalVisible]);
+
   // Reset showPassword when modal opens/closes
   useEffect(() => {
     if (!passwordModalVisible) {
@@ -1380,23 +1389,17 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
         </TouchableOpacity>
       )}
 
-      {passwordModalVisible && (
-        <Modal
-          visible={passwordModalVisible}
-          transparent={true}
-          animationType="fade"
-          statusBarTranslucent
-        >
-          <View style={styles.passwordModalRoot}>
-            <CustomStatusBar />
-            <View style={styles.passwordModalOverlay}>
-              {passwordModalToast ? (
-                <View style={styles.passwordModalToastBanner} pointerEvents="none">
-                  <Text style={styles.passwordModalToastText}>{passwordModalToast}</Text>
-                </View>
-              ) : null}
-              <View style={styles.passwordModalContentWrapper}>
-                <View style={styles.passwordModalContent}>
+      {passwordModalVisible ? (
+        <View style={styles.passwordModalRoot} pointerEvents="auto">
+          <CustomStatusBar />
+          <View style={styles.passwordModalOverlay}>
+            {passwordModalToast ? (
+              <View style={styles.passwordModalToastBanner} pointerEvents="none">
+                <Text style={styles.passwordModalToastText}>{passwordModalToast}</Text>
+              </View>
+            ) : null}
+            <View style={styles.passwordModalContentWrapper}>
+              <View style={styles.passwordModalContent}>
                 <View style={styles.modalHeader}>
                   <Text style={styles.modalTitle}>Enter Password</Text>
                   <Text style={styles.networkNameText}>
@@ -1457,11 +1460,10 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
                 </View>
               </View>
             </View>
-            </View>
-            <CustomKeyboard />
           </View>
-        </Modal>
-      )}
+          <CustomKeyboard />
+        </View>
+      ) : null}
     </View>
   );
 };
@@ -1848,12 +1850,14 @@ const styles = StyleSheet.create({
     fontFamily: 'ProductSans-Bold',
   },
   passwordModalRoot: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 10000,
+    elevation: 10000,
     backgroundColor: '#000000',
   },
   passwordModalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    backgroundColor: 'rgba(0, 0, 0, 0.92)',
     justifyContent: 'flex-start',
     alignItems: 'center',
     paddingTop: 24,

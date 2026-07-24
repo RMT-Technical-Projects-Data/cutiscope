@@ -256,22 +256,9 @@ const GalleryScreen = ({ route, navigation }) => {
 
   const galleryTitle = useMemo(() => {
     if (albumPath.length === 0) return 'Gallery';
-    if (isSelectionMode && activePhotos.length > 0) {
-      return `Photos (${selectedPhotos.length} selected)`;
-    }
-    if (isSelectionMode && isFolderLevel) {
-      return `Albums (${selectedAlbumPaths.length} selected)`;
-    }
+    // Keep the same title in selection mode so header layout matches non-selection.
     return formatAlbumPathTitle(albumPath, albumItems);
-  }, [
-    albumPath,
-    albumItems,
-    isSelectionMode,
-    activePhotos.length,
-    selectedPhotos.length,
-    isFolderLevel,
-    selectedAlbumPaths.length,
-  ]);
+  }, [albumPath, albumItems]);
 
   const fullScreenInitialIndex = useMemo(() => {
     if (!fullScreenPhoto || activePhotos.length === 0) return 0;
@@ -294,6 +281,11 @@ const GalleryScreen = ({ route, navigation }) => {
       })),
     [activePhotos]
   );
+
+  // Never paint a blank black body: loading → empty → albums/photos.
+  const hasGalleryContent = isFolderLevel || isPhotoLevel;
+  const showGalleryLoading = !hasGalleryContent && (!hasLoaded || isLoading);
+  const showGalleryEmpty = !hasGalleryContent && hasLoaded && !isLoading;
 
   return (
     <GestureHandlerRootView style={styles.container}>
@@ -344,12 +336,12 @@ const GalleryScreen = ({ route, navigation }) => {
           </View>
         )}
 
-        {isLoading && !hasLoaded ? (
+        {showGalleryLoading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={ACCENT_TEAL} />
-            <Text style={styles.loadingText}>Loading, please wait…</Text>
+            <Text style={styles.loadingText}>Fetching images…</Text>
           </View>
-        ) : hasLoaded && !isFolderLevel && !isPhotoLevel ? (
+        ) : showGalleryEmpty ? (
           <View style={styles.emptyMemories}>
             <Text style={styles.emptyMemoriesText}>
               {isGuest ? 'No photos in guest mode' : 'No photos found'}
@@ -383,12 +375,12 @@ const GalleryScreen = ({ route, navigation }) => {
               }}
             />
           </View>
-        ) : isPhotoLevel ? (
+        ) : (
           <View style={{ flex: 1 }}>
-            {isLoading ? (
+            {isLoading || !hasLoaded ? (
               <View style={[styles.loadingContainer, { position: 'absolute', zIndex: 2, left: 0, right: 0, top: 0, bottom: 0 }]}>
                 <ActivityIndicator size="large" color={ACCENT_TEAL} />
-                <Text style={styles.loadingText}>Loading, please wait…</Text>
+                <Text style={styles.loadingText}>Fetching images…</Text>
               </View>
             ) : null}
             <GalleryPhotoGrid
@@ -401,7 +393,7 @@ const GalleryScreen = ({ route, navigation }) => {
               onPhotosReady={handlePhotosReady}
             />
           </View>
-        ) : null}
+        )}
 
         <FullScreenGalleryModal
           visible={!!fullScreenPhoto}

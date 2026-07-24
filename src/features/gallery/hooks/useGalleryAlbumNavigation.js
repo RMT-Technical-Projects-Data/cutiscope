@@ -245,12 +245,13 @@ const useGalleryAlbumNavigation = ({
   }, [isGuest, userData, getUsername]);
 
   // Entering a folder: clear previous level tiles so we never flash the wrong albums.
+  // Mark not-loaded immediately so Gallery shows "Fetching…" instead of a black body.
   useEffect(() => {
     setCapturedPhotos([]);
     setAlbumItems([]);
     setHasLoaded(false);
+    setIsLoading(true);
     photoLeafReadyPathRef.current = '';
-    // Don't force spinner yet — beginLoadIndicator runs inside loadAlbumContent.
   }, [albumPath.join('/'), isGuest, setCapturedPhotos]);
 
   const loadAlbumContent = useCallback(async (path, isSilent = false) => {

@@ -1,9 +1,10 @@
-import React from 'react';
-import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, BackHandler } from 'react-native';
 
-/** Matches App CustomStatusBar so dim overlay sits below it. */
-const APP_STATUS_BAR_HEIGHT = 62;
-
+/**
+ * Full-screen dim overlay (not RN Modal) so App CustomStatusBar stays visible
+ * above Settings logout / guest exit / gallery confirms.
+ */
 const ConfirmationModal = ({
     visible,
     onClose,
@@ -15,67 +16,66 @@ const ConfirmationModal = ({
     isDestructive = false,
     verticalButtons = false
 }) => {
+    useEffect(() => {
+        if (!visible) return undefined;
+        const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+            onClose?.();
+            return true;
+        });
+        return () => sub.remove();
+    }, [visible, onClose]);
+
+    if (!visible) return null;
+
     return (
-        <Modal
-            visible={visible}
-            transparent={true}
-            animationType="fade"
-            onRequestClose={onClose}
-            statusBarTranslucent={true}
-        >
-            <View style={styles.root}>
-                {/* Leave app-level CustomStatusBar visible above the dim overlay. */}
-                <View style={styles.statusBarGap} />
-                <View style={styles.overlay}>
-                    <View style={styles.modalContainer}>
-                        <Text style={styles.title}>{title}</Text>
-                        <Text style={styles.message}>{message}</Text>
+        <View style={styles.root} pointerEvents="auto">
+            <View style={styles.overlay}>
+                <View style={styles.modalContainer}>
+                    <Text style={styles.title}>{title}</Text>
+                    <Text style={styles.message}>{message}</Text>
 
-                        <View style={[styles.buttonContainer, verticalButtons && styles.buttonContainerVertical]}>
-                            {cancelText !== null && (
-                                <TouchableOpacity
-                                    style={[styles.button, styles.cancelButton, verticalButtons && styles.buttonVertical]}
-                                    onPress={onClose}
-                                >
-                                    <Text style={styles.cancelButtonText}>{cancelText}</Text>
-                                </TouchableOpacity>
-                            )}
-
+                    <View style={[styles.buttonContainer, verticalButtons && styles.buttonContainerVertical]}>
+                        {cancelText !== null && (
                             <TouchableOpacity
-                                style={[
-                                    styles.button,
-                                    styles.confirmButton,
-                                    isDestructive ? styles.destructiveButton : styles.primaryButton,
-                                    verticalButtons && styles.buttonVertical
-                                ]}
-                                onPress={onConfirm}
+                                style={[styles.button, styles.cancelButton, verticalButtons && styles.buttonVertical]}
+                                onPress={onClose}
                             >
-                                <Text style={[
-                                    styles.confirmButtonText,
-                                    isDestructive ? styles.destructiveButtonText : styles.primaryButtonText
-                                ]}>
-                                    {confirmText}
-                                </Text>
+                                <Text style={styles.cancelButtonText}>{cancelText}</Text>
                             </TouchableOpacity>
-                        </View>
+                        )}
+
+                        <TouchableOpacity
+                            style={[
+                                styles.button,
+                                styles.confirmButton,
+                                isDestructive ? styles.destructiveButton : styles.primaryButton,
+                                verticalButtons && styles.buttonVertical
+                            ]}
+                            onPress={onConfirm}
+                        >
+                            <Text style={[
+                                styles.confirmButtonText,
+                                isDestructive ? styles.destructiveButtonText : styles.primaryButtonText
+                            ]}>
+                                {confirmText}
+                            </Text>
+                        </TouchableOpacity>
                     </View>
                 </View>
             </View>
-        </Modal>
+        </View>
     );
 };
 
 const styles = StyleSheet.create({
     root: {
-        flex: 1,
-        backgroundColor: 'transparent',
-    },
-    statusBarGap: {
-        height: APP_STATUS_BAR_HEIGHT,
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 10000,
+        elevation: 10000,
     },
     overlay: {
         flex: 1,
-        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+        backgroundColor: 'rgba(0, 0, 0, 0.78)',
         justifyContent: 'center',
         alignItems: 'center',
         padding: 20,

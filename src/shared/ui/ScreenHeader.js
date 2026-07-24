@@ -3,8 +3,8 @@ import { View, Text, StyleSheet } from 'react-native';
 import BackButton from './BackButton';
 
 /**
- * Standard header: back + centered title + right slot (defaults to 40x40 spacer).
- * Title is absolutely centered so a wide right action (e.g. Select All) does not shift it.
+ * Standard header: back + centered title + right slot.
+ * Equal side slots keep the title visually centered when Select All is shown.
  */
 const ScreenHeader = ({
   title,
@@ -17,7 +17,7 @@ const ScreenHeader = ({
   backIconTint,
 }) => (
   <View style={[styles.header, style]}>
-    <View style={styles.sideSlot}>
+    <View style={[styles.sideSlot, styles.sideSlotLeft]}>
       <BackButton
         onPress={onBack}
         style={backButtonStyle}
@@ -30,7 +30,7 @@ const ScreenHeader = ({
         style={[styles.title, titleStyle]}
         numberOfLines={1}
         adjustsFontSizeToFit
-        minimumFontScale={0.6}
+        minimumFontScale={0.65}
         pointerEvents="none"
       >
         {title}
@@ -51,28 +51,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 16,
     backgroundColor: 'transparent',
     marginBottom: 8,
     position: 'relative',
+    minHeight: 56,
   },
   sideSlot: {
     zIndex: 2,
-    minWidth: 40,
-    alignItems: 'flex-start',
+    width: 96,
+    minHeight: 40,
     justifyContent: 'center',
+  },
+  sideSlotLeft: {
+    alignItems: 'flex-start',
   },
   sideSlotRight: {
     alignItems: 'flex-end',
   },
   title: {
     position: 'absolute',
-    left: 56,
-    right: 56,
+    left: 104,
+    right: 104,
     color: '#FFFFFF',
-    fontSize: 26,
+    fontSize: 24,
     fontFamily: 'ProductSans-Bold',
     letterSpacing: 0.5,
     textAlign: 'center',
