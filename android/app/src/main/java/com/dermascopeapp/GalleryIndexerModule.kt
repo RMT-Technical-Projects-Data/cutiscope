@@ -66,9 +66,87 @@ class GalleryIndexerModule(private val reactContext: ReactApplicationContext) :
         }
 
         fun prependPhotoHint(absolutePath: String) {
-            // Soft invalidate parents so next list picks up the new file.
-            val parent = File(absolutePath).parent ?: return
-            invalidateCache(parent)
+            insertPhotoIntoCache(absolutePath)
+        }
+
+        /** Insert a newly saved photo into warm caches for instant Gallery paint. */
+        fun insertPhotoIntoCache(absolutePath: String) {
+            val file = File(absolutePath.removePrefix("file://"))
+            if (!file.exists() || !file.isFile) {
+                prependPhotoHint(file.absolutePath)
+                return
+            }
+            val parent = file.parentFile ?: return
+            val entry = FileEntry(
+                name = file.name,
+                path = file.absolutePath,
+                mtime = file.lastModified(),
+                isDirectory = false,
+                directory = parent.absolutePath
+            )
+            // Update direct parent listing
+            val parentKey = parent.absolutePath
+            val existing = listCache[parentKey]
+            if (existing != null && existing.exists) {
+                val photos = existing.photos.filter { it.path != entry.path }.toMutableList()
+                photos.add(0, entry)
+                photos.sortByDescending { it.mtime }
+                listCache[parentKey] = existing.copy(
+                    photos = photos,
+                    covers = existing.covers + (parentKey to entry.path),
+                    cachedAt = System.currentTimeMillis()
+                )
+            } else {
+                listCache[parentKey] = CachedListing(
+                    exists = true,
+                    dirs = emptyList(),
+                    photos = listOf(entry),
+                    covers = mapOf(parentKey to entry.path),
+                    cachedAt = System.currentTimeMillis()
+                )
+            }
+            // Ensure each ancestor knows the child dir exists (patient/year/date chain).
+            var walk: File? = parent
+            var guard = 0
+            while (walk != null && guard < 6) {
+                guard++
+                val grand = walk.parentFile ?: break
+                val grandKey = grand.absolutePath
+                val name = walk.name
+                val cached = listCache[grandKey]
+                val dirEntry = FileEntry(
+                    name = name,
+                    path = walk.absolutePath,
+                    mtime = walk.lastModified(),
+                    isDirectory = true
+                )
+                if (cached != null && cached.exists) {
+                    val dirs = if (cached.dirs.any { it.path == dirEntry.path }) {
+                        cached.dirs
+                    } else {
+                        (cached.dirs + dirEntry).sortedBy { it.name.lowercase(Locale.US) }
+                    }
+                    val covers = cached.covers.toMutableMap()
+                    covers[walk.absolutePath] = entry.path
+                    covers[dirEntry.path] = entry.path
+                    // Never store photos on ancestor album folders — dirs + covers only.
+                    listCache[grandKey] = cached.copy(
+                        dirs = dirs,
+                        photos = emptyList(),
+                        covers = covers,
+                        cachedAt = System.currentTimeMillis()
+                    )
+                } else {
+                    listCache[grandKey] = CachedListing(
+                        exists = true,
+                        dirs = listOf(dirEntry),
+                        photos = emptyList(),
+                        covers = mapOf(walk.absolutePath to entry.path, dirEntry.path to entry.path),
+                        cachedAt = System.currentTimeMillis()
+                    )
+                }
+                walk = grand
+            }
         }
     }
 
@@ -188,7 +266,13 @@ class GalleryIndexerModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun listDirectory(path: String, deletedPaths: ReadableArray?, includeCovers: Boolean, promise: Promise) {
+    fun listDirectory(
+        path: String,
+        deletedPaths: ReadableArray?,
+        includeCovers: Boolean,
+        albumsOnly: Boolean,
+        promise: Promise
+    ) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val clean = path.removePrefix("file://")
@@ -196,21 +280,55 @@ class GalleryIndexerModule(private val reactContext: ReactApplicationContext) :
                 var listing = listDirSync(clean, deleted)
                 val started = System.currentTimeMillis()
 
+                // Album roots (patient/year/date) must never expose a flat photo dump.
+                if (albumsOnly) {
+                    listing = listing.copy(photos = emptyList())
+                }
+
                 if (includeCovers && listing.exists && listing.dirs.isNotEmpty()) {
                     val covers = HashMap<String, String>()
                     for (d in listing.dirs) {
                         latestCover(d.path, deleted)?.let { covers[d.path] = it }
                     }
-                    listing = listing.copy(covers = covers)
+                    // Album hierarchy: hide empty folders (no images under them).
+                    if (albumsOnly) {
+                        val nonEmptyDirs = listing.dirs.filter { covers.containsKey(it.path) }
+                        listing = listing.copy(dirs = nonEmptyDirs, covers = covers)
+                    } else {
+                        listing = listing.copy(covers = covers)
+                    }
                 }
 
                 listCache[clean] = listing
-                Log.d(TAG, "listDirectory $clean dirs=${listing.dirs.size} photos=${listing.photos.size} covers=${listing.covers.size} in ${System.currentTimeMillis() - started}ms")
+                Log.d(TAG, "listDirectory $clean dirs=${listing.dirs.size} photos=${listing.photos.size} covers=${listing.covers.size} albumsOnly=$albumsOnly in ${System.currentTimeMillis() - started}ms")
                 withContext(Dispatchers.Main) { promise.resolve(listingToWritable(listing)) }
             } catch (e: Exception) {
                 Log.e(TAG, "listDirectory failed", e)
                 withContext(Dispatchers.Main) {
                     promise.reject("LIST_FAILED", e.message, e)
+                }
+            }
+        }
+    }
+
+    /**
+     * Fast leaf-folder photo list (no recursive covers). Used when opening a date album.
+     */
+    @ReactMethod
+    fun listPhotosInFolder(path: String, deletedPaths: ReadableArray?, promise: Promise) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val clean = path.removePrefix("file://")
+                val deleted = deletedSet(deletedPaths)
+                val listing = listDirSync(clean, deleted)
+                // Leaf: photos only, dirs ignored for the photo grid.
+                val photosOnly = listing.copy(dirs = emptyList(), covers = emptyMap())
+                listCache[clean] = listing
+                withContext(Dispatchers.Main) { promise.resolve(listingToWritable(photosOnly)) }
+            } catch (e: Exception) {
+                Log.e(TAG, "listPhotosInFolder failed", e)
+                withContext(Dispatchers.Main) {
+                    promise.reject("LIST_PHOTOS_FAILED", e.message, e)
                 }
             }
         }
@@ -273,6 +391,53 @@ class GalleryIndexerModule(private val reactContext: ReactApplicationContext) :
                     promise.reject("COVERS_FAILED", e.message, e)
                 }
             }
+        }
+    }
+
+    /**
+     * Fast recursive latest-image lookup under a gallery base (camera corner thumbnail).
+     */
+    @ReactMethod
+    fun findLatestUnder(basePath: String, deletedPaths: ReadableArray?, promise: Promise) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val clean = basePath.removePrefix("file://")
+                val deleted = deletedSet(deletedPaths)
+                val dir = File(clean)
+                if (!dir.exists() || !dir.isDirectory) {
+                    withContext(Dispatchers.Main) { promise.resolve(null) }
+                    return@launch
+                }
+                val images = ArrayList<FileEntry>()
+                collectImagesRecursive(dir, deleted, images)
+                val latest = images.maxByOrNull { it.mtime }
+                if (latest == null) {
+                    withContext(Dispatchers.Main) { promise.resolve(null) }
+                    return@launch
+                }
+                val map = Arguments.createMap()
+                map.putString("name", latest.name)
+                map.putString("path", latest.path)
+                map.putDouble("mtime", latest.mtime.toDouble())
+                map.putString("directory", latest.directory ?: "")
+                withContext(Dispatchers.Main) { promise.resolve(map) }
+            } catch (e: Exception) {
+                Log.e(TAG, "findLatestUnder failed", e)
+                withContext(Dispatchers.Main) {
+                    promise.reject("FIND_LATEST_FAILED", e.message, e)
+                }
+            }
+        }
+    }
+
+    /** Explicit cache insert from JS after a capture is finalized. */
+    @ReactMethod
+    fun notifyPhotoSaved(absolutePath: String, promise: Promise) {
+        try {
+            insertPhotoIntoCache(absolutePath)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.resolve(false)
         }
     }
 

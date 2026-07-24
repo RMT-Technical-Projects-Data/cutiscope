@@ -7,6 +7,11 @@ import ImageResizer from 'react-native-image-resizer';
 import UploadQueueNative from '../../shared/native/UploadQueueNative';
 import Config from 'react-native-config';
 import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  ensureS3ClockOk,
+  isClockSkewError,
+  ClockSkewError,
+} from './s3ClockSkew';
 
 // S3 Configuration from .env (bucket: cutiscope, region: ap-south-1 Mumbai)
 // Read at call-time so credentials are not stuck empty if Config loads late.
@@ -69,14 +74,6 @@ const buildRns3Options = (keyPrefix, cfg = getS3Config()) => {
   };
 };
 
-/** Warn when device clock is wildly wrong (AWS SigV4 allows ~15 min skew). */
-const logClockSkewHint = () => {
-  const now = new Date();
-  console.log('🕒 Device time for S3 signing:', now.toISOString());
-  // Rough sanity: year should be current-ish; filenames like 01-01-2026 with Jul 2026
-  // real world still fail if the phone date is frozen.
-};
-
 /** Parse AWS XML/text error from RNS3 response for clearer logs */
 const formatS3Error = (response) => {
   const status = response?.status;
@@ -84,6 +81,10 @@ const formatS3Error = (response) => {
     (typeof response?.text === 'string' && response.text) ||
     (typeof response?.body === 'string' && response.body) ||
     '';
+  if (/Chain validation failed/i.test(raw) ||
+      (status === 0 && /chain|certificate|ssl|tls|trust/i.test(raw))) {
+    return `CLOCK_SKEW / TLS: ${raw || 'Chain validation failed'} (device clock likely wrong)`;
+  }
   if (!raw) return `S3 upload failed: HTTP ${status}`;
   const code = raw.match(/<Code>([^<]+)<\/Code>/)?.[1];
   const message = raw.match(/<Message>([^<]+)<\/Message>/)?.[1];
@@ -339,7 +340,7 @@ export const uploadToUserS3Folder = async (filePath, fileName, username, metadat
 
     // 8. Prepare S3 options
     const cfg = getS3Config();
-    logClockSkewHint();
+    await ensureS3ClockOk();
     const options = buildRns3Options(keyPrefix, cfg);
     console.log('🧩 RNS3 endpoint:', options.awsUrl, 'region:', options.region);
     // Do not attach custom metadata — RNS3 does not sign x-amz-meta-* in the policy.
@@ -397,9 +398,7 @@ export const uploadToUserS3Folder = async (filePath, fileName, username, metadat
         statusCode: response.status
       });
 
-      if (Platform.OS === 'android') {
-        showInAppToast('Uploaded', { position: 'aboveCapture', durationMs: 1200 });
-      }
+      // Silent success — no toast from background S3 queue.
 
       return {
         success: true,
@@ -426,6 +425,9 @@ export const uploadToUserS3Folder = async (filePath, fileName, username, metadat
         timestamp: new Date().toISOString(),
       });
 
+      if (isClockSkewError({ message: errorMessage })) {
+        throw new ClockSkewError(errorMessage);
+      }
       throw new Error(errorMessage);
     }
 
@@ -484,7 +486,7 @@ export const uploadWithImageRecord = async (filePath, image) => {
 
   const fileUri = uploadUri.startsWith('file://') ? uploadUri : `file://${uploadUri}`;
   const file = { uri: fileUri, name: uploadName, type: 'image/jpeg' };
-  logClockSkewHint();
+  await ensureS3ClockOk();
   const options = buildRns3Options(keyPrefix, cfg);
 
   try {
@@ -504,13 +506,14 @@ export const uploadWithImageRecord = async (filePath, image) => {
     if (!response || (response.status !== 201 && response.status !== 200)) {
       const errMsg = formatS3Error(response);
       console.error('📬 S3 uploadWithImageRecord failed:', errMsg);
+      if (isClockSkewError({ message: errMsg })) {
+        throw new ClockSkewError(errMsg);
+      }
       throw new Error(errMsg);
     }
     const imageUrl = response.body?.postResponse?.location;
     const s3Key = response.body?.postResponse?.key || `${keyPrefix}${uploadName}`;
-    if (Platform.OS === 'android') {
-      showInAppToast('Uploaded', { position: 'aboveCapture', durationMs: 1200 });
-    }
+    // Silent success — status dots update in gallery without toast/flicker.
     return {
       success: true,
       url: imageUrl,

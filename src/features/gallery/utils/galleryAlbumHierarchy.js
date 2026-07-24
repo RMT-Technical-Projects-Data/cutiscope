@@ -11,6 +11,11 @@ const baseItem = (directory, type, nameLabel = directory.name) => ({
 });
 
 export const buildPatientAlbumItems = (directories) => directories
+  .filter((directory) => {
+    const name = directory?.name || '';
+    // Enforce album-wise tree: patientId__Name or Unassigned only under user base.
+    return name === 'Unassigned' || name.includes('__') || /^\d+$/.test(name);
+  })
   .map((directory) => {
     const [idPart, namePart] = directory.name.split('__');
     return {
@@ -25,6 +30,7 @@ export const buildPatientAlbumItems = (directories) => directories
   .sort((a, b) => (a.nameLabel || a.idLabel).localeCompare(b.nameLabel || b.idLabel));
 
 export const buildYearAlbumItems = (directories) => directories
+  .filter((directory) => /^\d{4}$/.test(directory?.name || ''))
   .sort((a, b) => b.name.localeCompare(a.name))
   .map((directory) => baseItem(directory, 'year'));
 

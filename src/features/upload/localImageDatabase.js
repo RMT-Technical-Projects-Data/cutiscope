@@ -13,6 +13,7 @@ const UPLOAD_STATUS = {
   UPLOADING: 'UPLOADING',
   FAILED: 'FAILED',
   UPLOADED: 'UPLOADED',
+  CLOCK_SKEW: 'CLOCK_SKEW',
 };
 
 let cache = null;
@@ -122,7 +123,11 @@ export const getImagesPendingUpload = async () => {
     } catch (_) {}
   }
   const reg = await loadRegistry();
-  return reg.images.filter((i) => i.uploadStatus === UPLOAD_STATUS.PENDING || i.uploadStatus === UPLOAD_STATUS.FAILED);
+  return reg.images.filter((i) =>
+    i.uploadStatus === UPLOAD_STATUS.PENDING ||
+    i.uploadStatus === UPLOAD_STATUS.FAILED ||
+    i.uploadStatus === UPLOAD_STATUS.CLOCK_SKEW
+  );
 };
 
 export const updateUploadStatus = async (id, uploadStatus, awsUrl = null) => {

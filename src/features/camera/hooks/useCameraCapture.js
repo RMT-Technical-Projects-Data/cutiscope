@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { Platform, DeviceEventEmitter } from 'react-native';
+import { Alert, Platform, DeviceEventEmitter } from 'react-native';
 import RNFS from 'react-native-fs';
 import CaptureQueue from '../captureJobQueue';
 import { recordPhotoCapture } from '../../patients/patientsService';
-import { prependGalleryPhoto, notifyGalleryPhotoUpdated, getGalleryOwnerKey } from '../../gallery/gallerySnapshotCache';
+import { prependGalleryPhoto, notifyGalleryPhotoUpdated, getGalleryOwnerKey, prependPendingCapture } from '../../gallery/gallerySnapshotCache';
+import {
+  buildAlbumDirectory,
+  buildAlbumPathSegments,
+  buildPatientSegment,
+  buildUserGalleryBase,
+  buildDateSegments,
+} from '../../gallery/utils/albumPathBuilder';
+import GalleryIndexer from '../../../shared/native/GalleryIndexer';
 import { showInAppToast } from '../../../shared/utils/inAppToast';
+import { UserMessages } from '../../../shared/utils/userMessages';
 import { saveImageLocallyOnly } from '../capture/saveImageLocally';
 import { processCaptureWithScale } from '../capture/processCaptureWithScale';
 import CapturePipeline from '../../../shared/native/CapturePipeline';
@@ -40,6 +49,10 @@ export function useCameraCapture({
   latestCaptureSeqRef,
   setLatestPhotoUri,
   setOnCapturePress,
+  setIsCapturing,
+  hasStoragePermissionRef,
+  requestStoragePermission,
+  setCameraError,
 }) {
   // ========== CAPTURE FUNCTION ==========
   // Near-zero debounce — only prevents accidental double-fires between loop ticks.
@@ -352,11 +365,16 @@ export function useCameraCapture({
         uploadStatus: 'PENDING',
         hasScale: true,
         imageVersion: Date.now(),
+        captureSeq: job.captureSeq,
+        stagedPath: job.rawPath,
       }, getGalleryOwnerKey({
         isGuest: !!job.isGuest,
         userId: job.userCtx?.id,
         username: job.userCtx?.username,
       }));
+      if (GalleryIndexer.isAvailable()) {
+        GalleryIndexer.notifyPhotoSaved(finalPath).catch(() => {});
+      }
     } else {
       const processedPath = await processCaptureWithScale(
         sourceForProcess,
@@ -416,11 +434,16 @@ export function useCameraCapture({
           uploadStatus: 'PENDING',
           hasScale: true,
           imageVersion: Date.now(),
+          captureSeq: job.captureSeq,
+          stagedPath: job.rawPath,
         }, getGalleryOwnerKey({
           isGuest: !!job.isGuest,
           userId: job.userCtx?.id,
           username: job.userCtx?.username,
         }));
+        if (GalleryIndexer.isAvailable()) {
+          GalleryIndexer.notifyPhotoSaved(finalPath).catch(() => {});
+        }
       }
 
       if (cleanProcessed !== job.rawPath && cleanProcessed !== finalPath) {
@@ -436,9 +459,17 @@ export function useCameraCapture({
       RNFS.scanFile(finalPath).catch(() => {});
     }
 
-    if (!job.captureSeq || job.captureSeq >= latestCaptureSeqRef.current) {
-      setLatestPhotoUri({ path: finalPath });
-    }
+    // Always promote camera corner thumb to newest finalized shot.
+    const seq = job.captureSeq || 0;
+    setLatestPhotoUri((prev) => {
+      const prevSeq = prev?.captureSeq || 0;
+      if (seq > 0 && seq < prevSeq) return prev;
+      return {
+        path: finalPath,
+        captureSeq: Math.max(seq, prevSeq, latestCaptureSeqRef.current || 0),
+        mtime: Date.now(),
+      };
+    });
 
     try {
       if (job.rawPath && job.rawPath !== finalPath && (await RNFS.exists(job.rawPath))) {
@@ -582,16 +613,75 @@ export function useCameraCapture({
           }
         }
 
-        // Stage raw + enqueue watermark. Gallery only lists the image AFTER scale
-        // is baked (local) — never depends on upload/network.
+        // Stage raw + enqueue watermark. Gallery gets a pending album hint immediately
+        // so Camera → Gallery never shows "No photos found" during burst.
+        // Camera thumb updates on every click (staged), then upgrades to final DCIM.
         (async () => {
+          const ownerKey = getGalleryOwnerKey({
+            isGuest: guestSnap,
+            userId: userSnap?.id,
+            username: userSnap?.username,
+          });
+          const albumSegments = guestSnap
+            ? []
+            : buildAlbumPathSegments({
+                boxId: boxSnap?.id,
+                boxName: boxSnap?.name,
+                date: stamp,
+              });
+          const directory = guestSnap
+            ? ''
+            : buildAlbumDirectory({
+                userId: userSnap?.id,
+                username: userSnap?.username || usernameSnap,
+                boxId: boxSnap?.id,
+                boxName: boxSnap?.name,
+                date: stamp,
+              });
+          const userBase = guestSnap
+            ? null
+            : buildUserGalleryBase({
+                userId: userSnap?.id,
+                username: userSnap?.username || usernameSnap,
+              });
+          const { year, dateSegment } = buildDateSegments(stamp);
+          const patientSegment = buildPatientSegment(boxSnap?.id, boxSnap?.name);
+
+          const bumpThumb = (path) => {
+            if (!path) return;
+            if (captureSeq < latestCaptureSeqRef.current) return;
+            setLatestPhotoUri({
+              path: String(path).replace(/^file:\/\//, ''),
+              captureSeq,
+              mtime: Date.now(),
+            });
+          };
+
+          // Instant thumb from camera temp (before staging) so burst always shows latest click.
+          bumpThumb(rawPhotoPath);
+
+          const registerPending = (stagedPath) => {
+            if (guestSnap) return;
+            prependPendingCapture(
+              {
+                captureSeq,
+                fileName,
+                stagedPath,
+                directory,
+                patientSegment,
+                year,
+                dateSegment,
+                albumSegments,
+                userBase,
+              },
+              ownerKey
+            );
+          };
+
           try {
             const stagedPath = await stageRawForQueue(rawPhotoPath);
-
-            // Instant camera-corner preview only (raw). Gallery waits for watermark.
-            if (captureSeq >= latestCaptureSeqRef.current) {
-              setLatestPhotoUri({ path: stagedPath });
-            }
+            bumpThumb(stagedPath);
+            registerPending(stagedPath);
 
             CaptureQueue.enqueue({
               rawPath: stagedPath,
@@ -610,9 +700,8 @@ export function useCameraCapture({
             console.error('Stage / enqueue failed:', bgErr);
             try {
               const stagedPath = await stageRawForQueue(rawPhotoPath);
-              if (captureSeq >= latestCaptureSeqRef.current) {
-                setLatestPhotoUri({ path: stagedPath });
-              }
+              bumpThumb(stagedPath);
+              registerPending(stagedPath);
               CaptureQueue.enqueue({
                 rawPath: stagedPath,
                 fileName,

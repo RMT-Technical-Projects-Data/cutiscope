@@ -135,8 +135,7 @@ class CapturePipelineModule(private val reactContext: ReactApplicationContext) :
             }
         }
 
-        GalleryIndexerModule.invalidateCache(directoryPath.absolutePath)
-        GalleryIndexerModule.prependPhotoHint(target.absolutePath)
+        GalleryIndexerModule.insertPhotoIntoCache(target.absolutePath)
 
         val map = Arguments.createMap()
         map.putBoolean("success", true)
@@ -221,6 +220,14 @@ class CapturePipelineModule(private val reactContext: ReactApplicationContext) :
                     putString("path", result.getString("path"))
                     putString("fileName", result.getString("fileName"))
                     putString("directory", result.getString("directory"))
+                    // Album segments for JS: patient / year / date under user base
+                    val dir = result.getString("directory") ?: ""
+                    val parts = dir.split('/').filter { it.isNotEmpty() }
+                    if (parts.size >= 3) {
+                        putString("dateSegment", parts[parts.size - 1])
+                        putString("year", parts[parts.size - 2])
+                        putString("patientSegment", parts[parts.size - 3])
+                    }
                 })
 
                 withContext(Dispatchers.Main) { promise.resolve(out) }
@@ -305,7 +312,7 @@ class CapturePipelineModule(private val reactContext: ReactApplicationContext) :
                 } catch (_: Exception) {
                 }
                 MediaScannerConnection.scanFile(reactContext, arrayOf(dst.absolutePath), null, null)
-                GalleryIndexerModule.invalidateCache(dst.parent)
+                GalleryIndexerModule.insertPhotoIntoCache(dst.absolutePath)
                 withContext(Dispatchers.Main) {
                     promise.resolve(Arguments.createMap().apply {
                         putBoolean("success", true)

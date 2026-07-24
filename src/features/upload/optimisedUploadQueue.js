@@ -8,6 +8,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // Import S3 service
 import { uploadToUserS3Folder, uploadWithImageRecord } from './S3UploadService';
 import ImageDatabase from './localImageDatabase';
+import {
+  ensureS3ClockOk,
+  isClockSkewError,
+  isUploadPausedForClockSkew,
+  CLOCK_SKEW_EVENT,
+} from './s3ClockSkew';
 
 // ========== UPLOAD QUEUE SYSTEM ==========
 let uploadQueue = [];
@@ -155,7 +161,7 @@ export const enqueueExistingFileUpload = (filePath, fileName, username, metadata
     status: 'pending',
     retryCount: 0,
     maxRetries: 3,
-    metadata,
+    metadata: { silent: true, ...metadata },
     createdAt: new Date().toISOString(),
   };
 
@@ -187,6 +193,17 @@ const processUploadQueue = async () => {
     const item = uploadQueue[0];
     
     try {
+      if (isUploadPausedForClockSkew()) {
+        try {
+          await ensureS3ClockOk();
+        } catch (skewErr) {
+          console.warn('⏸️ Upload queue paused for clock skew:', skewErr?.message || skewErr);
+          isUploading = false;
+          notifyQueueChange();
+          return;
+        }
+      }
+
       console.log(`🔄 Processing S3 upload: ${item.username}/${item.fileName}`);
       console.log('🧾 Queue item details:', {
         id: item.id,
@@ -271,6 +288,28 @@ const processUploadQueue = async () => {
       
     } catch (error) {
       console.error(`❌ Upload failed for ${item.fileName}:`, error);
+
+      // Clock skew: do NOT burn retries or drop the item — pause queue until clock is fixed.
+      if (isClockSkewError(error)) {
+        item.status = 'paused_clock';
+        item.error = error.message;
+        DeviceEventEmitter.emit('IMAGE_UPLOAD_STATUS_CHANGED', {
+          filePath: item.filePath,
+          status: 'CLOCK_SKEW',
+        });
+        const imageId = item.metadata?.imageId;
+        if (imageId) {
+          try {
+            await ImageDatabase.updateUploadStatus(imageId, ImageDatabase.UPLOAD_STATUS.CLOCK_SKEW || 'CLOCK_SKEW');
+          } catch (_) { }
+        }
+        if (Platform.OS === 'android') {
+          showInAppToast('Fix device date/time to resume uploads', { durationMs: 3500, position: 'center' });
+        }
+        isUploading = false;
+        notifyQueueChange();
+        return;
+      }
       
       // Perform immediate network check to handle disconnect during upload
       try {
@@ -306,7 +345,10 @@ const processUploadQueue = async () => {
         } catch (_) { }
         
         if (Platform.OS === 'android') {
-          showInAppToast('Failed', { durationMs: 2000 });
+          // Silent queue failures for background — avoid gallery toast spam.
+          if (!item.metadata?.silent) {
+            showInAppToast('Failed', { durationMs: 2000 });
+          }
         }
       } else {
         // Retry after delay
@@ -330,6 +372,13 @@ const processUploadQueue = async () => {
   notifyQueueChange();
   console.log('📊 Queue processing completed');
 };
+
+// Resume queue when clock skew is resolved (Settings sync or auto-correct).
+DeviceEventEmitter.addListener(CLOCK_SKEW_EVENT, ({ ok }) => {
+  if (ok && uploadQueue.length > 0 && !isUploading) {
+    processUploadQueue();
+  }
+});
 
 // ========== MAIN EXPORTED FUNCTIONS ==========
 

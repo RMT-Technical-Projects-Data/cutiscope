@@ -4,6 +4,8 @@ import android.app.Activity
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -15,20 +17,29 @@ import com.facebook.react.bridge.ReactMethod
  */
 class KioskModeModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     override fun getName(): String {
         return "KioskModeModule"
     }
 
     @ReactMethod
     fun startKioskMode(promise: Promise) {
-        val activity: Activity? = getCurrentActivity()
-        if (activity != null) {
+        waitForActivityThen(promise, maxAttempts = 20, delayMs = 100L) { activity ->
             try {
                 val dpm = activity.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
                 val adminName = ComponentName(activity, KioskDeviceAdminReceiver::class.java)
 
                 if (dpm.isDeviceOwnerApp(activity.packageName)) {
-                    dpm.setLockTaskPackages(adminName, arrayOf(activity.packageName, "com.android.bluetooth", "com.google.android.bluetooth", "com.android.settings"))
+                    dpm.setLockTaskPackages(
+                        adminName,
+                        arrayOf(
+                            activity.packageName,
+                            "com.android.bluetooth",
+                            "com.google.android.bluetooth",
+                            "com.android.settings"
+                        )
+                    )
                 }
 
                 activity.startLockTask()
@@ -36,23 +47,56 @@ class KioskModeModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
             } catch (e: Exception) {
                 promise.reject("KIOSK_ERROR", "Failed to start Kiosk Mode", e)
             }
-        } else {
-            promise.reject("ACTIVITY_NULL", "Current Activity is null")
         }
     }
 
     @ReactMethod
     fun stopKioskMode(promise: Promise) {
-        val activity: Activity? = getCurrentActivity()
-        if (activity != null) {
+        waitForActivityThen(promise, maxAttempts = 10, delayMs = 100L) { activity ->
             try {
                 activity.stopLockTask()
                 promise.resolve("Kiosk Mode Stopped")
             } catch (e: Exception) {
                 promise.reject("KIOSK_ERROR", "Failed to stop Kiosk Mode", e)
             }
-        } else {
-            promise.reject("ACTIVITY_NULL", "Current Activity is null")
         }
     }
+
+    /**
+     * Bridgeless / Fabric can invoke JS before getCurrentActivity() is set.
+     * Retry briefly on the main thread instead of failing immediately.
+     */
+    private fun waitForActivityThen(
+        promise: Promise,
+        maxAttempts: Int,
+        delayMs: Long,
+        action: (Activity) -> Unit
+    ) {
+        fun attempt(remaining: Int) {
+            val activity = getCurrentActivity()
+            if (activity != null) {
+                action(activity)
+                return
+            }
+            if (remaining <= 1) {
+                promise.reject("ACTIVITY_NULL", "Current Activity is null")
+                return
+            }
+            mainHandler.postDelayed({ attempt(remaining - 1) }, delayMs)
+        }
+        mainHandler.post { attempt(maxAttempts) }
+    }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+

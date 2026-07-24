@@ -92,9 +92,11 @@ const GalleryScreen = ({ route, navigation }) => {
     albumItems,
     setAlbumItems,
     isLoading,
+    setIsLoading,
     forceRefreshCounter,
     setForceRefreshCounter,
     getBasePath,
+    removeDeletedAlbumsLocally,
   } = useGalleryAlbumNavigation({
     isGuest,
     userData,
@@ -104,6 +106,14 @@ const GalleryScreen = ({ route, navigation }) => {
     setCapturedPhotos,
     capturedPhotosRef,
   });
+
+  const handleAlbumCoversReady = useCallback(() => {
+    setIsLoading(false);
+  }, [setIsLoading]);
+
+  const handlePhotosReady = useCallback(() => {
+    setIsLoading(false);
+  }, [setIsLoading]);
 
   const {
     clearDeletedFiles,
@@ -128,6 +138,7 @@ const GalleryScreen = ({ route, navigation }) => {
     setFullScreenPhoto,
     setConfirmConfig,
     setConfirmModalVisible,
+    removeDeletedAlbumsLocally,
   });
 
   const activePhotos = useMemo(() => capturedPhotos, [capturedPhotos]);
@@ -326,12 +337,12 @@ const GalleryScreen = ({ route, navigation }) => {
           </View>
         )}
 
-        {isLoading && capturedPhotos.length === 0 && albumItems.length === 0 ? (
+        {isLoading && albumItems.length === 0 && capturedPhotos.length === 0 ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={ACCENT_TEAL} />
-            <Text style={styles.loadingText}>Loading Images...</Text>
+            <Text style={styles.loadingText}>Loading, please wait…</Text>
           </View>
-        ) : !isFolderLevel && !isPhotoLevel ? (
+        ) : !isFolderLevel && !isPhotoLevel && !isLoading ? (
           <View style={styles.emptyMemories}>
             <Text style={styles.emptyMemoriesText}>
               {isGuest ? 'No photos in guest mode' : 'No photos found'}
@@ -343,35 +354,52 @@ const GalleryScreen = ({ route, navigation }) => {
             </Text>
           </View>
         ) : isFolderLevel ? (
-          <GalleryAlbumGrid
-            albumItems={albumItems}
-            albumPath={albumPath}
-            isGuest={isGuest}
-            isSelectionMode={isSelectionMode}
-            selectedAlbumPaths={selectedAlbumPaths}
-            onToggleSelection={toggleAlbumSelection}
-            onOpenAlbum={(id, selectPath) => {
-              if (selectPath) {
-                setIsSelectionMode(true);
-                setSelectedAlbumPaths([selectPath]);
-                return;
-              }
-              setAlbumPath((previous) => [...previous, id]);
-              setIsSelectionMode(false);
-              setSelectedPhotos([]);
-              setSelectedAlbumPaths([]);
-            }}
-          />
-        ) : (
-          <GalleryPhotoGrid
-            photos={activePhotos}
-            selectedPhotos={selectedPhotos}
-            isSelectionMode={isSelectionMode}
-            isGuest={isGuest}
-            onPhotoPress={handlePhotoPress}
-            onPhotoLongPress={handlePhotoLongPress}
-          />
-        )}
+          <View style={{ flex: 1 }}>
+            <GalleryAlbumGrid
+              albumItems={albumItems}
+              albumPath={albumPath}
+              isGuest={isGuest}
+              isSelectionMode={isSelectionMode}
+              selectedAlbumPaths={selectedAlbumPaths}
+              onToggleSelection={toggleAlbumSelection}
+              onCoversReady={handleAlbumCoversReady}
+              onOpenAlbum={(id, selectPath) => {
+                if (selectPath) {
+                  setIsSelectionMode(true);
+                  setSelectedAlbumPaths([selectPath]);
+                  return;
+                }
+                setAlbumPath((previous) => [...previous, id]);
+                setIsSelectionMode(false);
+                setSelectedPhotos([]);
+                setSelectedAlbumPaths([]);
+              }}
+            />
+          </View>
+        ) : isPhotoLevel ? (
+          <View style={{ flex: 1 }}>
+            {isLoading ? (
+              <View style={[styles.loadingContainer, { position: 'absolute', zIndex: 2, left: 0, right: 0, top: 0, bottom: 0 }]}>
+                <ActivityIndicator size="large" color={ACCENT_TEAL} />
+                <Text style={styles.loadingText}>Loading, please wait…</Text>
+              </View>
+            ) : null}
+            <GalleryPhotoGrid
+              photos={activePhotos}
+              selectedPhotos={selectedPhotos}
+              isSelectionMode={isSelectionMode}
+              isGuest={isGuest}
+              onPhotoPress={handlePhotoPress}
+              onPhotoLongPress={handlePhotoLongPress}
+              onPhotosReady={handlePhotosReady}
+            />
+          </View>
+        ) : isLoading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={ACCENT_TEAL} />
+            <Text style={styles.loadingText}>Loading, please wait…</Text>
+          </View>
+        ) : null}
 
         <FullScreenGalleryModal
           visible={!!fullScreenPhoto}

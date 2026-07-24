@@ -172,8 +172,14 @@ const SettingsMenu = () => {
 
             try {
                 const { SystemTimeModule } = require('react-native').NativeModules;
+                const { DeviceEventEmitter } = require('react-native');
                 if (SystemTimeModule) {
                     SystemTimeModule.setTime(timestamp);
+                    try {
+                        const { clearClockSkewPause, CLOCK_SKEW_EVENT } = require('../upload/s3ClockSkew');
+                        clearClockSkewPause();
+                        DeviceEventEmitter.emit(CLOCK_SKEW_EVENT, { ok: true });
+                    } catch (_) {}
                     let message = 'System time updated.';
                     if (updateType === 'date') message = 'Date has been updated successfully.';
                     else if (updateType === 'time') message = 'Time has been updated successfully.';

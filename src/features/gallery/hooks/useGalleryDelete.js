@@ -25,6 +25,7 @@ const useGalleryDelete = ({
   setFullScreenPhoto,
   setConfirmConfig,
   setConfirmModalVisible,
+  removeDeletedAlbumsLocally,
 }) => {
   const [deletedFiles, setDeletedFiles] = useState(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
@@ -321,14 +322,25 @@ const useGalleryDelete = ({
       isDestructive: true,
       onConfirm: async () => {
         try {
+          const pathsToDelete = [...selectedAlbumPaths];
           await runWithDeletionLoader(async () => {
-            for (const pathKey of selectedAlbumPaths) {
+            for (const pathKey of pathsToDelete) {
               const pathSegments = pathKey.split('/').filter(Boolean);
               await deleteAlbumWithAllImages(pathSegments);
             }
+            // Drop from UI + snapshot immediately so refresh cannot resurrect them.
+            if (typeof removeDeletedAlbumsLocally === 'function') {
+              removeDeletedAlbumsLocally(pathsToDelete);
+            }
+            try {
+              const base = getBasePath();
+              const parent =
+                albumPath.length === 0 ? base : `${base}/${albumPath.join('/')}`;
+              await GalleryIndexer.invalidate(parent);
+            } catch (_) { }
             setSelectedAlbumPaths([]);
             setIsSelectionMode(false);
-            setForceRefreshCounter(c => c + 1);
+            setForceRefreshCounter((c) => c + 1);
           });
           showInAppToast(`${count} album(s) deleted`, { durationMs: 2000, position: 'bottom' });
         } catch (error) {
@@ -338,7 +350,7 @@ const useGalleryDelete = ({
       }
     });
     setConfirmModalVisible(true);
-  }, [selectedAlbumPaths, deleteAlbumWithAllImages, runWithDeletionLoader, setConfirmConfig, setConfirmModalVisible, setSelectedAlbumPaths, setIsSelectionMode, setForceRefreshCounter]);
+  }, [selectedAlbumPaths, deleteAlbumWithAllImages, runWithDeletionLoader, setConfirmConfig, setConfirmModalVisible, setSelectedAlbumPaths, setIsSelectionMode, setForceRefreshCounter, removeDeletedAlbumsLocally, getBasePath, albumPath]);
 
   const handleDeleteCurrentImage = useCallback(async (photoObj) => {
     const targetPhoto = photoObj && photoObj.path ? photoObj : fullScreenPhoto;

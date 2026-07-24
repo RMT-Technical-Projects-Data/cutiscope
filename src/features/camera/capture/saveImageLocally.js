@@ -2,11 +2,7 @@ import RNFS from "react-native-fs";
 import { Platform } from "react-native";
 import { ensureGuestPhotosDir } from "../../gallery/guestPhotoStorage";
 import CapturePipeline from "../../../shared/native/CapturePipeline";
-
-const sanitizeFolderName = (s) => {
-  if (!s || typeof s !== 'string') return '';
-  return s.replace(/[\s/\\:*?"<>|]/g, '_').replace(/_+/g, '_').trim().slice(0, 80);
-};
+import { buildAlbumDirectory } from "../../gallery/utils/albumPathBuilder";
 
 export const saveImageLocallyOnly = async (sourcePath, fileName = null, options = {}) => {
   const { forGuest = false, skipScan = false, keepSource = false } = options;
@@ -60,26 +56,13 @@ export const saveImageLocallyOnly = async (sourcePath, fileName = null, options 
     if (forGuest) {
       directoryPath = await ensureGuestPhotosDir();
     } else {
-      const userSegment =
-        effectiveUserData?.id != null
-          ? String(effectiveUserData.id)
-          : sanitizeFolderName(options.username || 'user');
-
-      const year = String(now.getFullYear());
-      const month = pad(now.getMonth() + 1);
-      const day = pad(now.getDate());
-      const dateSegment = `${day}-${month}-${year}`;
-
-      const patientSegment = effectiveBox?.id
-        ? `${effectiveBox.id}__${sanitizeFolderName(effectiveBox.name || '')}`
-        : 'Unassigned';
-
-      if (Platform.OS === 'android') {
-        directoryPath = `${RNFS.ExternalStorageDirectoryPath}/DCIM/Camera/${userSegment}/${patientSegment}/${year}/${dateSegment}`;
-      } else {
-        directoryPath = `${RNFS.DocumentDirectoryPath}/Dermscope/${userSegment}/${patientSegment}/${year}/${dateSegment}`;
-      }
-
+      directoryPath = buildAlbumDirectory({
+        userId: effectiveUserData?.id,
+        username: options.username || effectiveUserData?.username || 'user',
+        boxId: effectiveBox?.id,
+        boxName: effectiveBox?.name,
+        date: now,
+      });
       await RNFS.mkdir(directoryPath);
     }
 

@@ -12,45 +12,45 @@ const ThumbnailItem = React.memo(({
   isGuest,
   onPress,
   onLongPress,
+  onImageSettled,
 }) => {
-  const [imageUri, setImageUri] = useState(null);
+  const imageUri = photo?.path || null;
   const [isUploaded, setIsUploaded] = useState(false);
 
   useEffect(() => {
-    const uri = photo.path;
-    if (!uri) return;
-    const cacheKey = `${uri}::${photo.imageVersion || 0}`;
-    if (imageCache.has(cacheKey)) {
-      setImageUri(imageCache.get(cacheKey));
+    if (!imageUri) {
+      onImageSettled?.();
       return;
     }
-    try {
-      imageCache.set(cacheKey, uri);
-      setImageUri(uri);
-    } catch (error) {
-      console.log('Error loading thumbnail:', error);
+    const cacheKey = `${imageUri}::${photo.imageVersion || 0}`;
+    if (!imageCache.has(cacheKey)) {
+      imageCache.set(cacheKey, imageUri);
     }
-  }, [photo.path, photo.imageVersion]);
+  }, [imageUri, photo.imageVersion, onImageSettled]);
 
   useEffect(() => {
     if (photo.uploadStatus === 'UPLOADED') {
       setIsUploaded(true);
       return;
     }
-    if (['PENDING', 'FAILED', 'UPLOADING'].includes(photo.uploadStatus)) {
+    if (['PENDING', 'FAILED', 'UPLOADING', 'CLOCK_SKEW'].includes(photo.uploadStatus)) {
       setIsUploaded(false);
       return;
     }
-    const checkUploadStatus = async () => {
+    // Prefer status already on the photo object — avoid N AsyncStorage reads on big folders.
+    if (photo.uploadStatus != null) {
+      setIsUploaded(photo.uploadStatus === 'UPLOADED');
+      return;
+    }
+    let cancelled = false;
+    (async () => {
       try {
         const cleanPath = (photo.absolutePath || photo.path.replace('file://', '')).split('?')[0];
         const status = await AsyncStorage.getItem(`uploaded_${cleanPath}`);
-        setIsUploaded(status === 'true');
-      } catch (error) {
-        console.log('Error checking upload status:', error);
-      }
-    };
-    checkUploadStatus();
+        if (!cancelled) setIsUploaded(status === 'true');
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; };
   }, [photo.path, photo.absolutePath, photo.uploadStatus]);
 
   return (
@@ -61,15 +61,16 @@ const ThumbnailItem = React.memo(({
       delayLongPress={300}
       activeOpacity={0.7}
     >
-      {imageUri && (
+      {imageUri ? (
         <Image
-          key={`${imageUri}::${photo.imageVersion || 0}`}
           source={{ uri: imageUri }}
           style={[styles.thumbnail, isSelectionMode && isSelected && styles.photoImageSelected]}
           resizeMode="cover"
           fadeDuration={0}
+          onLoad={onImageSettled}
+          onError={onImageSettled}
         />
-      )}
+      ) : null}
       {isSelectionMode && isSelected && (
         <View style={styles.selectedOverlay}><Text style={styles.selectedText}>✓</Text></View>
       )}
@@ -92,7 +93,9 @@ const ThumbnailItem = React.memo(({
   && prev.isSelected === next.isSelected
   && prev.isSelectionMode === next.isSelectionMode
   && prev.isGuest === next.isGuest
+  && prev.onImageSettled === next.onImageSettled
 ));
 
 export { imageCache };
 export default ThumbnailItem;
+

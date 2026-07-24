@@ -17,6 +17,11 @@ export const UploadQueueNative = {
     return UploadQueueModule.getImageByFilePath(filePath);
   },
 
+  async getPendingCount() {
+    if (!this.isAvailable() || !UploadQueueModule.getPendingCount) return 0;
+    return UploadQueueModule.getPendingCount();
+  },
+
   async getPendingImages() {
     if (!this.isAvailable()) return [];
     return UploadQueueModule.getPendingImages();

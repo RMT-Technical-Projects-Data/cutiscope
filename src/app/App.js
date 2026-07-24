@@ -234,20 +234,43 @@ const App = () => {
     checkSerialNumber();
   }, []);
 
-  // Start kiosk mode on app launch (Android only)
+  // Start kiosk mode on app launch (Android only).
+  // MainActivity may already start lock-task; JS reinforces once Activity is attached.
+  // Bridgeless can race getCurrentActivity() — retry briefly; don't flip active→false on that race.
   useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    let cancelled = false;
+
     const startKioskMode = async () => {
-      if (Platform.OS !== 'android') return;
-      try {
-        const result = await KioskMode.startKioskMode();
-        console.log('Kiosk mode on launch:', result);
-        setIsKioskActive(true);
-      } catch (e) {
-        console.error('Kiosk mode on launch:', e);
-        setIsKioskActive(false);
+      const maxAttempts = 5;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (cancelled) return;
+        try {
+          const result = await KioskMode.startKioskMode();
+          if (cancelled) return;
+          console.log('Kiosk mode on launch:', result);
+          setIsKioskActive(true);
+          return;
+        } catch (e) {
+          const msg = e?.message || String(e);
+          const activityNull = /Current Activity is null|ACTIVITY_NULL/i.test(msg);
+          if (activityNull && attempt < maxAttempts) {
+            await new Promise((r) => setTimeout(r, 200 * attempt));
+            continue;
+          }
+          // Native MainActivity often already enabled lock-task; keep optimistic Android default.
+          console.warn('Kiosk mode on launch:', msg);
+          if (!activityNull) setIsKioskActive(false);
+          return;
+        }
       }
     };
-    startKioskMode();
+
+    const t = setTimeout(startKioskMode, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
   }, []);
 
   // 10-tap detector to show exit kiosk PIN modal (Android only)

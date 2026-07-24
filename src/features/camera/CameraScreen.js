@@ -35,6 +35,7 @@ import { getGuestPhotosDir } from '../gallery/guestPhotoStorage';
 import { SESSION_ACTIVITY_EVENT, showInAppToast } from '../../shared/utils/inAppToast';
 import GalleryIndexer from '../../shared/native/GalleryIndexer';
 import { DELETED_FILES_KEY } from '../gallery/utils/galleryPathUtils';
+import { sanitizeFolderName, buildUserGalleryBase } from '../gallery/utils/albumPathBuilder';
 import Orientation from 'react-native-orientation-locker';
 
 // Import Auth Context
@@ -1001,106 +1002,146 @@ const CameraScreen = ({ navigation }) => {
   };
 
   // ========== LOAD IMAGE FUNCTION ==========
-  // ========== LOAD IMAGE FUNCTION ==========
-  // ========== LOAD IMAGE FUNCTION ==========
+  // Loads camera-corner gallery thumbnail. Never overwrite a newer capture with
+  // an older disk walk result; prefer native findLatestUnder when available.
   const loadImage = useCallback(async () => {
+    const seqAtStart = latestCaptureSeqRef.current;
     try {
       console.log('Loading latest image for gallery icon...');
       const hasPermission = await requestStoragePermission();
       if (!hasPermission) {
-        setLatestPhotoUri(null);
+        // Don't clear an in-session capture thumb on permission flicker.
         return;
       }
 
-      // Only the same folders GalleryScreen uses. When all photos are deleted,
-      // this must resolve to null so the icon shows the empty gallery asset.
-      let directoriesToCheck;
+      let basePath;
       if (isGuest) {
-        directoriesToCheck = [getGuestPhotosDir()];
+        basePath = getGuestPhotosDir();
       } else {
         const userSegment =
           userData?.id != null
             ? String(userData.id)
             : sanitizeFolderName(getUsername() || 'user');
-        directoriesToCheck =
+        basePath =
           Platform.OS === 'android'
-            ? [`${RNFS.ExternalStorageDirectoryPath}/DCIM/Camera/${userSegment}`]
-            : [`${RNFS.DocumentDirectoryPath}/Dermscope/${userSegment}`];
+            ? `${RNFS.ExternalStorageDirectoryPath}/DCIM/Camera/${userSegment}`
+            : `${RNFS.DocumentDirectoryPath}/Dermscope/${userSegment}`;
       }
 
-      let latestImage = null;
-      let latestImageTime = 0;
-
-      // Load deleted files list to filter them out
       let deletedFilesSet = new Set();
+      let deletedArr = [];
       try {
         const deletedFilesJson = await AsyncStorage.getItem('deleted_gallery_files_v2');
         if (deletedFilesJson) {
-          const deletedFilesArray = JSON.parse(deletedFilesJson);
-          deletedFilesSet = new Set(deletedFilesArray);
+          deletedArr = JSON.parse(deletedFilesJson);
+          deletedFilesSet = new Set(deletedArr);
         }
       } catch (error) {
         console.log('Error loading deleted files for camera screen:', error);
       }
 
-      // Recursive function to find the latest image
-      const findLatestImageRecursive = async (dirPath) => {
+      let latestImage = null;
+
+      if (GalleryIndexer.isAvailable() && typeof GalleryIndexer.findLatestUnder === 'function') {
         try {
-          const exists = await RNFS.exists(dirPath);
-          if (!exists) return;
-
-          const files = await RNFS.readDir(dirPath);
-          for (const file of files) {
-            if (file.isDirectory()) {
-              await findLatestImageRecursive(file.path);
-            } else if (
-              file.isFile() &&
-              file.name.match(/\.(jpg|jpeg|png|JPG|JPEG|PNG)$/i) &&
-              !file.name.startsWith('compressed_')
-            ) {
-              if (deletedFilesSet.has(file.path)) continue;
-
-              try {
-                const stillThere = await RNFS.exists(file.path);
-                if (!stillThere) continue;
-
-                const stat = await RNFS.stat(file.path);
-                const modifiedTime = stat.mtime ? new Date(stat.mtime).getTime() : 0;
-
-                if (modifiedTime > latestImageTime) {
-                  latestImageTime = modifiedTime;
-                  latestImage = {
-                    ...file,
-                    mtime: stat.mtime,
-                    size: stat.size
-                  };
-                }
-              } catch (statError) {
-                // Ignore stat errors
-              }
-            }
+          const found = await GalleryIndexer.findLatestUnder(basePath, deletedArr);
+          if (found?.path) {
+            latestImage = {
+              path: found.path,
+              name: found.name,
+              mtime: found.mtime,
+            };
           }
-        } catch (err) {
-          // Ignore read errors
+        } catch (nativeErr) {
+          console.warn('findLatestUnder failed, falling back:', nativeErr?.message || nativeErr);
         }
-      };
-
-      for (const directory of directoriesToCheck) {
-        await findLatestImageRecursive(directory);
       }
 
-      if (latestImage?.path && (await RNFS.exists(latestImage.path))) {
-        console.log('Setting latest photo URI:', latestImage.path);
-        setLatestPhotoUri(latestImage);
-      } else {
+      if (!latestImage) {
+        let latestImageTime = 0;
+        const findLatestImageRecursive = async (dirPath) => {
+          try {
+            const exists = await RNFS.exists(dirPath);
+            if (!exists) return;
+
+            const files = await RNFS.readDir(dirPath);
+            for (const file of files) {
+              if (file.isDirectory()) {
+                await findLatestImageRecursive(file.path);
+              } else if (
+                file.isFile() &&
+                file.name.match(/\.(jpg|jpeg|png|JPG|JPEG|PNG)$/i) &&
+                !file.name.startsWith('compressed_')
+              ) {
+                if (deletedFilesSet.has(file.path)) continue;
+
+                try {
+                  const stillThere = await RNFS.exists(file.path);
+                  if (!stillThere) continue;
+
+                  const stat = await RNFS.stat(file.path);
+                  const modifiedTime = stat.mtime ? new Date(stat.mtime).getTime() : 0;
+
+                  if (modifiedTime > latestImageTime) {
+                    latestImageTime = modifiedTime;
+                    latestImage = {
+                      ...file,
+                      mtime: stat.mtime,
+                      size: stat.size,
+                    };
+                  }
+                } catch (_) {}
+              }
+            }
+          } catch (_) {}
+        };
+
+        await findLatestImageRecursive(basePath);
+      }
+
+      // A newer capture landed while we walked disk — keep its thumbnail.
+      if (seqAtStart !== latestCaptureSeqRef.current) {
+        return;
+      }
+
+      if (latestImage?.path && (await RNFS.exists(String(latestImage.path).replace(/^file:\/\//, '')))) {
+        const clean = String(latestImage.path).replace(/^file:\/\//, '');
+        const foundMtime = latestImage.mtime
+          ? new Date(latestImage.mtime).getTime()
+          : 0;
+        console.log('Setting latest photo URI:', clean);
+        setLatestPhotoUri((prev) => {
+          // Never replace a thumb from a newer capture seq with an older disk walk.
+          if (prev?.captureSeq != null && prev.captureSeq > seqAtStart) {
+            return prev;
+          }
+          const prevMtime = prev?.mtime ? new Date(prev.mtime).getTime() : 0;
+          if (prev?.path && prevMtime > foundMtime) {
+            return prev;
+          }
+          const prevPath = (prev?.path || '').replace(/^file:\/\//, '').split('?')[0];
+          if (prevPath === clean && (prev?.captureSeq || 0) >= seqAtStart) {
+            return prev;
+          }
+          return {
+            path: clean,
+            name: latestImage.name,
+            mtime: foundMtime || Date.now(),
+            captureSeq: seqAtStart,
+          };
+        });
+      }
+      // Do not clear to null after captures — empty gallery icon only when truly no files
+      // and we never took a shot this session.
+      else if (seqAtStart === 0 && seqAtStart === latestCaptureSeqRef.current) {
         console.log('No latest image found');
         setLatestPhotoUri(null);
       }
     } catch (error) {
-      console.error('Failed to load images:', error);
-      setLatestPhotoUri(null);
+      console.error('loadImage error:', error);
+      // Don't wipe a good thumb on load errors.
     }
-  }, [requestStoragePermission, isGuest, userData?.id, getUsername]);
+  }, [isGuest, userData, getUsername, requestStoragePermission]);
 
   // Add this useEffect to refresh when returning from Gallery
   useFocusEffect(
@@ -1369,19 +1410,12 @@ const CameraScreen = ({ navigation }) => {
 
     // Warm native gallery index before the screen mounts (non-blocking).
     try {
-      const sanitizeFolderName = (s) => {
-        if (!s || typeof s !== 'string') return '';
-        return s.replace(/[\s/\\:*?"<>|]/g, '_').replace(/_+/g, '_').trim().slice(0, 80);
-      };
       const basePath = isGuest
         ? getGuestPhotosDir()
-        : Platform.OS === 'android'
-          ? `${RNFS.ExternalStorageDirectoryPath}/DCIM/Camera/${
-              userData?.id != null ? String(userData.id) : sanitizeFolderName(getUsername() || 'user')
-            }`
-          : `${RNFS.DocumentDirectoryPath}/Dermscope/${
-              userData?.id != null ? String(userData.id) : sanitizeFolderName(getUsername() || 'user')
-            }`;
+        : buildUserGalleryBase({
+            userId: userData?.id,
+            username: getUsername() || 'user',
+          });
       AsyncStorage.getItem(DELETED_FILES_KEY)
         .then((j) => {
           const deleted = j ? JSON.parse(j) : [];
@@ -1554,6 +1588,10 @@ const CameraScreen = ({ navigation }) => {
     latestCaptureSeqRef,
     setLatestPhotoUri,
     setOnCapturePress,
+    setIsCapturing,
+    hasStoragePermissionRef,
+    requestStoragePermission,
+    setCameraError,
   });
 
   const handleFocusScroll = event => {

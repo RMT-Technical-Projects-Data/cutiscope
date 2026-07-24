@@ -157,12 +157,19 @@ export default function CameraChrome({
           <TouchableOpacity
             style={styles.galleryButtonWrapper}
             onPress={handleGalleryPress}>
-            {/* key forces remount so Android Image cache does not keep a deleted thumb */}
             <Image
-              key={latestPhotoUri?.path ? `gallery-thumb-${latestPhotoUri.path}` : 'gallery-empty'}
+              key={
+                latestPhotoUri?.path
+                  ? `gallery-thumb-${String(latestPhotoUri.path).split('?')[0]}-${latestPhotoUri.captureSeq || latestPhotoUri.mtime || ''}`
+                  : 'gallery-empty'
+              }
               source={
                 latestPhotoUri?.path
-                  ? { uri: `file://${latestPhotoUri.path}` }
+                  ? {
+                      uri: `file://${String(latestPhotoUri.path).replace(/^file:\/\//, '')}?v=${
+                        latestPhotoUri.captureSeq || latestPhotoUri.mtime || Date.now()
+                      }`,
+                    }
                   : GalleryBtn
               }
               style={styles.galleryIcon}

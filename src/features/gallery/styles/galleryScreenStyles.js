@@ -24,6 +24,7 @@ export default StyleSheet.create({
   foldersContainer: { paddingHorizontal: HORIZONTAL_PADDING, paddingTop: 14, paddingBottom: 24 },
   folderRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: ALBUM_GAP },
   folderTile: { width: ALBUM_CARD_SIZE, borderRadius: 12, backgroundColor: '#1a1a1a', overflow: 'hidden', alignItems: 'stretch', borderWidth: 1, borderColor: '#474343ff', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 3, elevation: 3 },
+  folderTileSpacer: { width: ALBUM_CARD_SIZE, backgroundColor: 'transparent', borderWidth: 0, elevation: 0, shadowOpacity: 0 },
   folderImage: { width: ALBUM_CARD_SIZE, height: ALBUM_CARD_SIZE, borderRadius: 0, backgroundColor: 'transparent' },
   folderPlaceholder: { justifyContent: 'center', alignItems: 'center' },
   folderName: { color: PRIMARY_TEXT, fontSize: 14, fontWeight: '600', paddingHorizontal: 12, paddingTop: 12, paddingBottom: 6 },

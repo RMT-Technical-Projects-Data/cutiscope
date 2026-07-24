@@ -12,14 +12,24 @@ export const GalleryIndexer = {
     return Platform.OS === 'android' && !!GalleryIndexerModule;
   },
 
-  async listDirectory(path, deletedPaths = [], includeCovers = false) {
+  async listDirectory(path, deletedPaths = [], includeCovers = false, albumsOnly = false) {
     if (!this.isAvailable()) return noopListing;
     const result = await GalleryIndexerModule.listDirectory(
       path,
       deletedPaths,
-      includeCovers
+      includeCovers,
+      !!albumsOnly
     );
     return normalizeListing(result);
+  },
+
+  async listPhotosInFolder(path, deletedPaths = []) {
+    if (!this.isAvailable()) return noopListing;
+    if (typeof GalleryIndexerModule.listPhotosInFolder === 'function') {
+      const result = await GalleryIndexerModule.listPhotosInFolder(path, deletedPaths);
+      return normalizeListing(result);
+    }
+    return this.listDirectory(path, deletedPaths, false, false);
   },
 
   async listImagesRecursive(path, deletedPaths = []) {
@@ -35,6 +45,32 @@ export const GalleryIndexer = {
     if (!this.isAvailable() || !dirPaths?.length) return {};
     const result = await GalleryIndexerModule.findLatestCovers(dirPaths, deletedPaths);
     return result && typeof result === 'object' ? result : {};
+  },
+
+  async findLatestUnder(basePath, deletedPaths = []) {
+    if (!this.isAvailable() || !basePath) return null;
+    try {
+      const result = await GalleryIndexerModule.findLatestUnder(basePath, deletedPaths);
+      if (!result?.path) return null;
+      return {
+        name: result.name,
+        path: result.path,
+        mtime: result.mtime,
+        directory: result.directory || '',
+      };
+    } catch (_) {
+      return null;
+    }
+  },
+
+  async notifyPhotoSaved(absolutePath) {
+    if (!this.isAvailable() || !absolutePath) return false;
+    try {
+      await GalleryIndexerModule.notifyPhotoSaved(String(absolutePath).replace(/^file:\/\//, ''));
+      return true;
+    } catch (_) {
+      return false;
+    }
   },
 
   async prefetch(basePath, deletedPaths = []) {

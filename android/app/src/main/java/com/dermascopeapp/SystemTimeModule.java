@@ -57,39 +57,57 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void setTime(double timestamp) {
-        try {
-            // Convert timestamp (milliseconds) to Date
-            Date date = new Date((long) timestamp);
+        applySystemTime((long) timestamp, false);
+    }
 
-            // Format date for 'date' command: MMddHHmmYYYY.ss
+    /**
+     * Set clock from JS. When reenableAutoTime is true (upload SSL recovery),
+     * re-enable NTP afterward so the kiosk does not stay stuck with auto_time=0.
+     */
+    @ReactMethod
+    public void setTimeAsync(double timestamp, boolean reenableAutoTime, com.facebook.react.bridge.Promise promise) {
+        try {
+            boolean ok = applySystemTime((long) timestamp, reenableAutoTime);
+            promise.resolve(ok);
+        } catch (Exception e) {
+            Log.e("SystemTimeModule", "setTimeAsync failed", e);
+            promise.resolve(false);
+        }
+    }
+
+    private boolean applySystemTime(long timestampMs, boolean reenableAutoTime) {
+        try {
+            Date date = new Date(timestampMs);
             SimpleDateFormat sdf = new SimpleDateFormat("MMddHHmmyyyy.ss", Locale.US);
             String formattedDate = sdf.format(date);
 
-            // Execute date setting command as root
-            Process process = null;
-            try {
-                process = Runtime.getRuntime().exec("su");
-                DataOutputStream os = new DataOutputStream(process.getOutputStream());
+            Process process = Runtime.getRuntime().exec("su");
+            DataOutputStream os = new DataOutputStream(process.getOutputStream());
 
-                os.writeBytes("settings put global auto_time 0\n");
-                os.writeBytes("date " + formattedDate + "\n");
-                // Sync the system time to the hardware real-time clock (RTC) in UTC format
-                os.writeBytes("hwclock -u -w\n");
-                os.writeBytes("sync\n");
-                // Broadcast TIME_SET to trigger immediate system UI update (Status Bar, etc.)
-                os.writeBytes("am broadcast -a android.intent.action.TIME_SET\n");
-                os.writeBytes("exit\n");
-                os.flush();
-                os.close();
-                process.waitFor();
-            } catch (IOException e) {
-                // su not found, if the app has permission it might work via sh for some
-                // settings
-                // but 'date' and 'hwclock' definitely need root.
-                Log.w("SystemTimeModule", "Root access unavailable for setTime");
+            os.writeBytes("settings put global auto_time 0\n");
+            os.writeBytes("date " + formattedDate + "\n");
+            os.writeBytes("hwclock -u -w\n");
+            os.writeBytes("sync\n");
+            if (reenableAutoTime) {
+                // Allow NTP to keep the clock correct after this one-shot correction.
+                os.writeBytes("settings put global auto_time 1\n");
             }
+            os.writeBytes("am broadcast -a android.intent.action.TIME_SET\n");
+            os.writeBytes("exit\n");
+            os.flush();
+            os.close();
+            int code = process.waitFor();
+            if (code != 0) {
+                Log.w("SystemTimeModule", "setTime su exited with " + code);
+                return false;
+            }
+            return true;
+        } catch (IOException e) {
+            Log.w("SystemTimeModule", "Root access unavailable for setTime");
+            return false;
         } catch (Exception e) {
             e.printStackTrace();
+            return false;
         }
     }
 

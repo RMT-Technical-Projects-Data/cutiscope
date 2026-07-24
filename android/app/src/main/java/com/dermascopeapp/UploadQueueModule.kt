@@ -145,6 +145,26 @@ class UploadQueueModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun getPendingCount(promise: Promise) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val db = dbHelper.readableDatabase
+                val c = db.rawQuery(
+                    "SELECT COUNT(*) FROM images WHERE uploadStatus IN (?,?,?)",
+                    arrayOf("PENDING", "FAILED", "CLOCK_SKEW")
+                )
+                var count = 0
+                c.use {
+                    if (it.moveToFirst()) count = it.getInt(0)
+                }
+                withContext(Dispatchers.Main) { promise.resolve(count) }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { promise.resolve(0) }
+            }
+        }
+    }
+
+    @ReactMethod
     fun getPendingImages(promise: Promise) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -152,8 +172,8 @@ class UploadQueueModule(private val reactContext: ReactApplicationContext) :
                 val c = db.query(
                     "images",
                     null,
-                    "uploadStatus IN (?,?)",
-                    arrayOf("PENDING", "FAILED"),
+                    "uploadStatus IN (?,?,?)",
+                    arrayOf("PENDING", "FAILED", "CLOCK_SKEW"),
                     null,
                     null,
                     "createdAt ASC"
