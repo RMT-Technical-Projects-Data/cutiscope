@@ -289,9 +289,9 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
   const renderDevice = ({ item, isPaired }) => (
     <TouchableOpacity
       style={styles.deviceItem}
-      onPress={() => isPaired ? openOptions(item) : undefined}
-      disabled={!isPaired || connectingAddress !== null}
-      activeOpacity={isPaired ? 0.2 : 1}
+      onPress={() => (isPaired ? openOptions(item) : handlePair(item))}
+      disabled={connectingAddress !== null}
+      activeOpacity={0.7}
     >
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
         <View style={{ flex: 1 }}>

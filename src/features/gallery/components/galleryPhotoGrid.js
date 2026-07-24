@@ -5,8 +5,7 @@ import styles from '../styles/galleryScreenStyles';
 import { normalizePhotoPath } from '../utils/galleryPathUtils';
 
 /**
- * Photo leaf grid. Stays hidden under the parent spinner until every thumb
- * has settled (onLoad/onError), then reveals in one shot.
+ * Photo leaf grid. Loading/hide happens once per open; soft refreshes stay visible.
  */
 const GalleryPhotoGrid = ({
   photos,
@@ -25,25 +24,40 @@ const GalleryPhotoGrid = ({
   const needed = count;
   const settledRef = useRef(0);
   const readySigRef = useRef('');
+  const revealedRef = useRef(false);
   const [revealed, setRevealed] = useState(needed === 0);
 
   useEffect(() => {
-    settledRef.current = 0;
-    setRevealed(needed === 0);
     if (needed === 0) {
-      readySigRef.current = signature;
-      onPhotosReady?.();
-      return undefined;
-    }
-    // Large folders: FlatList virtualizes — reveal after prefetch (already done in hook).
-    if (needed > 72) {
+      revealedRef.current = false;
       readySigRef.current = signature;
       setRevealed(true);
       onPhotosReady?.();
       return undefined;
     }
+
+    // Soft refresh while already showing — do not hide / re-spin.
+    if (revealedRef.current) {
+      readySigRef.current = signature;
+      setRevealed(true);
+      onPhotosReady?.();
+      return undefined;
+    }
+
+    settledRef.current = 0;
+    setRevealed(false);
+
+    if (needed > 72) {
+      revealedRef.current = true;
+      readySigRef.current = signature;
+      setRevealed(true);
+      onPhotosReady?.();
+      return undefined;
+    }
+
     const t = setTimeout(() => {
-      if (readySigRef.current !== signature) {
+      if (!revealedRef.current) {
+        revealedRef.current = true;
         readySigRef.current = signature;
         setRevealed(true);
         onPhotosReady?.();
@@ -54,7 +68,8 @@ const GalleryPhotoGrid = ({
 
   const onThumbSettled = useCallback(() => {
     settledRef.current += 1;
-    if (settledRef.current >= needed && readySigRef.current !== signature) {
+    if (settledRef.current >= needed && !revealedRef.current) {
+      revealedRef.current = true;
       readySigRef.current = signature;
       setRevealed(true);
       onPhotosReady?.();
@@ -98,7 +113,7 @@ const GalleryPhotoGrid = ({
   return (
     <View style={local.wrap}>
       <FlatList
-        key={`photos_grid_${signature}`}
+        key={`photos_grid_${albumStableKey(signature, revealedRef.current)}`}
         data={photos}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
@@ -112,6 +127,11 @@ const GalleryPhotoGrid = ({
     </View>
   );
 };
+
+/** Keep FlatList instance stable after first reveal so soft refreshes do not remount. */
+function albumStableKey(signature, alreadyRevealed) {
+  return alreadyRevealed ? 'ready' : signature;
+}
 
 const local = StyleSheet.create({
   wrap: { flex: 1 },

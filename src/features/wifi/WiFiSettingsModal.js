@@ -1708,7 +1708,9 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
             }}
             statusBarTranslucent={true}
           >
-            <TouchableOpacity
+            <View style={styles.passwordModalRoot}>
+              <CustomStatusBar />
+              <TouchableOpacity
               style={styles.passwordModalOverlay}
               activeOpacity={1}
               onPress={() => {
@@ -1792,6 +1794,7 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
               </TouchableOpacity>
             </TouchableOpacity>
             <CustomKeyboard />
+            </View>
           </Modal>
 
           {/* Saved Password Modal */}
@@ -2272,13 +2275,18 @@ const styles = StyleSheet.create({
     fontFamily: 'ProductSans-Regular',
   },
   // Modal Styles
+  passwordModalRoot: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
   passwordModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.85)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
-    marginTop: 40,
+    paddingTop: 24,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
   },
   passwordModalContent: {
     width: '100%',
@@ -2332,7 +2340,7 @@ const styles = StyleSheet.create({
   },
   passwordModalToastBanner: {
     position: 'absolute',
-    top: 48,
+    top: 16,
     left: 20,
     right: 20,
     zIndex: 20,

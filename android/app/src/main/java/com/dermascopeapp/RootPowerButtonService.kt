@@ -10,8 +10,6 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import android.app.KeyguardManager
-import android.os.Handler
-import android.os.Looper
 import android.os.PowerManager
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -21,6 +19,7 @@ class RootPowerButtonService : Service() {
     private var process: Process? = null
     private var isRunning = false
     private var wasScreenInteractiveOnDown = false
+    private var powerDownTime = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -36,17 +35,11 @@ class RootPowerButtonService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!isRunning) {
             isRunning = true
-            
-            // ========== ADD THIS: Ensure wake lock on service start ==========
             ensureWakeLock()
-            // ==================================================================
-            
-            Thread { 
+            Thread {
                 logDeviceInfo()
-                listenForPowerButton() 
+                listenForPowerButton()
             }.start()
-            
-            // Disable default long-press power menu
             try {
                 Runtime.getRuntime().exec(arrayOf("su", "-c", "settings put global power_button_long_press 0"))
                 Log.d("RootPowerMenu", "Disabled long-press power button settings")
@@ -61,7 +54,7 @@ class RootPowerButtonService : Service() {
         try {
             process = Runtime.getRuntime().exec(arrayOf("su", "-c", "getevent -lq"))
             val reader = BufferedReader(InputStreamReader(process!!.inputStream))
-            var powerDownTime = 0L
+            powerDownTime = 0L
 
             while (isRunning) {
                 val line = reader.readLine()
@@ -69,35 +62,24 @@ class RootPowerButtonService : Service() {
                     Log.d("RootPowerMenu", "getevent output ended")
                     break
                 }
-                
-                // Flexible matching for KEY_POWER or hex 0074
-                // Typical lines: 
-                // /dev/input/event3: 0001 0074 00000001
-                // /dev/input/event3: EV_KEY KEY_POWER DOWN
-                val isPowerKey = line.contains("KEY_POWER") || line.contains(" 0074 ")
-                val isDown = line.contains("DOWN") || line.endsWith("00000001")
-                val isUp = line.contains("UP") || line.endsWith("00000000")
 
-                if (isPowerKey) {
-                    Log.d("RootPowerMenu", "Power event detected: $line")
-                    if (isDown) {
-                        Log.d("RootPowerMenu", "Power button DOWN detected")
-                        powerDownTime = System.currentTimeMillis()
-                        
-                        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-                        wasScreenInteractiveOnDown = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT_WATCH) {
-                            powerManager.isInteractive
-                        } else {
-                            @Suppress("DEPRECATION")
-                            powerManager.isScreenOn
-                        }
-                    } else if (isUp) {
-                        Log.d("RootPowerMenu", "Power button UP detected")
-                        if (powerDownTime > 0) { 
-                            wakeUpScreen()
-                            handlePowerButtonPress()
-                            powerDownTime = 0L
-                        }
+                if (PowerMenuTriggerGate.isPowerDownLine(line)) {
+                    Log.d("RootPowerMenu", "Power button DOWN: $line")
+                    powerDownTime = System.currentTimeMillis()
+                    val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+                    wasScreenInteractiveOnDown = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT_WATCH) {
+                        powerManager.isInteractive
+                    } else {
+                        @Suppress("DEPRECATION")
+                        powerManager.isScreenOn
+                    }
+                } else if (PowerMenuTriggerGate.isPowerUpLine(line)) {
+                    Log.d("RootPowerMenu", "Power button UP: $line")
+                    if (powerDownTime > 0) {
+                        val duration = System.currentTimeMillis() - powerDownTime
+                        powerDownTime = 0L
+                        wakeUpScreen()
+                        handlePowerButtonPress(duration)
                     }
                 }
             }
@@ -108,9 +90,9 @@ class RootPowerButtonService : Service() {
 
     private fun wakeUpScreen() {
         try {
-            val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
             val wakeLock = powerManager.newWakeLock(
-                android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
                 "dermaScopeApp::WakeLock"
             )
             wakeLock.acquire(3000)
@@ -121,9 +103,7 @@ class RootPowerButtonService : Service() {
 
     private fun refreshAppWakeLock() {
         try {
-            val intent = Intent("com.dermascopeapp.REFRESH_WAKE_LOCK")
-            sendBroadcast(intent)
-            Log.d("RootPowerMenu", "Wake lock refresh requested")
+            sendBroadcast(Intent("com.dermascopeapp.REFRESH_WAKE_LOCK"))
         } catch (e: Exception) {
             Log.e("RootPowerMenu", "Failed to refresh wake lock", e)
         }
@@ -131,15 +111,13 @@ class RootPowerButtonService : Service() {
 
     private fun ensureWakeLock() {
         try {
-            val intent = Intent("com.dermascopeapp.ACQUIRE_WAKE_LOCK")
-            sendBroadcast(intent)
-            Log.d("RootPowerMenu", "Wake lock acquisition requested")
+            sendBroadcast(Intent("com.dermascopeapp.ACQUIRE_WAKE_LOCK"))
         } catch (e: Exception) {
             Log.e("RootPowerMenu", "Failed to ensure wake lock", e)
         }
     }
 
-    private fun handlePowerButtonPress() {
+    private fun handlePowerButtonPress(durationMs: Long) {
         val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
         val isLocked = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
             keyguardManager.isDeviceLocked
@@ -147,7 +125,6 @@ class RootPowerButtonService : Service() {
             keyguardManager.isKeyguardLocked
         }
 
-        // Wake-from-lock / screen-was-off: only wake the display — do NOT open power menu.
         if (!wasScreenInteractiveOnDown || MainActivity.isDeliberateLock) {
             Log.d(
                 "RootPowerMenu",
@@ -158,15 +135,18 @@ class RootPowerButtonService : Service() {
             return
         }
 
-        // Screen was already ON: show in-app power menu (unless secure keyguard is up).
-        if (!isLocked) {
-            Log.d("RootPowerMenu", "Screen was ON — broadcasting POWER_BUTTON_PRESSED")
-            refreshAppWakeLock()
-            val intent = Intent("com.dermascopeapp.POWER_BUTTON_PRESSED")
-            sendBroadcast(intent)
-        } else {
+        if (isLocked) {
             Log.d("RootPowerMenu", "Skipping broadcast: secure keyguard locked")
+            return
         }
+
+        refreshAppWakeLock()
+        PowerMenuTriggerGate.broadcastPowerPressed(
+            this,
+            source = "RootPowerButtonService",
+            pressDurationMs = durationMs,
+            wasInteractiveOnDown = true
+        )
     }
 
     override fun onDestroy() {

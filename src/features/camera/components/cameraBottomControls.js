@@ -66,11 +66,12 @@ export default function CameraChrome({
           style={[styles.menuItemSettings]}
           onPress={handleSettingsPress}
           onLongPress={() => {
-            console.log('🔌 UI Request: Opening PowerOff modal via event');
+            console.log('UI Request: Opening PowerOff modal via event');
             ignoreKeysRef.current = true;
             setIsLightOn(false);
             DeviceEventEmitter.emit('requestPowerMenu');
           }}
+          delayLongPress={900}
           activeOpacity={0.7}
         >
           <Image

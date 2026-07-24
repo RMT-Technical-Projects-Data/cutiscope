@@ -113,10 +113,13 @@ const useGalleryAlbumNavigation = ({
 }) => {
   const [albumPath, setAlbumPath] = useState([]);
   const [albumItems, setAlbumItems] = useState(() => initialCache?.albumItems || []);
-  const [isLoading, setIsLoading] = useState(() => {
-    const cached = initialCache;
-    return !(cached && (cached.albumItems.length > 0 || cached.capturedPhotos.length > 0));
-  });
+  const hasInitialContent = !!(
+    initialCache &&
+    (initialCache.albumItems?.length > 0 || initialCache.capturedPhotos?.length > 0)
+  );
+  // Only show spinner when a load is actually slow — empty galleries skip it.
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(hasInitialContent);
   const [forceRefreshCounter, setForceRefreshCounter] = useState(0);
   const loadGenRef = useRef(0);
   const galleryOwnerKeyRef = useRef(galleryOwnerKey);
@@ -124,9 +127,34 @@ const useGalleryAlbumNavigation = ({
   const refreshTimerRef = useRef(null);
   const photoBatchTimerRef = useRef(null);
   const pendingPhotoBatchRef = useRef([]);
-  const loadingToastAtRef = useRef(0);
+  const loadingDelayRef = useRef(null);
+  /** Once a photo-leaf folder has been revealed, never flash loading again for that path. */
+  const photoLeafReadyPathRef = useRef('');
 
   albumPathRef.current = albumPath;
+
+  const clearLoadingDelay = useCallback(() => {
+    if (loadingDelayRef.current) {
+      clearTimeout(loadingDelayRef.current);
+      loadingDelayRef.current = null;
+    }
+  }, []);
+
+  /** Show spinner only if the load takes longer than a short grace period. */
+  const beginLoadIndicator = useCallback((isSilent = false) => {
+    clearLoadingDelay();
+    if (isSilent) return;
+    loadingDelayRef.current = setTimeout(() => {
+      loadingDelayRef.current = null;
+      setIsLoading(true);
+    }, 280);
+  }, [clearLoadingDelay]);
+
+  const endLoadIndicator = useCallback(() => {
+    clearLoadingDelay();
+    setIsLoading(false);
+    setHasLoaded(true);
+  }, [clearLoadingDelay]);
 
   const scheduleAlbumRefresh = useCallback(() => {
     if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
@@ -136,13 +164,6 @@ const useGalleryAlbumNavigation = ({
     }, 700);
   }, []);
 
-  const toastLoadingOnce = useCallback(() => {
-    const now = Date.now();
-    if (now - loadingToastAtRef.current < 2500) return;
-    loadingToastAtRef.current = now;
-    showInAppToast('Loading, please wait…', { durationMs: 2000, position: 'center' });
-  }, []);
-
   // Drop previous session UI when switching user ↔ guest.
   useEffect(() => {
     if (galleryOwnerKeyRef.current === galleryOwnerKey) return;
@@ -150,9 +171,10 @@ const useGalleryAlbumNavigation = ({
     setAlbumPath([]);
     setAlbumItems([]);
     setCapturedPhotos([]);
-    setIsLoading(true);
+    setHasLoaded(false);
+    beginLoadIndicator(false);
     setForceRefreshCounter((c) => c + 1);
-  }, [galleryOwnerKey, setCapturedPhotos]);
+  }, [galleryOwnerKey, setCapturedPhotos, beginLoadIndicator]);
 
   // Coalesce upload status quietly — never thrash album covers or remount grids.
   useEffect(() => {
@@ -224,14 +246,12 @@ const useGalleryAlbumNavigation = ({
 
   // Entering a folder: clear previous level tiles so we never flash the wrong albums.
   useEffect(() => {
-    const isPhotoLeaf = !isGuest && albumPath.length >= 3;
     setCapturedPhotos([]);
     setAlbumItems([]);
-    setIsLoading(true);
-    if (isPhotoLeaf) {
-      toastLoadingOnce();
-    }
-  }, [albumPath.join('/'), isGuest, setCapturedPhotos, toastLoadingOnce]);
+    setHasLoaded(false);
+    photoLeafReadyPathRef.current = '';
+    // Don't force spinner yet — beginLoadIndicator runs inside loadAlbumContent.
+  }, [albumPath.join('/'), isGuest, setCapturedPhotos]);
 
   const loadAlbumContent = useCallback(async (path, isSilent = false) => {
     const gen = ++loadGenRef.current;
@@ -266,30 +286,21 @@ const useGalleryAlbumNavigation = ({
           hasPending
         );
 
-      // Album levels: never paint early from cache — wait for one stable cover pass.
-      // Silent refresh (post-delete / background) keeps current tiles until the new list is ready.
       const isPhotoLeaf = !isGuest && path.length >= 3;
       if (albumsOnlyLevel) {
-        if (!isSilent) {
-          setIsLoading(true);
-          toastLoadingOnce();
-        }
+        if (!isSilent) beginLoadIndicator(false);
         setCapturedPhotos([]);
       } else if (isPhotoLeaf) {
-        if (!isSilent) {
-          setIsLoading(true);
-          toastLoadingOnce();
-        }
+        if (!isSilent) beginLoadIndicator(false);
         setAlbumItems([]);
       } else if (usableCache && (cached.albumItems.length > 0 || cached.capturedPhotos.length > 0 || hasPending)) {
         const diskPhotos = cached.capturedPhotos || [];
         const mergedPhotos = mergePhotos(diskPhotos, pendingPhotos, path);
         setAlbumItems([]);
         setCapturedPhotos(mergedPhotos);
-        setIsLoading(false);
+        endLoadIndicator();
       } else if (!isSilent) {
-        setIsLoading(true);
-        toastLoadingOnce();
+        beginLoadIndicator(false);
       }
 
       const currentDir = path.length === 0 ? base : `${base}/${path.join('/')}`;
@@ -331,31 +342,64 @@ const useGalleryAlbumNavigation = ({
           console.warn('[Gallery] blocked flat photo paint at album level', path.length);
           return;
         }
+        const pathKey = Array.isArray(path) ? path.join('/') : String(path || '');
+        const alreadyReady = photoLeafReadyPathRef.current === pathKey;
         const merged = mergePhotos(formatted, getPendingPhotos(), path);
         setAlbumItems([]);
-        setIsLoading(true);
         await prefetchPhotoBatch(merged);
         if (gen !== loadGenRef.current) return;
-        // Keep spinner until GalleryPhotoGrid reports every thumb settled.
-        setCapturedPhotos(merged);
-        setGallerySnapshot(path, [], merged.filter((p) => !p.pending), ownerKey);
-        if (merged.length === 0) {
-          setIsLoading(false);
+
+        // Merge upload statuses before first paint so queue / uploaded show correctly.
+        let withStatus = merged;
+        try {
+          const statusMap = await ImageDatabase.getUploadStatusMap();
+          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+          const OptimisedUploadService = require('../../upload/optimisedUploadQueue');
+          const keys = merged.map((p) =>
+            (p.absolutePath || p.path?.replace('file://', '') || '').split('?')[0]
+          ).filter(Boolean);
+          const flagPairs = keys.length
+            ? await AsyncStorage.multiGet(keys.map((k) => `uploaded_${k}`))
+            : [];
+          const uploadedFlags = new Map(
+            flagPairs.map(([k, v]) => [String(k).replace(/^uploaded_/, ''), v === 'true'])
+          );
+
+          withStatus = merged.map((p) => {
+            const key = (p.absolutePath || p.path?.replace('file://', '') || '').split('?')[0];
+            let status = statusMap[key] || p.uploadStatus || null;
+            if (uploadedFlags.get(key) || status === 'UPLOADED') {
+              status = 'UPLOADED';
+            } else {
+              try {
+                if (OptimisedUploadService.isImageInQueue?.(key)) {
+                  if (!status || status === 'FAILED') status = 'PENDING';
+                }
+              } catch (_) { }
+            }
+            return status ? { ...p, uploadStatus: status } : p;
+          });
+        } catch (_) { }
+
+        if (gen !== loadGenRef.current) return;
+        setCapturedPhotos(withStatus);
+        setGallerySnapshot(path, [], withStatus.filter((p) => !p.pending), ownerKey);
+
+        if (withStatus.length === 0) {
+          photoLeafReadyPathRef.current = pathKey;
+          endLoadIndicator();
+          return;
         }
 
-        (async () => {
-          try {
-            const statusMap = await ImageDatabase.getUploadStatusMap();
-            if (gen !== loadGenRef.current) return;
-            setCapturedPhotos((prev) =>
-              prev.map((p) => {
-                const key = p.absolutePath || p.path?.replace('file://', '');
-                const status = statusMap[key];
-                return status ? { ...p, uploadStatus: status } : p;
-              })
-            );
-          } catch (_) { }
-        })();
+        // First open of this folder: one loading pass until thumbs settle.
+        // Later silent focus/refresh must not re-show the spinner.
+        if (!alreadyReady) {
+          clearLoadingDelay();
+          setHasLoaded(true);
+          setIsLoading(true);
+        } else {
+          endLoadIndicator();
+        }
       };
 
       const applyFolders = (items, { keepLoading = false } = {}) => {
@@ -367,11 +411,11 @@ const useGalleryAlbumNavigation = ({
         setCapturedPhotos([]);
         setGallerySnapshot(path, visible, [], ownerKey);
         if (!keepLoading) {
-          setIsLoading(false);
+          endLoadIndicator();
         }
       };
 
-      /** Resolve latest-image covers, prefetch, set items, keep spinner until UI confirms decode. */
+      /** Resolve latest-image covers, prefetch, set items, then clear spinner. */
       const paintFoldersStable = async (baseItems) => {
         if (gen !== loadGenRef.current) return;
         let items = baseItems || [];
@@ -392,9 +436,7 @@ const useGalleryAlbumNavigation = ({
           await Promise.all(coverUris.map((uri) => Image.prefetch(uri).catch(() => false)));
         }
         if (gen !== loadGenRef.current) return;
-        // Prefetch done — paint once and clear spinner (no second "wait for onLoad" flicker).
         applyFolders(items, { keepLoading: false });
-        setIsLoading(false);
       };
 
       /** If disk only has loose photos (no dirs yet), derive patient albums from paths. */
@@ -458,7 +500,7 @@ const useGalleryAlbumNavigation = ({
           setAlbumItems([]);
           setCapturedPhotos([]);
           setGallerySnapshot(path, [], [], ownerKey);
-          setIsLoading(false);
+          endLoadIndicator();
           return;
         }
 
@@ -536,7 +578,7 @@ const useGalleryAlbumNavigation = ({
         setAlbumItems([]);
         setCapturedPhotos([]);
         setGallerySnapshot(path, [], [], ownerKey);
-        setIsLoading(false);
+        endLoadIndicator();
         return;
       }
 
@@ -652,24 +694,22 @@ const useGalleryAlbumNavigation = ({
       }
     } catch (error) {
       console.error('Failed to load album:', error);
+      endLoadIndicator();
       if (!isSilent) {
-        setIsLoading(false);
         showInAppToast('Failed to load gallery', { durationMs: 2000, position: 'bottom' });
-      } else {
-        setIsLoading(false);
       }
     }
-  }, [getBasePath, galleryOwnerKey, setCapturedPhotos, isGuest, toastLoadingOnce]);
+  }, [getBasePath, galleryOwnerKey, setCapturedPhotos, isGuest, beginLoadIndicator, endLoadIndicator, clearLoadingDelay]);
 
   const loadImages = useCallback(async (isSilent = false) => {
     const granted = await requestStoragePermissionForGallery(require('react-native').PermissionsAndroid);
     if (!granted) {
       showInAppToast('Storage permission required to load gallery', { durationMs: 3500, position: 'bottom' });
-      if (!isSilent) setIsLoading(false);
+      endLoadIndicator();
       return;
     }
     loadAlbumContent(albumPath, isSilent);
-  }, [albumPath, loadAlbumContent]);
+  }, [albumPath, loadAlbumContent, endLoadIndicator]);
 
   useEffect(() => {
     loadImages(forceRefreshCounter > 0);
@@ -737,8 +777,9 @@ const useGalleryAlbumNavigation = ({
       pendingSub.remove();
       if (photoBatchTimerRef.current) clearTimeout(photoBatchTimerRef.current);
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+      clearLoadingDelay();
     };
-  }, [isGuest, setCapturedPhotos, scheduleAlbumRefresh]);
+  }, [isGuest, setCapturedPhotos, scheduleAlbumRefresh, clearLoadingDelay]);
 
   const removeDeletedAlbumsLocally = useCallback((pathKeys = []) => {
     const keys = (pathKeys || []).filter(Boolean);
@@ -756,6 +797,11 @@ const useGalleryAlbumNavigation = ({
     });
   }, []);
 
+  const markPhotoLeafReady = useCallback(() => {
+    photoLeafReadyPathRef.current = albumPathRef.current.join('/');
+    endLoadIndicator();
+  }, [endLoadIndicator]);
+
   return {
     albumPath,
     setAlbumPath,
@@ -763,12 +809,14 @@ const useGalleryAlbumNavigation = ({
     setAlbumItems,
     isLoading,
     setIsLoading,
+    hasLoaded,
     forceRefreshCounter,
     setForceRefreshCounter,
     getBasePath,
     loadAlbumContent,
     loadImages,
     removeDeletedAlbumsLocally,
+    markPhotoLeafReady,
   };
 };
 

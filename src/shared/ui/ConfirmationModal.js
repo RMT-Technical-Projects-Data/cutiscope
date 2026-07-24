@@ -1,6 +1,9 @@
 import React from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 
+/** Matches App CustomStatusBar so dim overlay sits below it. */
+const APP_STATUS_BAR_HEIGHT = 62;
+
 const ConfirmationModal = ({
     visible,
     onClose,
@@ -20,37 +23,41 @@ const ConfirmationModal = ({
             onRequestClose={onClose}
             statusBarTranslucent={true}
         >
-            <View style={styles.overlay}>
-                <View style={styles.modalContainer}>
-                    <Text style={styles.title}>{title}</Text>
-                    <Text style={styles.message}>{message}</Text>
+            <View style={styles.root}>
+                {/* Leave app-level CustomStatusBar visible above the dim overlay. */}
+                <View style={styles.statusBarGap} />
+                <View style={styles.overlay}>
+                    <View style={styles.modalContainer}>
+                        <Text style={styles.title}>{title}</Text>
+                        <Text style={styles.message}>{message}</Text>
 
-                    <View style={[styles.buttonContainer, verticalButtons && styles.buttonContainerVertical]}>
-                        {cancelText !== null && (
+                        <View style={[styles.buttonContainer, verticalButtons && styles.buttonContainerVertical]}>
+                            {cancelText !== null && (
+                                <TouchableOpacity
+                                    style={[styles.button, styles.cancelButton, verticalButtons && styles.buttonVertical]}
+                                    onPress={onClose}
+                                >
+                                    <Text style={styles.cancelButtonText}>{cancelText}</Text>
+                                </TouchableOpacity>
+                            )}
+
                             <TouchableOpacity
-                                style={[styles.button, styles.cancelButton, verticalButtons && styles.buttonVertical]}
-                                onPress={onClose}
+                                style={[
+                                    styles.button,
+                                    styles.confirmButton,
+                                    isDestructive ? styles.destructiveButton : styles.primaryButton,
+                                    verticalButtons && styles.buttonVertical
+                                ]}
+                                onPress={onConfirm}
                             >
-                                <Text style={styles.cancelButtonText}>{cancelText}</Text>
+                                <Text style={[
+                                    styles.confirmButtonText,
+                                    isDestructive ? styles.destructiveButtonText : styles.primaryButtonText
+                                ]}>
+                                    {confirmText}
+                                </Text>
                             </TouchableOpacity>
-                        )}
-
-                        <TouchableOpacity
-                            style={[
-                                styles.button,
-                                styles.confirmButton,
-                                isDestructive ? styles.destructiveButton : styles.primaryButton,
-                                verticalButtons && styles.buttonVertical
-                            ]}
-                            onPress={onConfirm}
-                        >
-                            <Text style={[
-                                styles.confirmButtonText,
-                                isDestructive ? styles.destructiveButtonText : styles.primaryButtonText
-                            ]}>
-                                {confirmText}
-                            </Text>
-                        </TouchableOpacity>
+                        </View>
                     </View>
                 </View>
             </View>
@@ -59,6 +66,13 @@ const ConfirmationModal = ({
 };
 
 const styles = StyleSheet.create({
+    root: {
+        flex: 1,
+        backgroundColor: 'transparent',
+    },
+    statusBarGap: {
+        height: APP_STATUS_BAR_HEIGHT,
+    },
     overlay: {
         flex: 1,
         backgroundColor: 'rgba(0, 0, 0, 0.7)',

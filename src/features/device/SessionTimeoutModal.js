@@ -1,6 +1,9 @@
 import React from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 
+/** Matches App CustomStatusBar so dim overlay sits below it. */
+const APP_STATUS_BAR_HEIGHT = 62;
+
 const SessionTimeoutModal = ({
   visible,
   secondsRemaining,
@@ -15,22 +18,26 @@ const SessionTimeoutModal = ({
     statusBarTranslucent
     onRequestClose={onStayLoggedIn}
   >
-    <View style={styles.overlay}>
-      <View style={styles.card}>
-        <Text style={styles.title}>Session Expiring</Text>
-        <Text style={styles.message}>
-          No activity for {inactivityMinutes} minutes. Stay logged in or you will be logged out.
-        </Text>
-        <Text style={styles.countdown}>{secondsRemaining}</Text>
-        <Text style={styles.countdownLabel}>seconds remaining</Text>
+    <View style={styles.root}>
+      {/* Leave app-level CustomStatusBar visible above the dim overlay. */}
+      <View style={styles.statusBarGap} />
+      <View style={styles.overlay}>
+        <View style={styles.card}>
+          <Text style={styles.title}>Session Expiring</Text>
+          <Text style={styles.message}>
+            No activity for {inactivityMinutes} minutes. Stay logged in or you will be logged out.
+          </Text>
+          <Text style={styles.countdown}>{secondsRemaining}</Text>
+          <Text style={styles.countdownLabel}>seconds remaining</Text>
 
-        <View style={styles.buttons}>
-          <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
-            <Text style={styles.logoutText}>Log Out</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.stayButton} onPress={onStayLoggedIn}>
-            <Text style={styles.stayText}>Stay Logged In</Text>
-          </TouchableOpacity>
+          <View style={styles.buttons}>
+            <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
+              <Text style={styles.logoutText}>Log Out</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.stayButton} onPress={onStayLoggedIn}>
+              <Text style={styles.stayText}>Stay Logged In</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     </View>
@@ -38,6 +45,13 @@ const SessionTimeoutModal = ({
 );
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  statusBarGap: {
+    height: APP_STATUS_BAR_HEIGHT,
+  },
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.78)',

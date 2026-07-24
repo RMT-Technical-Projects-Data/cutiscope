@@ -284,22 +284,41 @@ class SystemPowerModule(private val reactContext: ReactApplicationContext) : Rea
     }
 
     // Restore the hardware backlight to the value saved by blackoutScreen().
+    // Prefer restoreScreenAsync from JS so the black overlay stays up until light is back.
     @ReactMethod
     fun restoreScreen() {
         Thread {
             try {
-                val script =
-                    "for f in /sys/class/leds/lcd-backlight/brightness " +
-                    "/sys/class/backlight/*/brightness; do " +
-                    "if [ -f \"\$f\" ]; then " +
-                    "if [ -s /data/local/tmp/dscope_bl ]; then " +
-                    "cat /data/local/tmp/dscope_bl > \"\$f\" 2>/dev/null; " +
-                    "else echo 255 > \"\$f\" 2>/dev/null; fi; break; fi; done"
-                Runtime.getRuntime().exec(arrayOf("su", "-c", script)).waitFor()
+                runRestoreBacklight()
             } catch (e: Exception) {
                 Log.e("SystemPowerModule", "restoreScreen failed: ${e.message}")
             }
         }.start()
+    }
+
+    @ReactMethod
+    fun restoreScreenAsync(promise: Promise) {
+        Thread {
+            try {
+                runRestoreBacklight()
+                promise.resolve(true)
+            } catch (e: Exception) {
+                Log.e("SystemPowerModule", "restoreScreenAsync failed: ${e.message}")
+                promise.resolve(false)
+            }
+        }.start()
+    }
+
+    private fun runRestoreBacklight() {
+        val script =
+            "for f in /sys/class/leds/lcd-backlight/brightness " +
+            "/sys/class/backlight/*/brightness; do " +
+            "if [ -f \"\$f\" ]; then " +
+            "if [ -s /data/local/tmp/dscope_bl ]; then " +
+            "cat /data/local/tmp/dscope_bl > \"\$f\" 2>/dev/null; " +
+            "else echo 255 > \"\$f\" 2>/dev/null; fi; " +
+            "echo OK; break; fi; done"
+        Runtime.getRuntime().exec(arrayOf("su", "-c", script)).waitFor()
     }
 
     @ReactMethod
@@ -331,8 +350,20 @@ class SystemPowerModule(private val reactContext: ReactApplicationContext) : Rea
     }
 
     companion object {
+        private val lastJsEmitElapsed = java.util.concurrent.atomic.AtomicLong(0L)
+        private const val JS_EMIT_COOLDOWN_MS = 1200L
+
         fun emitPowerButtonEvent(reactContext: ReactApplicationContext?) {
             try {
+                val now = android.os.SystemClock.elapsedRealtime()
+                val prev = lastJsEmitElapsed.get()
+                if (now - prev < JS_EMIT_COOLDOWN_MS) {
+                    Log.d("SystemPowerModule", "JS power emit debounced")
+                    return
+                }
+                if (!lastJsEmitElapsed.compareAndSet(prev, now)) {
+                    return
+                }
                 reactContext?.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
                     ?.emit("onPowerButtonPressed", null)
                 Log.d("SystemPowerModule", "Power button event emitted to React Native")

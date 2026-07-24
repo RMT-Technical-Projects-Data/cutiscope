@@ -1,35 +1,51 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Modal,
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   Dimensions,
-  NativeModules,
   FlatList,
   DeviceEventEmitter,
   ActivityIndicator,
-  PermissionsAndroid,
   Platform,
-  Animated
+  Animated,
+  BackHandler,
+  ToastAndroid,
 } from 'react-native';
 import ToggleSwitch from 'toggle-switch-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { showInAppToast } from '../../shared/utils/inAppToast';
 import { BackButton } from '../../shared/ui';
+import CustomStatusBar, {
+  suppressAppStatusBar,
+  releaseAppStatusBar,
+} from '../../shared/ui/CustomStatusBar';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-import KioskMode from '../../shared/native/KioskMode';
 import BluetoothNative from '../../shared/native/BluetoothNative';
-import { ToastAndroid } from 'react-native';
 const { width } = Dimensions.get('window');
 
-const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, onShareSuccess }) => {
+const BluetoothShareModal = ({
+  visible,
+  onClose,
+  selectedFiles,
+  selectedLabels,
+  onShareSuccess,
+  // Gallery historically passed these aliases — accept both.
+  files,
+  labels,
+  onSuccess,
+}) => {
+  const fileList = (selectedFiles?.length ? selectedFiles : files) || [];
+  const labelList = (selectedLabels?.length ? selectedLabels : labels) || [];
+  const shareSuccess = onShareSuccess || onSuccess;
+
   const [bluetoothEnabled, setBluetoothEnabled] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [pairedDevices, setPairedDevices] = useState([]);
   const [scannedDevices, setScannedDevices] = useState([]);
   const [sharingAddress, setSharingAddress] = useState(null);
+  const [sharePhase, setSharePhase] = useState(null); // 'pairing' | 'sending' | null
   const [showMenu, setShowMenu] = useState(false);
   const [showPairedDevicesScreen, setShowPairedDevicesScreen] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
@@ -38,6 +54,24 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
   const toastOpacity = useRef(new Animated.Value(0)).current;
   const toastTranslateY = useRef(new Animated.Value(6)).current;
   const toastHideTimerRef = useRef(null);
+
+  // Full-screen share has its own status bar — hide the App-level one.
+  useEffect(() => {
+    if (!visible) return undefined;
+    suppressAppStatusBar();
+    return () => releaseAppStatusBar();
+  }, [visible]);
+
+  // Hardware / gesture back closes share overlay when inline (covers gallery fullscreen).
+  useEffect(() => {
+    if (!visible) return undefined;
+    const onBack = () => {
+      onClose?.();
+      return true;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+    return () => sub.remove();
+  }, [visible, onClose]);
 
   useEffect(() => {
     if (!visible) {
@@ -275,19 +309,100 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
     }
   };
 
-  const handleDeviceSelect = async (device) => {
-    if (sharingAddress) return;
-    setSharingAddress(device.address);
-    showInAppToast(`Sending to ${device.name || 'Device'}...`, { durationMs: 2000, position: 'bottom' });
+  const waitForBond = useCallback((address, timeoutMs = 90000) => {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (ok, err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        sub.remove();
+        if (ok) resolve(true);
+        else reject(err || Object.assign(new Error('Bluetooth pairing was cancelled'), { code: 'BT_PAIRING_CANCELLED' }));
+      };
 
+      const timer = setTimeout(() => {
+        finish(false, Object.assign(new Error('Bluetooth pairing timed out'), { code: 'BT_PAIRING_CANCELLED' }));
+      }, timeoutMs);
+
+      const sub = DeviceEventEmitter.addListener('onBluetoothBondStateChanged', (event) => {
+        if (!event?.address || event.address !== address) return;
+        if (event.bonded) {
+          finish(true);
+        } else if (event.cancelled || event.bonded === false) {
+          finish(false);
+        }
+      });
+    });
+  }, []);
+
+  const pairThenReady = useCallback(async (device) => {
+    const alreadyPaired = pairedDevices.some((d) => d.address === device.address);
+    if (alreadyPaired) return true;
+
+    setSharePhase('pairing');
+    showInAppToast(`Pairing with ${device.name || 'device'}...`, { durationMs: 2500, position: 'bottom' });
+
+    const bondPromise = waitForBond(device.address);
+    try {
+      await BluetoothNative.pairDevice(device.address);
+    } catch (e) {
+      // createBond may reject if already bonding; still wait for bond event briefly
+      console.warn('[BluetoothShareModal] pairDevice start:', e?.message || e);
+    }
+    await bondPromise;
+    await loadPairedDevices();
+    return true;
+  }, [pairedDevices, waitForBond]);
+
+  const resolveSharePaths = useCallback(async () => {
+    const paths = [];
+    for (let i = 0; i < fileList.length; i += 1) {
+      const raw = fileList[i];
+      const clean = String(raw || '').replace('file://', '');
+      if (!clean) continue;
+      const label = labelList[i];
+      if (label) {
+        try {
+          const watermarked = await BluetoothNative.getWatermarkedImage(clean, label);
+          paths.push(String(watermarked || clean).replace('file://', ''));
+          continue;
+        } catch (e) {
+          console.warn('[BluetoothShareModal] watermark failed, using original:', e?.message || e);
+        }
+      }
+      paths.push(clean);
+    }
+    return paths;
+  }, [fileList, labelList]);
+
+  const handleDeviceSelect = async (device) => {
+    if (sharingAddress || !device?.address) return;
+    if (!fileList.length) {
+      showInAppToast('No files selected to share', { durationMs: 2500 });
+      return;
+    }
+
+    setSharingAddress(device.address);
     try {
       await stopScan();
-      const cleanPaths = selectedFiles.map(path => path.replace('file://', ''));
+
+      // 1) Pair first for unpaired / available devices (exits lock task for system pairing UI).
+      await pairThenReady(device);
+
+      // 2) Then send files over OPP/OBEX.
+      setSharePhase('sending');
+      showInAppToast(`Sending to ${device.name || 'Device'}...`, { durationMs: 2000, position: 'bottom' });
+
+      const cleanPaths = await resolveSharePaths();
+      if (!cleanPaths.length) {
+        throw Object.assign(new Error('No valid files to send'), { code: 'BT_NO_FILES' });
+      }
+
       await BluetoothNative.sendFileDirectViaBluetooth(cleanPaths, device.address);
-      showInAppToast("File transfer completed", { durationMs: 3000 });
-      if (onShareSuccess) onShareSuccess();
+      showInAppToast('File transfer completed', { durationMs: 3000 });
+      if (shareSuccess) shareSuccess();
       setTimeout(() => onClose(), 300);
-      // onClose();
     } catch (e) {
       console.warn('Sharing failed:', e);
       const msg = (e && e.message) || String(e);
@@ -301,24 +416,20 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
         if (Platform.OS === 'android') {
           ToastAndroid.show('Bluetooth pairing was cancelled', ToastAndroid.LONG);
         }
-        // showInAppToast("Bluetooth pairing was cancelled", { durationMs: 3000 });
+        showInAppToast('Bluetooth pairing was cancelled', { durationMs: 3000 });
       } else if (isCancelled) {
-        if (Platform.OS === 'android') {
-          //ToastAndroid.show('transfer cancelled by device', ToastAndroid.LONG);
-        }
-        showInAppToast("transfer cancelled by device", { durationMs: 3000 });
+        showInAppToast('transfer cancelled by device', { durationMs: 3000 });
       } else if (isConnectFailed) {
-
-
-        showInAppToast(msg || "Make sure the receiving device is set to receive files via Bluetooth.", { durationMs: 4000 });
+        showInAppToast(msg || 'Make sure the receiving device is set to receive files via Bluetooth.', { durationMs: 4000 });
       } else {
         if (Platform.OS === 'android') {
           ToastAndroid.show('Failed to send file', ToastAndroid.LONG);
         }
-        showInAppToast("Failed to send file", { durationMs: 3000 });
+        showInAppToast('Failed to send file', { durationMs: 3000 });
       }
     } finally {
       setSharingAddress(null);
+      setSharePhase(null);
     }
   };
 
@@ -381,7 +492,14 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
           <Text style={styles.deviceMac}>{item.address}</Text>
         </View>
         {sharingAddress === item.address ? (
-          <ActivityIndicator size="small" color="#22B2A6" />
+          <View style={{ alignItems: 'flex-end' }}>
+            <ActivityIndicator size="small" color="#22B2A6" />
+            {sharePhase ? (
+              <Text style={styles.sharePhaseText}>
+                {sharePhase === 'pairing' ? 'Pairing…' : 'Sending…'}
+              </Text>
+            ) : null}
+          </View>
         ) : (
           <MaterialCommunityIcons name="share-variant" size={20} color="#22B2A6" />
         )}
@@ -389,14 +507,13 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
     </TouchableOpacity>
   );
 
+  if (!visible) {
+    return null;
+  }
+
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent={true}
-      onRequestClose={onClose}
-      statusBarTranslucent={true}
-    >
+    <View style={[styles.fullScreenContainer, styles.inlineOverlay]} pointerEvents="auto">
+      <CustomStatusBar />
       <View style={styles.modalContainer}>
         <View style={styles.header}>
           <BackButton onPress={onClose} style={styles.backButton} iconStyle={styles.backIcon} />
@@ -537,21 +654,32 @@ const BluetoothShareModal = ({ visible, onClose, selectedFiles, selectedLabels, 
           </Animated.View>
         </View>
       )}
-    </Modal>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
+  fullScreenContainer: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#000000',
+  },
+  // Above FullScreenGalleryModal (zIndex 2000) — same pattern as Wi‑Fi inline overlay.
+  inlineOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 10000,
+    elevation: 10000,
+  },
   modalContainer: {
     flex: 1,
     backgroundColor: '#000000',
-    marginTop: 40,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingTop: Platform.OS === 'ios' ? '12%' : '6%',
-    paddingBottom: 20,
+    paddingTop: 8,
+    paddingBottom: 16,
     backgroundColor: 'transparent',
     paddingHorizontal: 20,
   },
@@ -662,6 +790,12 @@ const styles = StyleSheet.create({
     fontFamily: 'ProductSans-Regular',
     marginTop: 4,
   },
+  sharePhaseText: {
+    color: '#22B2A6',
+    fontSize: 11,
+    fontFamily: 'ProductSans-Regular',
+    marginTop: 4,
+  },
   emptyContainer: {
     paddingVertical: 30,
     justifyContent: 'center',
@@ -690,47 +824,29 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    zIndex: 1000,
     backgroundColor: 'transparent',
+    zIndex: 1000,
   },
   dropdownMenu: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 100 : 70,
+    top: 70,
     right: 20,
     backgroundColor: '#1C1C1E',
     borderRadius: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
     borderWidth: 1,
     borderColor: '#2F3640',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 8,
+    paddingVertical: 8,
     minWidth: 160,
+    elevation: 8,
   },
   menuItem: {
-    paddingVertical: 10,
-    width: '100%',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
   },
   menuItemText: {
     color: '#FFFFFF',
-    fontSize: 16,
+    fontSize: 15,
     fontFamily: 'ProductSans-Regular',
-  },
-  unpairButton: {
-    backgroundColor: '#22B2A6',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  unpairButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontFamily: 'ProductSans-Bold',
   },
   headerTitleContainer: {
     flex: 1,
@@ -739,17 +855,28 @@ const styles = StyleSheet.create({
   },
   headerTitleMain: {
     color: '#FFFFFF',
-    fontSize: 22,
+    fontSize: 20,
     fontFamily: 'ProductSans-Bold',
     letterSpacing: 0.5,
-    textAlign: 'center',
   },
   serialNumberText: {
     color: '#22B2A6',
-    fontSize: 14,
+    fontSize: 12,
     fontFamily: 'ProductSans-Regular',
     marginTop: 2,
-    textAlign: 'center',
+  },
+  unpairButton: {
+    backgroundColor: '#2A1A1A',
+    borderWidth: 1,
+    borderColor: '#FF5252',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  unpairButtonText: {
+    color: '#FF5252',
+    fontSize: 13,
+    fontFamily: 'ProductSans-Bold',
   },
   toastContainer: {
     position: 'absolute',
@@ -758,7 +885,7 @@ const styles = StyleSheet.create({
     bottom: 80,
     alignItems: 'center',
     paddingHorizontal: 16,
-    zIndex: 9999,
+    zIndex: 3000,
   },
   toast: {
     maxWidth: 360,

@@ -7,8 +7,6 @@ import {
   Image,
   Dimensions,
   ActivityIndicator,
-  Platform,
-  StatusBar,
   BackHandler,
 } from 'react-native';
 import { GestureHandlerRootView, Gesture, GestureDetector, FlatList as GHFlatList } from 'react-native-gesture-handler';
@@ -26,8 +24,6 @@ const HEADER_FOOTER_BG = '#000000';
 const PRIMARY_TEXT = '#FFFFFF';
 const SECONDARY_TEXT = '#AAAAAA';
 const ACCENT_TEAL = '#22B2A6';
-
-const STATUS_BAR_HEIGHT = Platform.OS === 'ios' ? 44 : StatusBar.currentHeight || 0;
 
 const normalizePhotoPath = (p) => {
   if (!p) return '';
@@ -328,28 +324,80 @@ const FullScreenGalleryModal = React.memo(({
     return photos[Math.min(currentIndex, photos.length - 1)];
   }, [photos, currentIndex, photoPathsKey]);
 
-  // Keep upload latch in sync — once UPLOADING, stay on loader until UPLOADED/FAILED.
+  // Keep upload latch in sync — queue / uploading stay on loader until UPLOADED/FAILED.
   useEffect(() => {
+    let OptimisedUploadService = null;
+    try {
+      // eslint-disable-next-line global-require
+      OptimisedUploadService = require('../upload/optimisedUploadQueue');
+    } catch (_) { }
+
     for (const p of photos) {
       const path = normalizePhotoPath(p);
       if (!path) continue;
-      if (p.uploadStatus === 'UPLOADING') {
+      const status = p.uploadStatus;
+      if (status === 'UPLOADING' || status === 'PENDING' || status === 'CLOCK_SKEW') {
         uploadingPathsRef.current.add(path);
-      } else if (p.uploadStatus === 'UPLOADED' || p.uploadStatus === 'FAILED') {
+      } else if (status === 'UPLOADED' || status === 'FAILED') {
         uploadingPathsRef.current.delete(path);
+      } else if (OptimisedUploadService?.isImageInQueue?.(path)) {
+        uploadingPathsRef.current.add(path);
       }
     }
   }, [photos]);
 
-  const currentPhotoPath = currentPhoto ? normalizePhotoPath(currentPhoto) : '';
-  const showUploadingFooter = overlaysVisible && (
-    currentPhoto?.uploadStatus === 'UPLOADING' ||
-    (
-      uploadingPathsRef.current.has(currentPhotoPath) &&
-      currentPhoto?.uploadStatus !== 'UPLOADED' &&
-      currentPhoto?.uploadStatus !== 'FAILED'
-    )
-  );
+  const isPhotoUploadInFlight = useCallback((photo) => {
+    if (!photo) return false;
+    const status = photo.uploadStatus;
+    if (status === 'UPLOADING' || status === 'PENDING' || status === 'CLOCK_SKEW') return true;
+    if (status === 'UPLOADED' || status === 'FAILED') return false;
+    const path = normalizePhotoPath(photo);
+    if (path && uploadingPathsRef.current.has(path)) return true;
+    try {
+      // eslint-disable-next-line global-require
+      const OptimisedUploadService = require('../upload/optimisedUploadQueue');
+      if (path && OptimisedUploadService.isImageInQueue?.(path)) return true;
+    } catch (_) { }
+    return false;
+  }, []);
+
+  const [legacyUploaded, setLegacyUploaded] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      if (!currentPhoto) {
+        if (!cancelled) setLegacyUploaded(false);
+        return;
+      }
+      if (currentPhoto.uploadStatus === 'UPLOADED') {
+        if (!cancelled) setLegacyUploaded(true);
+        return;
+      }
+      if (['PENDING', 'UPLOADING', 'CLOCK_SKEW', 'FAILED'].includes(currentPhoto.uploadStatus)) {
+        if (!cancelled) setLegacyUploaded(false);
+        return;
+      }
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const path = normalizePhotoPath(currentPhoto);
+        const flag = await AsyncStorage.getItem(`uploaded_${path}`);
+        if (!cancelled) setLegacyUploaded(flag === 'true');
+      } catch (_) {
+        if (!cancelled) setLegacyUploaded(false);
+      }
+    };
+    run();
+    return () => { cancelled = true; };
+  }, [currentPhoto]);
+
+  const showUploadingFooter = overlaysVisible && isPhotoUploadInFlight(currentPhoto);
+  const showUploadButton =
+    overlaysVisible &&
+    !isGuest &&
+    !showUploadingFooter &&
+    currentPhoto &&
+    currentPhoto.uploadStatus !== 'UPLOADED' &&
+    !legacyUploaded;
 
   const handleZoomChange = useCallback((zoomed) => {
     setPagerScrollEnabled(!zoomed);
@@ -505,80 +553,35 @@ const FullScreenGalleryModal = React.memo(({
           />
         </View>
 
-        {/* Header (Back button, Date and Index) */}
+        {/* Header — same layout as gallery ScreenHeader (back + centered title + right slot) */}
         {overlaysVisible && (
           <View style={styles.fullscreenHeader}>
             <BackButton onPress={onClose} iconTint={PRIMARY_TEXT} />
-
-            <View style={styles.fullscreenHeaderCenter}>
-              <Text style={styles.fullscreenDateText}>
-                {currentPhoto.timestamp ? currentPhoto.timestamp.toLocaleString([], {
-                  day: '2-digit', month: '2-digit', year: 'numeric',
-                  hour: '2-digit', minute: '2-digit'
-                }) : ''}
+            <Text
+              style={styles.fullscreenTitle}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+            >
+              {currentPhoto.timestamp
+                ? currentPhoto.timestamp.toLocaleString([], {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })
+                : ''}
+            </Text>
+            <View style={styles.fullscreenHeaderRight}>
+              <Text style={styles.fullscreenIndexText}>
+                {currentIndex + 1} / {photos.length}
               </Text>
             </View>
-
-            <Text style={styles.fullscreenIndexText}>
-              {currentIndex + 1} / {photos.length}
-            </Text>
           </View>
         )}
 
-        {/* 
-        (() => {
-          let patientText = '';
-          let bodyPartText = '';
-          
-          const bpIndex = currentPhoto.name.indexOf('_BP-');
-          if (bpIndex !== -1) {
-            if (bpIndex > 9) {
-              patientText = currentPhoto.name.substring(10, bpIndex);
-            }
-            const matchBody = currentPhoto.name.match(/_BP-(.*?)_\d+_\d+\.jpg/);
-            if (matchBody) {
-              bodyPartText = matchBody[1].replace(/_/g, ' ');
-            }
-          } else {
-            const matchPatientNoBody = currentPhoto.name.match(/^Cutiscope_(.*?)_\d{8}_\d{6}\.jpg/);
-            if (matchPatientNoBody) {
-              patientText = matchPatientNoBody[1];
-            }
-          }
-
-          if (patientText || bodyPartText) {
-            return (
-              <View style={{
-                position: 'absolute',
-                top: '25%',
-                width: '100%',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 100,
-                pointerEvents: 'none',
-              }}>
-                <Text style={{
-                  color: '#ffffff',
-                  fontSize: 16,
-                  fontFamily: 'ProductSans-Regular',
-                  backgroundColor: 'rgba(0,0,0,0.6)',
-                  paddingHorizontal: 16,
-                  paddingVertical: 6,
-                  borderRadius: 4,
-                  overflow: 'hidden',
-                }} numberOfLines={1}>
-                  {patientText ? <Text style={{fontFamily: 'ProductSans-Bold'}}>{patientText}</Text> : null}
-                  {patientText && bodyPartText ? ' | ' : ''}
-                  {bodyPartText ? <Text style={{fontFamily: 'ProductSans-Bold'}}>{bodyPartText}</Text> : null}
-                </Text>
-              </View>
-            );
-          }
-          return null;
-        })()
-        */}
-
-        {/* Sub-header (Filename only) - Small, above the image */}
+        {/* Sub-header (Filename only) */}
         {overlaysVisible && (
           <View style={styles.fullscreenMetadataSubHeader}>
             <Text style={styles.fullScreenPhotoNameSmall} numberOfLines={1}>
@@ -587,9 +590,14 @@ const FullScreenGalleryModal = React.memo(({
           </View>
         )}
 
-        {/* Action buttons (Footer Area) */}
+        {/* Action buttons — Upload | Share | Delete; when uploaded, Share+Delete centered */}
         {overlaysVisible && (
-          <View style={styles.actionContainerFull}>
+          <View
+            style={[
+              styles.actionContainerFull,
+              !showUploadingFooter && !showUploadButton && styles.actionContainerFullCentered,
+            ]}
+          >
             {showUploadingFooter ? (
               <View style={styles.loaderContainerFull}>
                 <ActivityIndicator size="small" color={ACCENT_TEAL} />
@@ -597,9 +605,9 @@ const FullScreenGalleryModal = React.memo(({
               </View>
             ) : (
               <>
-                {!isGuest && currentPhoto.uploadStatus !== 'UPLOADED' && (
+                {showUploadButton ? (
                   <TouchableOpacity
-                    style={styles.uploadButtonFull}
+                    style={styles.footerAction}
                     onPress={async () => {
                       const result = await onUpload(currentPhoto.path, currentPhoto.name);
                       if (result === false) {
@@ -616,10 +624,10 @@ const FullScreenGalleryModal = React.memo(({
                       {currentPhoto.uploadStatus === 'FAILED' ? 'Retry' : 'Upload'}
                     </Text>
                   </TouchableOpacity>
-                )}
+                ) : null}
 
                 <TouchableOpacity
-                  style={styles.uploadButtonFull}
+                  style={styles.footerAction}
                   onPress={() => {
                     if (onBluetoothShare) {
                       onBluetoothShare(currentPhoto);
@@ -631,7 +639,7 @@ const FullScreenGalleryModal = React.memo(({
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={styles.deleteButton}
+                  style={styles.footerAction}
                   onPress={() => {
                     onDelete(currentPhoto);
                   }}
@@ -681,20 +689,28 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     backgroundColor: HEADER_FOOTER_BG,
-    height: 90 + STATUS_BAR_HEIGHT,
-    paddingTop: 20 + STATUS_BAR_HEIGHT,
-    paddingHorizontal: 15,
+    // Match gallery ScreenHeader — immersive kiosk has no status-bar inset.
+    paddingTop: 8,
+    paddingBottom: 12,
+    paddingHorizontal: 20,
     zIndex: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#333333',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+  },
+  fullscreenTitle: {
+    color: PRIMARY_TEXT,
+    fontSize: 20,
+    fontFamily: 'ProductSans-Bold',
+    letterSpacing: 0.3,
+    flex: 1,
+    textAlign: 'center',
+    marginHorizontal: 8,
+  },
+  fullscreenHeaderRight: {
+    minWidth: 40,
+    height: 40,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
   },
   fullscreenHeaderCenter: {
     flex: 1,
@@ -708,15 +724,15 @@ const styles = StyleSheet.create({
   },
   fullscreenMetadataSubHeader: {
     position: 'absolute',
-    top: 90 + STATUS_BAR_HEIGHT,
+    top: 60,
     left: 0,
     right: 0,
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    paddingVertical: 6,
-    paddingHorizontal: 15,
+    paddingVertical: 4,
+    paddingHorizontal: 20,
     zIndex: 10,
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     alignItems: 'center',
     borderBottomWidth: 1,
     borderBottomColor: '#222222',
@@ -734,9 +750,8 @@ const styles = StyleSheet.create({
   },
   fullscreenIndexText: {
     color: PRIMARY_TEXT,
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginLeft: 'auto',
+    fontSize: 14,
+    fontWeight: '600',
   },
   actionContainerFull: {
     position: 'absolute',
@@ -744,13 +759,29 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     flexDirection: 'row',
-    justifyContent: 'space-around',
+    justifyContent: 'space-evenly',
     alignItems: 'center',
-    paddingHorizontal: 30,
+    paddingHorizontal: 20,
     paddingVertical: 10,
     backgroundColor: 'rgba(0, 0, 0, 0.85)',
     height: 90,
     zIndex: 11,
+    borderTopWidth: 1,
+    borderTopColor: '#333333',
+  },
+  actionContainerFullCentered: {
+    justifyContent: 'center',
+  },
+  footerAction: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 88,
+    marginHorizontal: 28,
+  },
+  footerSlot: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   uploadButtonFull: {
     alignItems: 'center',
@@ -765,6 +796,12 @@ const styles = StyleSheet.create({
     color: PRIMARY_TEXT,
     fontSize: 12,
     fontWeight: '500',
+  },
+  loaderContainerFull: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   inlineErrorContainer: {
     position: 'absolute',

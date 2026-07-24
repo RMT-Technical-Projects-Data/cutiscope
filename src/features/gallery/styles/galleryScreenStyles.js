@@ -20,7 +20,11 @@ export default StyleSheet.create({
   emptyMemoriesSubText: { color: SECONDARY_TEXT, fontSize: 16, textAlign: 'center', marginBottom: 20 },
   guestHintBanner: { backgroundColor: 'rgba(34, 178, 166, 0.15)', paddingVertical: 8, paddingHorizontal: 12, marginHorizontal: 12, marginBottom: 8, borderRadius: 8 },
   guestHintText: { color: SECONDARY_TEXT, fontSize: 12, textAlign: 'center' },
-  photosContainer: { padding: 4 },
+  photosContainer: {
+    paddingHorizontal: HORIZONTAL_PADDING,
+    paddingTop: 14,
+    paddingBottom: 24,
+  },
   foldersContainer: { paddingHorizontal: HORIZONTAL_PADDING, paddingTop: 14, paddingBottom: 24 },
   folderRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: ALBUM_GAP },
   folderTile: { width: ALBUM_CARD_SIZE, borderRadius: 12, backgroundColor: '#1a1a1a', overflow: 'hidden', alignItems: 'stretch', borderWidth: 1, borderColor: '#474343ff', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 3, elevation: 3 },

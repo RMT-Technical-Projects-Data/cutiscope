@@ -24,7 +24,7 @@ const GalleryActions = ({
   if (mode === 'albums') {
     if (isGuest) return null;
     return (
-      <View style={styles.actionContainer}>
+      <View style={[styles.actionContainer, styles.actionContainerCentered]}>
         <TouchableOpacity
           style={styles.deleteButton}
           onPress={onDeleteAlbums}
@@ -40,30 +40,35 @@ const GalleryActions = ({
 
   return (
     <View style={styles.actionContainer}>
-      {!isGuest && canUpload && (
+      <View style={styles.actionSlot}>
+        {!isGuest && canUpload ? (
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={onUpload}
+          >
+            <Image source={uploadIcon} style={[styles.actionIcon, { tintColor: ACCENT_TEAL }]} />
+            <Text style={styles.btnText}>Upload</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+      <View style={styles.actionSlot}>
         <TouchableOpacity
           style={styles.actionButton}
-          onPress={onUpload}
+          onPress={onDelete}
         >
-          <Image source={uploadIcon} style={[styles.actionIcon, { tintColor: ACCENT_TEAL }]} />
-          <Text style={styles.btnText}>Upload</Text>
+          <Image source={deleteIcon} style={[styles.actionIcon, { tintColor: ACCENT_TEAL }]} />
+          <Text style={styles.btnText}>Delete</Text>
         </TouchableOpacity>
-      )}
-      <TouchableOpacity
-        style={styles.actionButton}
-        onPress={onDelete}
-      >
-        <Image source={deleteIcon} style={[styles.actionIcon, { tintColor: ACCENT_TEAL }]} />
-        <Text style={styles.btnText}>Delete</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={styles.actionButton}
-        onPress={onShare}
-      >
-        <MaterialCommunityIcons name="bluetooth" size={30} color={ACCENT_TEAL} style={{ marginBottom: 4 }} />
-        <Text style={styles.btnText}>Share</Text>
-      </TouchableOpacity>
+      </View>
+      <View style={styles.actionSlot}>
+        <TouchableOpacity
+          style={styles.actionButton}
+          onPress={onShare}
+        >
+          <MaterialCommunityIcons name="bluetooth" size={30} color={ACCENT_TEAL} style={{ marginBottom: 4 }} />
+          <Text style={styles.btnText}>Share</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 };
@@ -74,7 +79,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    justifyContent: 'space-around',
+    justifyContent: 'space-between',
     alignItems: 'center',
     flexDirection: 'row',
     paddingHorizontal: 20,
@@ -91,8 +96,15 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
   },
-  actionButton: {
+  actionContainerCentered: {
+    justifyContent: 'center',
+  },
+  actionSlot: {
     flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionButton: {
     alignItems: 'center',
     justifyContent: 'center',
   },

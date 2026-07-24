@@ -630,6 +630,20 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
                 return true;
             }
 
+            // Exit lock-task so the system pairing UI can appear (same as pairDevice).
+            final Activity activity = getCurrentActivity();
+            if (activity != null) {
+                try {
+                    activity.runOnUiThread(() -> {
+                        try {
+                            activity.stopLockTask();
+                        } catch (Exception ignored) {
+                        }
+                    });
+                } catch (Exception ignored) {
+                }
+            }
+
             if (device.getBondState() == BluetoothDevice.BOND_NONE) {
                 device.createBond();
             }

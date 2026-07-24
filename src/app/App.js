@@ -411,31 +411,44 @@ const App = () => {
   }, []);
 
   const handleDismissBlackScreen = useCallback(() => {
-    isBlackScreenVisibleRef.current = false;
-    setIsBlackScreenVisible(false);
-
-    // Swallow any follow-up power event so the power menu never opens right
-    // after this same press that woke the screen.
+    // Swallow follow-up power events so unlock never also opens the power menu.
     lastPowerPressRef.current = Date.now();
 
-    const pm = NativeModules?.SystemPowerModule;
-    if (usedRootBacklightRef.current && pm?.restoreScreen) {
-      usedRootBacklightRef.current = false;
-      pm.restoreScreen(); // instant sysfs restore
-    } else {
-      try { SystemSetting.setAppBrightness(-1); } catch (e) {}
-    }
-    DeviceEventEmitter.emit(SESSION_ACTIVITY_EVENT);
+    const finishUnlock = () => {
+      isBlackScreenVisibleRef.current = false;
+      setIsBlackScreenVisible(false);
+      DeviceEventEmitter.emit(SESSION_ACTIVITY_EVENT);
+      // After CameraScreen's sync power handlers run, clear any transient menu state.
+      setTimeout(() => {
+        DeviceEventEmitter.emit('onPowerMenuClosed');
+      }, 0);
+    };
 
-    // The same power press that dismissed the overlay is also received by
-    // CameraScreen's onPowerButtonPressed handler, which flips it into a
-    // transient "power-menu/default" state (globalPowerMenuOpen=true, light off).
-    // Since we consumed the press just to unlock, emit onPowerMenuClosed AFTER
-    // those synchronous handlers run (setTimeout 0) so CameraScreen snaps back
-    // to the real live state instead of briefly showing a stale/default frame.
-    setTimeout(() => {
-      DeviceEventEmitter.emit('onPowerMenuClosed');
-    }, 0);
+    const pm = NativeModules?.SystemPowerModule;
+    const usedRoot = usedRootBacklightRef.current;
+    usedRootBacklightRef.current = false;
+
+    // Always restore window brightness immediately (covers non-root path).
+    try { SystemSetting.setAppBrightness(-1); } catch (e) {}
+
+    // Keep the black overlay up until backlight is restored, otherwise unlock
+    // briefly shows a black panel (backlight still 0) before the UI appears.
+    if (usedRoot && typeof pm?.restoreScreenAsync === 'function') {
+      const timeout = setTimeout(finishUnlock, 400);
+      pm.restoreScreenAsync()
+        .catch(() => false)
+        .then(() => {
+          clearTimeout(timeout);
+          finishUnlock();
+        });
+      return;
+    }
+    if (usedRoot && pm?.restoreScreen) {
+      pm.restoreScreen();
+      setTimeout(finishUnlock, 60);
+      return;
+    }
+    finishUnlock();
   }, []);
 
   // Orientation lock: portrait only (matches Camera outputOrientation="preview")
@@ -445,17 +458,18 @@ const App = () => {
     // Listen for power button events (Hardware or JS Request)
     const handleShowPowerMenu = () => {
       const now = Date.now();
-      if (now - lastPowerPressRef.current < 500) {
-        console.log('馃攲 Power Menu trigger debounced');
+      // Physical + accessibility + JS request can all fire close together — one open only.
+      if (now - lastPowerPressRef.current < 1200) {
+        console.log('Power Menu trigger debounced');
         return;
       }
       lastPowerPressRef.current = now;
-      console.log('馃攲 Showing Power Menu Modal');
-                  // Notify Camera to hide StandbyModal so it cannot cover this menu.
-                  DeviceEventEmitter.emit('onPowerMenuOpened');
-                  // PowerOffModal uses a native Modal window so it stacks above
-                  // gallery fullscreen (and other) Modals.
-                  setIsPowerModalVisible(true);
+      console.log('Showing Power Menu Modal');
+      // Notify Camera to hide StandbyModal so it cannot cover this menu.
+      DeviceEventEmitter.emit('onPowerMenuOpened');
+      // PowerOffModal uses a native Modal window so it stacks above
+      // gallery fullscreen (and other) Modals.
+      setIsPowerModalVisible(true);
     };
 
     const handlePhysicalPowerButton = () => {

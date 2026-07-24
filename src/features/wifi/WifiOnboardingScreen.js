@@ -28,6 +28,7 @@ import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import VerticalDivider from '../../shared/ui/VerticalDivider';
 import { CancelButton, PrimaryButton, PasswordField } from '../../shared/ui';
+import CustomStatusBar from '../../shared/ui/CustomStatusBar';
 import { getBaseUrl } from '../auth/authService';
 import {
   normalizeSSID,
@@ -738,6 +739,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
 
         isConnectingRef.current = true;
         pauseScanning();
+        setIsScanning(false);
         setPasswordModalVisible(false);
         setIsConnecting(true);
         setConnectionStatus('connecting');
@@ -1121,7 +1123,6 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
         ]}
         onPress={() => handleNetworkPress(item)}
         activeOpacity={0.8}
-        disabled={isConnecting}
       >
         <View style={[
           styles.wifiIconContainer,
@@ -1296,7 +1297,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
               <Text style={styles.turnOnButtonText}>Turn WiFi On</Text>
             </TouchableOpacity>
           </View>
-        ) : isScanning && scanAttemptCount <= 1 ? (
+        ) : isScanning && scanAttemptCount <= 1 && debouncedNetworks.length === 0 && !isConnecting ? (
           <View style={styles.scanningContainer}>
             <View style={styles.loadingDotsContainer}>
               <View style={[styles.loadingDot, styles.loadingDot1]} />
@@ -1328,7 +1329,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
             renderSectionHeader={({ section: { title } }) => (
               <View style={styles.sectionHeaderContainer}>
                 <Text style={styles.sectionHeading}>{title}</Text>
-                {title === 'Available Networks' && (isScanning || isRefreshing) && (
+                {title === 'Available Networks' && (isScanning || isRefreshing) && !isConnecting && (
                   <ActivityIndicator
                     size="small"
                     color="#22B2A6"
@@ -1337,9 +1338,13 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
                 )}
               </View>
             )}
+            style={styles.networksList}
             contentContainerStyle={styles.networksListContent}
             stickySectionHeadersEnabled={false}
             keyboardShouldPersistTaps="handled"
+            scrollEnabled
+            nestedScrollEnabled
+            removeClippedSubviews={false}
           />
         ) : (
           <View style={styles.noNetworksContainer}>
@@ -1376,15 +1381,22 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
       )}
 
       {passwordModalVisible && (
-        <Modal visible={passwordModalVisible} transparent={true} animationType="fade">
-          <View style={styles.passwordModalOverlay}>
-            {passwordModalToast ? (
-              <View style={styles.passwordModalToastBanner} pointerEvents="none">
-                <Text style={styles.passwordModalToastText}>{passwordModalToast}</Text>
-              </View>
-            ) : null}
-            <View style={styles.passwordModalContentWrapper}>
-              <View style={styles.passwordModalContent}>
+        <Modal
+          visible={passwordModalVisible}
+          transparent={true}
+          animationType="fade"
+          statusBarTranslucent
+        >
+          <View style={styles.passwordModalRoot}>
+            <CustomStatusBar />
+            <View style={styles.passwordModalOverlay}>
+              {passwordModalToast ? (
+                <View style={styles.passwordModalToastBanner} pointerEvents="none">
+                  <Text style={styles.passwordModalToastText}>{passwordModalToast}</Text>
+                </View>
+              ) : null}
+              <View style={styles.passwordModalContentWrapper}>
+                <View style={styles.passwordModalContent}>
                 <View style={styles.modalHeader}>
                   <Text style={styles.modalTitle}>Enter Password</Text>
                   <Text style={styles.networkNameText}>
@@ -1445,8 +1457,9 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
                 </View>
               </View>
             </View>
+            </View>
+            <CustomKeyboard />
           </View>
-          <CustomKeyboard />
         </Modal>
       )}
     </View>
@@ -1573,6 +1586,9 @@ const styles = StyleSheet.create({
   networksSection: {
     flex: 1,
     marginBottom: 0,
+  },
+  networksList: {
+    flex: 1,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -1831,12 +1847,18 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontFamily: 'ProductSans-Bold',
   },
+  passwordModalRoot: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
   passwordModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.85)',
     justifyContent: 'flex-start',
     alignItems: 'center',
-    padding: 24,
+    paddingTop: 24,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
   },
   passwordModalContentWrapper: {
     flex: 1,
@@ -1885,7 +1907,7 @@ const styles = StyleSheet.create({
   },
   passwordModalToastBanner: {
     position: 'absolute',
-    top: 48,
+    top: 16,
     left: 20,
     right: 20,
     zIndex: 20,

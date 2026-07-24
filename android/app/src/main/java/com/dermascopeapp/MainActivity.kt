@@ -449,6 +449,7 @@ class MainActivity : ReactActivity() {
     private val screenOffReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
+                PowerMenuTriggerGate.noteScreenOff()
                 if (isDeliberateLock) {
                     Log.i("MainActivity", "Screen OFF detected (Deliberate lock) - NOT waking up screen")
                     // Keep isDeliberateLock true until SCREEN_ON so onResume cannot re-arm keep-awake
@@ -472,6 +473,7 @@ class MainActivity : ReactActivity() {
                 }
             } else if (intent.action == Intent.ACTION_SCREEN_ON) {
                 Log.i("MainActivity", "Screen ON - acquiring wake lock")
+                PowerMenuTriggerGate.noteScreenOn()
                 isDeliberateLock = false
                 restoreWindowKeepAwake()
                 
@@ -590,27 +592,16 @@ class MainActivity : ReactActivity() {
         }
     }
 
-    /** Called when user holds power button 3s - show power menu (and optionally wake). */
-    private fun emitPowerButtonEventToReactNative() {
-        try {
-            Log.i("MainActivity", "Broadcasting POWER_BUTTON_PRESSED intent")
-            val intent = Intent("com.dermascopeapp.POWER_BUTTON_PRESSED")
-            intent.setPackage(packageName)
-            sendBroadcast(intent)
-            
-            runOnUiThread {
-                Toast.makeText(this, "Power Menu Triggered", Toast.LENGTH_SHORT).show()
-            }
-        } catch (e: Exception) {
-            Log.e("MainActivity", "Error broadcasting POWER_BUTTON_PRESSED: ${e.message}")
-        }
-    }
-
     private fun startPowerButtonMonitor() {
         powerButtonMonitor = PowerButtonMonitor()
         powerButtonMonitor?.start()
     }
 
+    /**
+     * Fallback getevent watcher. Observe-only — does not open the power menu.
+     * A ghost DOWN used to sit for 3s and open the menu by itself.
+     * Short-press menu is owned by RootPowerButtonService + Accessibility (gated).
+     */
     private inner class PowerButtonMonitor : Thread() {
         private var process: Process? = null
         private val isPowerDown = AtomicBoolean(false)
@@ -620,48 +611,32 @@ class MainActivity : ReactActivity() {
             try {
                 process = Runtime.getRuntime().exec(arrayOf("su", "-c", "getevent -t"))
                 val reader = BufferedReader(InputStreamReader(process?.inputStream))
-                Log.i("PowerButtonMonitor", "Monitoring thread started")
-                
+                Log.i("PowerButtonMonitor", "Monitoring thread started (observe-only)")
+
                 var line: String? = null
                 while (!isStopping.get()) {
                     line = reader.readLine()
                     val currentLine = line ?: break
-                    
-                    if (currentLine.contains("0074")) {
-                        val isPress = currentLine.contains("00000001") || currentLine.trim().endsWith("1")
-                        val isRelease = currentLine.contains("00000000") || currentLine.trim().endsWith("0")
-                        
-                        if (isPress && !isPowerDown.get()) {
+
+                    if (PowerMenuTriggerGate.isPowerDownLine(currentLine)) {
+                        if (!isPowerDown.get()) {
                             isPowerDown.set(true)
                             downStartTime = System.currentTimeMillis()
                             Log.i("PowerButtonMonitor", "Power button DOWN")
-                            checkHoldStatus()
-                        } else if (isRelease) {
+                        }
+                    } else if (PowerMenuTriggerGate.isPowerUpLine(currentLine)) {
+                        if (isPowerDown.get()) {
                             isPowerDown.set(false)
-                            Log.i("PowerButtonMonitor", "Power button UP after ${System.currentTimeMillis() - downStartTime}ms")
+                            Log.i(
+                                "PowerButtonMonitor",
+                                "Power button UP after ${System.currentTimeMillis() - downStartTime}ms"
+                            )
                         }
                     }
                 }
             } catch (e: Exception) {
                 Log.e("PowerButtonMonitor", "Error: ${e.message}")
             }
-        }
-
-        private fun checkHoldStatus() {
-            Thread {
-                try {
-                    while (isPowerDown.get() && !isStopping.get()) {
-                        val duration = System.currentTimeMillis() - downStartTime
-                        if (duration >= 3000) {
-                            Log.i("PowerButtonMonitor", "Power button HELD for 3s!")
-                            emitPowerButtonEventToReactNative()
-                            isPowerDown.set(false) 
-                            break
-                        }
-                        Thread.sleep(100)
-                    }
-                } catch (e: Exception) {}
-            }.start()
         }
 
         fun stopMonitoring() {

@@ -20,7 +20,7 @@ import GalleryAlbumGrid from './components/galleryAlbumGrid';
 import DeletionLoader from './components/galleryDeletionLoader';
 import GalleryPhotoGrid from './components/galleryPhotoGrid';
 import styles from './styles/galleryScreenStyles';
-import { ACCENT_TEAL, screenHeight, width } from './utils/galleryPathUtils';
+import { ACCENT_TEAL, screenHeight, width, formatAlbumPathTitle, isPhotoUploaded } from './utils/galleryPathUtils';
 import useGallerySelection from './hooks/useGallerySelection';
 import useGalleryOwnerAndCache from './hooks/useGalleryOwnerAndCache';
 import useGalleryDelete from './hooks/useGalleryDelete';
@@ -93,10 +93,12 @@ const GalleryScreen = ({ route, navigation }) => {
     setAlbumItems,
     isLoading,
     setIsLoading,
+    hasLoaded,
     forceRefreshCounter,
     setForceRefreshCounter,
     getBasePath,
     removeDeletedAlbumsLocally,
+    markPhotoLeafReady,
   } = useGalleryAlbumNavigation({
     isGuest,
     userData,
@@ -112,8 +114,8 @@ const GalleryScreen = ({ route, navigation }) => {
   }, [setIsLoading]);
 
   const handlePhotosReady = useCallback(() => {
-    setIsLoading(false);
-  }, [setIsLoading]);
+    markPhotoLeafReady?.();
+  }, [markPhotoLeafReady]);
 
   const {
     clearDeletedFiles,
@@ -248,9 +250,28 @@ const GalleryScreen = ({ route, navigation }) => {
     return selectedPhotos.every((path) => {
       const cleanPath = path.replace('file://', '');
       const photo = activePhotos.find((p) => p.path === path || (p.absolutePath || p.path?.replace('file://', '')) === cleanPath);
-      return photo && photo.uploadStatus !== 'UPLOADED';
+      return photo && !isPhotoUploaded(photo) && photo.uploadStatus !== 'UPLOADING' && photo.uploadStatus !== 'PENDING' && photo.uploadStatus !== 'CLOCK_SKEW';
     });
   }, [selectedPhotos, activePhotos]);
+
+  const galleryTitle = useMemo(() => {
+    if (albumPath.length === 0) return 'Gallery';
+    if (isSelectionMode && activePhotos.length > 0) {
+      return `Photos (${selectedPhotos.length} selected)`;
+    }
+    if (isSelectionMode && isFolderLevel) {
+      return `Albums (${selectedAlbumPaths.length} selected)`;
+    }
+    return formatAlbumPathTitle(albumPath, albumItems);
+  }, [
+    albumPath,
+    albumItems,
+    isSelectionMode,
+    activePhotos.length,
+    selectedPhotos.length,
+    isFolderLevel,
+    selectedAlbumPaths.length,
+  ]);
 
   const fullScreenInitialIndex = useMemo(() => {
     if (!fullScreenPhoto || activePhotos.length === 0) return 0;
@@ -285,21 +306,7 @@ const GalleryScreen = ({ route, navigation }) => {
       >
         <ScreenHeader
           onBack={handleBackPress}
-          title={
-            albumPath.length === 0
-              ? 'Gallery'
-              : isSelectionMode && activePhotos.length > 0
-                ? `Photos (${selectedPhotos.length} selected)`
-                : isSelectionMode && isFolderLevel
-                  ? `Albums (${selectedAlbumPaths.length} selected)`
-                  : (() => {
-                    const lastId = albumPath[albumPath.length - 1];
-                    const item = albumItems.find((f) => f.id === lastId);
-                    if (item) return item.nameLabel || item.idLabel;
-                    if (lastId && lastId.startsWith('W')) return `Week ${lastId.slice(1)}`;
-                    return lastId || 'Gallery';
-                  })()
-          }
+          title={galleryTitle}
           right={
             isSelectionMode && isPhotoLevel && activePhotos.length > 0 ? (
               <TouchableOpacity
@@ -337,12 +344,12 @@ const GalleryScreen = ({ route, navigation }) => {
           </View>
         )}
 
-        {isLoading && albumItems.length === 0 && capturedPhotos.length === 0 ? (
+        {isLoading && !hasLoaded ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={ACCENT_TEAL} />
             <Text style={styles.loadingText}>Loading, please wait…</Text>
           </View>
-        ) : !isFolderLevel && !isPhotoLevel && !isLoading ? (
+        ) : hasLoaded && !isFolderLevel && !isPhotoLevel ? (
           <View style={styles.emptyMemories}>
             <Text style={styles.emptyMemoriesText}>
               {isGuest ? 'No photos in guest mode' : 'No photos found'}
@@ -393,11 +400,6 @@ const GalleryScreen = ({ route, navigation }) => {
               onPhotoLongPress={handlePhotoLongPress}
               onPhotosReady={handlePhotosReady}
             />
-          </View>
-        ) : isLoading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={ACCENT_TEAL} />
-            <Text style={styles.loadingText}>Loading, please wait…</Text>
           </View>
         ) : null}
 
@@ -465,10 +467,10 @@ const GalleryScreen = ({ route, navigation }) => {
 
         <BluetoothShareModal
           visible={bluetoothShareVisible}
-          files={bluetoothShareFiles}
-          labels={bluetoothShareLabels}
+          selectedFiles={bluetoothShareFiles}
+          selectedLabels={bluetoothShareLabels}
           onClose={() => setBluetoothShareVisible(false)}
-          onSuccess={handleBluetoothShareSuccess}
+          onShareSuccess={handleBluetoothShareSuccess}
         />
 
         <DeletionLoader visible={isDeleting} />

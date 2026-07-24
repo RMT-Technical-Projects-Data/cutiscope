@@ -123,6 +123,12 @@ const useGalleryUpload = ({
 
       // 2. Check if already in queue
       if (OptimisedUploadService.isImageInQueue(cleanPath)) {
+        setCapturedPhotos((prev) => prev.map((p) =>
+          ((p.absolutePath || p.path?.replace('file://', '')) === cleanPath
+            ? { ...p, uploadStatus: p.uploadStatus === 'UPLOADED' ? p.uploadStatus : 'PENDING' }
+            : p
+          )
+        ));
         showInAppToast('Already in upload queue', { position: 'bottom', durationMs: 1500 });
         return;
       }
@@ -249,13 +255,14 @@ const useGalleryUpload = ({
           } catch (_) { }
 
           // Enqueue all selected photos
-          // 4. Update local state to UPLOADING instantly
-          const needingPaths = needingUpload.map(n => n.path);
-          setCapturedPhotos((prev) => prev.map((p) =>
-            needingPaths.includes(p.path) || needingPaths.includes(p.absolutePath)
+          // 4. Update local state to UPLOADING instantly (all selected queue items)
+          const needingPaths = needingUpload.map((n) => n.path.replace('file://', ''));
+          setCapturedPhotos((prev) => prev.map((p) => {
+            const clean = (p.absolutePath || p.path?.replace('file://', '') || '').split('?')[0];
+            return needingPaths.includes(clean) || needingPaths.includes(p.path)
               ? { ...p, uploadStatus: 'UPLOADING' }
-              : p
-          ));
+              : p;
+          }));
 
           for (const item of needingUpload) {
             const cleanPath = item.path.replace('file://', '');

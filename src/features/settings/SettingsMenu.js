@@ -1,4 +1,4 @@
-import { View, Text, Modal, TouchableOpacity, StyleSheet, Image, ScrollView } from 'react-native'
+import { View, Text, Modal, TouchableOpacity, StyleSheet, Image, ScrollView, BackHandler } from 'react-native'
 import React, { useState, useEffect } from 'react'
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import WifiSettingsModal from '../wifi/WiFiSettingsModal';
@@ -200,6 +200,39 @@ const SettingsMenu = () => {
     // Do not hide only the header — that shifts the avatar to the top.
     const subScreenOpen =
         wifiMenuVisible || bluetoothMenuVisible || dateAndTimeMenuVisible || inactivityMenuVisible;
+
+    // Hardware / gesture back must close the open sub-screen, not pop Settings → Camera.
+    useEffect(() => {
+        if (!subScreenOpen) return undefined;
+        const closeSubScreen = () => {
+            if (wifiMenuVisible) {
+                setWifiMenuVisible(false);
+                return true;
+            }
+            if (bluetoothMenuVisible) {
+                setBluetoothMenuVisible(false);
+                return true;
+            }
+            if (dateAndTimeMenuVisible) {
+                setDateAndTimeVisible(false);
+                return true;
+            }
+            if (inactivityMenuVisible) {
+                setInactivityMenuVisible(false);
+                return true;
+            }
+            return false;
+        };
+        const backSub = BackHandler.addEventListener('hardwareBackPress', () => closeSubScreen());
+        const removeNav = navigation.addListener('beforeRemove', (e) => {
+            if (!closeSubScreen()) return;
+            e.preventDefault();
+        });
+        return () => {
+            backSub.remove();
+            removeNav();
+        };
+    }, [navigation, subScreenOpen, wifiMenuVisible, bluetoothMenuVisible, dateAndTimeMenuVisible, inactivityMenuVisible]);
 
     return (
         <>
