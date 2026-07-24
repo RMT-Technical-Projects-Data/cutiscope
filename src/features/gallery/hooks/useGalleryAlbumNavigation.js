@@ -265,7 +265,8 @@ const useGalleryAlbumNavigation = ({
       const pendingAlbums = getPendingAlbums();
       const pendingPhotos = getPendingPhotos();
       const hasPending =
-        (path.length === 0 && pendingAlbums.length > 0) ||
+        (path.length === 0 &&
+          (pendingAlbums.length > 0 || (isGuest && pendingPhotos.length > 0))) ||
         (path.length >= 3 &&
           pendingPhotos.some((p) => {
             const segs = p.albumSegments || [];
@@ -490,6 +491,13 @@ const useGalleryAlbumNavigation = ({
 
         if (!listing.exists) {
           // Never resurrect stale snapshot albums after delete — only pending in-flight captures.
+          if (isGuest && path.length === 0) {
+            const pending = getPendingPhotos();
+            if (pending.length > 0 || hasPending) {
+              await applyPhotos(mergePhotos([], pending, path));
+              return;
+            }
+          }
           if (hasPending && (albumsOnlyLevel || path.length === 0)) {
             await paintFoldersStable(mergeAlbumItems([], getPendingAlbums()));
             return;
@@ -506,6 +514,17 @@ const useGalleryAlbumNavigation = ({
         }
 
         if (path.length === 0) {
+          // Guest mode stores a flat photo list under guest_photos (no patient/year albums).
+          if (isGuest) {
+            if (listing.photos?.length > 0) {
+              await applyPhotos(listing.photos.map(formatPhoto));
+            } else {
+              const recursive = await GalleryIndexer.listImagesRecursive(currentDir, deletedArr);
+              if (gen !== loadGenRef.current) return;
+              await applyPhotos((recursive.photos || []).map(formatPhoto));
+            }
+            return;
+          }
           if (listing.dirs.length > 0) {
             let items = buildPatientAlbumItems(listing.dirs.map(toRnfsLikeDir));
             items = applyCoversFromMap(items, listing.covers);
@@ -768,7 +787,8 @@ const useGalleryAlbumNavigation = ({
         scheduleAlbumRefresh();
         return;
       }
-      if (albumPathRef.current.length >= 3) {
+      // Guest root is a flat photo grid — refresh pending placeholders there too.
+      if (isGuest || albumPathRef.current.length >= 3) {
         scheduleAlbumRefresh();
       }
     });

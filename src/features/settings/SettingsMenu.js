@@ -2,7 +2,6 @@ import { View, Text, Modal, TouchableOpacity, StyleSheet, Image, ScrollView, Bac
 import React, { useState, useEffect } from 'react'
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import WifiSettingsModal from '../wifi/WiFiSettingsModal';
-import BluetoothSettingsModal from '../bluetooth/BluetoothSettingsModal';
 import { deleteGuestPhotos } from '../gallery/guestPhotoStorage';
 import DateTimePickerModal from './DateTimePickerModal';
 import ConfirmationModal from '../../shared/ui/ConfirmationModal';
@@ -26,7 +25,6 @@ const APP_STATUS_BAR_HEIGHT = 62;
 const SettingsMenu = () => {
     const [isPressed, setIsPressed] = useState(null);
     const [wifiMenuVisible, setWifiMenuVisible] = useState(false);
-    const [bluetoothMenuVisible, setBluetoothMenuVisible] = useState(false);
     const [dateAndTimeMenuVisible, setDateAndTimeVisible] = useState(false);
     const [inactivityMenuVisible, setInactivityMenuVisible] = useState(false);
     const [inactivityMinutes, setInactivityMinutes] = useState(DEFAULT_SESSION_TIMEOUT_MINUTES);
@@ -95,10 +93,6 @@ const SettingsMenu = () => {
 
     const handlePressWifi = () => {
         setWifiMenuVisible(true);
-    };
-
-    const handlePressBluetooth = () => {
-        setBluetoothMenuVisible(true);
     };
 
     const handlePressDateandTime = () => {
@@ -196,10 +190,10 @@ const SettingsMenu = () => {
         }
     };
 
-    // Wi‑Fi / Bluetooth / DateTime / Inactivity replace Settings entirely (full screen).
+    // Wi‑Fi / DateTime / Inactivity replace Settings entirely (full screen).
     // Do not hide only the header — that shifts the avatar to the top.
     const subScreenOpen =
-        wifiMenuVisible || bluetoothMenuVisible || dateAndTimeMenuVisible || inactivityMenuVisible;
+        wifiMenuVisible || dateAndTimeMenuVisible || inactivityMenuVisible;
 
     // Hardware / gesture back must close the open sub-screen, not pop Settings → Camera.
     useEffect(() => {
@@ -207,10 +201,6 @@ const SettingsMenu = () => {
         const closeSubScreen = () => {
             if (wifiMenuVisible) {
                 setWifiMenuVisible(false);
-                return true;
-            }
-            if (bluetoothMenuVisible) {
-                setBluetoothMenuVisible(false);
                 return true;
             }
             if (dateAndTimeMenuVisible) {
@@ -232,7 +222,7 @@ const SettingsMenu = () => {
             backSub.remove();
             removeNav();
         };
-    }, [navigation, subScreenOpen, wifiMenuVisible, bluetoothMenuVisible, dateAndTimeMenuVisible, inactivityMenuVisible]);
+    }, [navigation, subScreenOpen, wifiMenuVisible, dateAndTimeMenuVisible, inactivityMenuVisible]);
 
     return (
         <View style={styles.fullScreenBackground}>
@@ -276,26 +266,6 @@ const SettingsMenu = () => {
                                     <View style={styles.menuText}>
                                         <Text style={styles.menuTitle}>WiFi Network</Text>
                                         <Text style={styles.menuSubText}>Select & manage wireless connections</Text>
-                                    </View>
-                                    <View style={styles.arrowContainer}>
-                                        <Text style={styles.arrow}>›</Text>
-                                    </View>
-                                </TouchableOpacity>
-
-                                {/* Bluetooth Menu Item */}
-                                <TouchableOpacity
-                                    style={[styles.menuItem, isPressed === 'Bluetooth' && styles.menuItemPressed]}
-                                    onPress={handlePressBluetooth}
-                                    onPressIn={() => setIsPressed('Bluetooth')}
-                                    onPressOut={() => setIsPressed(null)}
-                                    activeOpacity={0.8}
-                                >
-                                    <View style={styles.iconContainer}>
-                                        <MaterialCommunityIcons name="bluetooth" size={24} color="#22B2A6" />
-                                    </View>
-                                    <View style={styles.menuText}>
-                                        <Text style={styles.menuTitle}>Bluetooth</Text>
-                                        <Text style={styles.menuSubText}>Manage Bluetooth connection</Text>
                                     </View>
                                     <View style={styles.arrowContainer}>
                                         <Text style={styles.arrow}>›</Text>
@@ -416,11 +386,6 @@ const SettingsMenu = () => {
                         visible={wifiMenuVisible}
                         onClose={() => setWifiMenuVisible(false)}
                         inline
-                    />
-
-                    <BluetoothSettingsModal
-                        visible={bluetoothMenuVisible}
-                        onClose={() => setBluetoothMenuVisible(false)}
                     />
 
                     <DateTimePickerModal

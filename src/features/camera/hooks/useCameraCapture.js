@@ -4,6 +4,7 @@ import RNFS from 'react-native-fs';
 import CaptureQueue from '../captureJobQueue';
 import { recordPhotoCapture } from '../../patients/patientsService';
 import { prependGalleryPhoto, notifyGalleryPhotoUpdated, getGalleryOwnerKey, prependPendingCapture } from '../../gallery/gallerySnapshotCache';
+import { getGuestPhotosDir } from '../../gallery/guestPhotoStorage';
 import {
   buildAlbumDirectory,
   buildAlbumPathSegments,
@@ -630,7 +631,7 @@ export function useCameraCapture({
                 date: stamp,
               });
           const directory = guestSnap
-            ? ''
+            ? getGuestPhotosDir()
             : buildAlbumDirectory({
                 userId: userSnap?.id,
                 username: userSnap?.username || usernameSnap,
@@ -661,18 +662,18 @@ export function useCameraCapture({
           bumpThumb(rawPhotoPath);
 
           const registerPending = (stagedPath) => {
-            if (guestSnap) return;
             prependPendingCapture(
               {
                 captureSeq,
                 fileName,
                 stagedPath,
                 directory,
-                patientSegment,
-                year,
-                dateSegment,
+                patientSegment: guestSnap ? '' : patientSegment,
+                year: guestSnap ? '' : year,
+                dateSegment: guestSnap ? '' : dateSegment,
                 albumSegments,
                 userBase,
+                coverPath: stagedPath,
               },
               ownerKey
             );

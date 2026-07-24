@@ -26,15 +26,26 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
   const promptVisibleRef = useRef(false);
   const logoutInProgressRef = useRef(false);
   const inactivityMsRef = useRef(DEFAULT_SESSION_TIMEOUT_MINUTES * 60 * 1000);
+  const timerArmedRef = useRef(false);
 
   const startFreshSessionWindow = useCallback(() => {
     promptVisibleRef.current = false;
     setPromptVisible(false);
     setSecondsRemaining(SESSION_LOGOUT_COUNTDOWN_SECONDS);
     logoutDeadlineRef.current = 0;
-    // 10s logout modal only starts AFTER this inactivity window expires.
+    // Idle countdown only runs while the user is not interacting.
     inactivityDeadlineRef.current = Date.now() + inactivityMsRef.current;
+    timerArmedRef.current = true;
   }, []);
+
+  const noteUserActivity = useCallback(() => {
+    if (!sessionActive || logoutInProgressRef.current) return;
+    // While the 10s warning is open, only "Stay Logged In" renews the session.
+    if (promptVisibleRef.current) return;
+    // Using the device → push the inactivity deadline forward (timer restarts).
+    inactivityDeadlineRef.current = Date.now() + inactivityMsRef.current;
+    timerArmedRef.current = true;
+  }, [sessionActive]);
 
   const applyInactivityMinutes = useCallback((minutes) => {
     const next = SESSION_TIMEOUT_OPTIONS.includes(Number(minutes))
@@ -93,7 +104,7 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
   }, [navigationRef, onLoggedOut, signOut]);
 
   const checkDeadlines = useCallback(() => {
-    if (!sessionActive || logoutInProgressRef.current) return;
+    if (!sessionActive || logoutInProgressRef.current || !timerArmedRef.current) return;
     const now = Date.now();
 
     // Phase 2: 10s logout modal countdown (only after inactivity expired).
@@ -104,7 +115,7 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
       return;
     }
 
-    // Phase 1: wait for Settings inactivity timer (30/60/90/120 minutes).
+    // Phase 1: wait for Settings inactivity timer while the user is idle.
     if (now >= inactivityDeadlineRef.current) {
       promptVisibleRef.current = true;
       logoutDeadlineRef.current = now + SESSION_WARNING_MS;
@@ -117,6 +128,7 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
     if (sessionActive) {
       // Hold deadline until persisted inactivity minutes are loaded.
       inactivityDeadlineRef.current = Number.MAX_SAFE_INTEGER;
+      timerArmedRef.current = false;
       let cancelled = false;
       getSessionTimeoutMinutes().then((minutes) => {
         if (cancelled) return;
@@ -131,6 +143,7 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
     setPromptVisible(false);
     inactivityDeadlineRef.current = 0;
     logoutDeadlineRef.current = 0;
+    timerArmedRef.current = false;
     return undefined;
   }, [applyInactivityMinutes, sessionActive]);
 
@@ -138,10 +151,7 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
     if (!sessionActive) return undefined;
 
     const activitySub = DeviceEventEmitter.addListener(SESSION_ACTIVITY_EVENT, () => {
-      // Once the 10s warning is open, only Stay Logged In renews the session.
-      if (!promptVisibleRef.current) {
-        inactivityDeadlineRef.current = Date.now() + inactivityMsRef.current;
-      }
+      noteUserActivity();
     });
     const timeoutChangedSub = DeviceEventEmitter.addListener(
       SESSION_TIMEOUT_CHANGED_EVENT,
@@ -150,7 +160,11 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
       }
     );
     const appStateSub = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') checkDeadlines();
+      if (nextState === 'active') {
+        // Returning to foreground counts as activity — restart idle window.
+        noteUserActivity();
+        checkDeadlines();
+      }
     });
     const interval = setInterval(checkDeadlines, 250);
 
@@ -160,7 +174,7 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
       appStateSub.remove();
       clearInterval(interval);
     };
-  }, [applyInactivityMinutes, checkDeadlines, sessionActive]);
+  }, [applyInactivityMinutes, checkDeadlines, noteUserActivity, sessionActive]);
 
   return (
     <SessionTimeoutModal

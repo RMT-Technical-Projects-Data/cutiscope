@@ -3,6 +3,15 @@ import { DeviceEventEmitter } from 'react-native';
 export const IN_APP_TOAST_EVENT = 'in_app_toast_show';
 export const SESSION_ACTIVITY_EVENT = 'session_user_activity';
 
+/** Throttled emit so scrolling/touches reset the inactivity deadline without spam. */
+let lastActivityEmitMs = 0;
+export function notifyUserActivity() {
+  const now = Date.now();
+  if (now - lastActivityEmitMs < 250) return;
+  lastActivityEmitMs = now;
+  DeviceEventEmitter.emit(SESSION_ACTIVITY_EVENT);
+}
+
 export const showInAppToast = (message, opts = {}) => {
   if (!message) return;
 

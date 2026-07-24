@@ -1433,6 +1433,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
                       autoCorrect={false}
                       autoFocus={true}
                       showDismiss={true}
+                      hostKeyboardLocally
                     />
                   </PasswordField>
                   {(password || '').trim().length > 0 && (password || '').trim().length < 8 && (
@@ -1461,7 +1462,7 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
               </View>
             </View>
           </View>
-          <CustomKeyboard />
+          <CustomKeyboard localHost />
         </View>
       ) : null}
     </View>

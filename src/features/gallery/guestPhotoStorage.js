@@ -9,6 +9,7 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { clearGallerySnapshot } from './gallerySnapshotCache';
 import CaptureQueue from '../camera/captureJobQueue';
+import GalleryIndexer from '../../shared/native/GalleryIndexer';
 
 const GUEST_PHOTOS_DIR_NAME = 'guest_photos';
 const NOMEDIA_FILE = '.nomedia';
@@ -90,6 +91,12 @@ export async function deleteGuestPhotos() {
 
     try {
       clearGallerySnapshot();
+    } catch (_) {}
+
+    try {
+      if (GalleryIndexer.isAvailable?.()) {
+        GalleryIndexer.invalidate?.(getGuestPhotosDir());
+      }
     } catch (_) {}
 
     try {

@@ -23,7 +23,7 @@ import SerialNumberModal from '../features/device/SerialNumberModal';
 import UpdateModal from '../features/device/UpdateModal';
 import PowerOffModal from '../features/device/PowerOffModal';
 import KioskMode from '../shared/native/KioskMode';
-import { SESSION_ACTIVITY_EVENT, showInAppToast } from '../shared/utils/inAppToast';
+import { notifyUserActivity, showInAppToast } from '../shared/utils/inAppToast';
 import firebaseAuthService from '../features/upload/firebaseAuthService';
 import { getBaseUrl } from '../features/auth/authService';
 import InAppToastHost from './inAppToastHost';
@@ -417,7 +417,7 @@ const App = () => {
     const finishUnlock = () => {
       isBlackScreenVisibleRef.current = false;
       setIsBlackScreenVisible(false);
-      DeviceEventEmitter.emit(SESSION_ACTIVITY_EVENT);
+      notifyUserActivity();
       // After CameraScreen's sync power handlers run, clear any transient menu state.
       setTimeout(() => {
         DeviceEventEmitter.emit('onPowerMenuClosed');
@@ -607,19 +607,23 @@ const App = () => {
 
   return (
     <AuthProvider>
-      <GestureHandlerRootView style={{ flex: 1 }}>
+      <GestureHandlerRootView
+        style={{ flex: 1 }}
+        onTouchStart={notifyUserActivity}
+        onTouchMove={notifyUserActivity}
+      >
         <CustomKeyboardProvider>
           <SafeAreaProvider>
             <SafeAreaView edges={[]} style={{ flex: 1, paddingTop: 0, backgroundColor: '#000' }}>
               <View
                 style={styles.kioskTapOverlay}
-                onStartShouldSetResponder={() => Platform.OS === 'android'}
-                onResponderTerminationRequest={() => true}
-                onResponderGrant={() => {
+                onStartShouldSetResponder={() => false}
+                onMoveShouldSetResponder={() => false}
+                onTouchStart={() => {
                   handleKioskTapCount();
-                  DeviceEventEmitter.emit(SESSION_ACTIVITY_EVENT);
+                  notifyUserActivity();
                 }}
-                onTouchStart={() => DeviceEventEmitter.emit(SESSION_ACTIVITY_EVENT)}
+                onTouchMove={notifyUserActivity}
                 collapsable={false}
               >
                 {/* Relative status bar must be first so it stays at the top. */}
@@ -633,7 +637,7 @@ const App = () => {
                   <NavigationContainer
                     ref={navigationRef}
                     theme={navTheme}
-                    onStateChange={() => DeviceEventEmitter.emit(SESSION_ACTIVITY_EVENT)}
+                    onStateChange={notifyUserActivity}
                   >
                     <Stack.Navigator
                       initialRouteName={isLoggedIn ? 'Camera' : 'Welcome'}

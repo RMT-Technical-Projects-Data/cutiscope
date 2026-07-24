@@ -99,19 +99,25 @@ export function prependPendingCapture(hint, ownerKey = '') {
     albumSegments: hint.albumSegments || [patientSegment, hint.year, hint.dateSegment].filter(Boolean),
   };
 
-  const pendingAlbum = {
-    id: patientSegment,
-    idLabel: patientSegment.includes('__') ? idPart || patientSegment : patientSegment,
-    nameLabel:
-      patientSegment.includes('__') && namePart ? namePart.replace(/_/g, ' ') : '',
-    count: 0,
-    cover: hint.coverPath
-      ? { path: hint.coverPath.startsWith('file://') ? hint.coverPath : `file://${hint.coverPath}` }
-      : null,
-    type: 'album',
-    _coverDir: hint.userBase ? `${hint.userBase}/${patientSegment}` : '',
-    pending: true,
-  };
+  // Guest / flat captures use albumSegments: [] — no patient album placeholder.
+  const skipPendingAlbum =
+    Array.isArray(hint.albumSegments) && hint.albumSegments.length === 0;
+
+  const pendingAlbum = skipPendingAlbum
+    ? null
+    : {
+        id: patientSegment,
+        idLabel: patientSegment.includes('__') ? idPart || patientSegment : patientSegment,
+        nameLabel:
+          patientSegment.includes('__') && namePart ? namePart.replace(/_/g, ' ') : '',
+        count: 0,
+        cover: hint.coverPath
+          ? { path: hint.coverPath.startsWith('file://') ? hint.coverPath : `file://${hint.coverPath}` }
+          : null,
+        type: 'album',
+        _coverDir: hint.userBase ? `${hint.userBase}/${patientSegment}` : '',
+        pending: true,
+      };
 
   const prevPending = ownerChanged ? [] : snapshot.pendingPhotos || [];
   const prevAlbums = ownerChanged ? [] : snapshot.pendingAlbums || [];
@@ -125,10 +131,12 @@ export function prependPendingCapture(hint, ownerKey = '') {
       pendingPhoto,
       ...prevPending.filter((p) => String(p.captureSeq) !== seq && p.absolutePath !== abs),
     ],
-    pendingAlbums: [
-      pendingAlbum,
-      ...prevAlbums.filter((a) => a.id !== patientSegment),
-    ],
+    pendingAlbums: skipPendingAlbum
+      ? prevAlbums
+      : [
+          pendingAlbum,
+          ...prevAlbums.filter((a) => a.id !== patientSegment),
+        ],
     ts: Date.now(),
   };
 

@@ -32,7 +32,7 @@ import { ScrollView } from 'react-native-gesture-handler';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { UserMessages } from '../../shared/utils/userMessages';
 import { getGuestPhotosDir } from '../gallery/guestPhotoStorage';
-import { SESSION_ACTIVITY_EVENT, showInAppToast } from '../../shared/utils/inAppToast';
+import { notifyUserActivity, showInAppToast } from '../../shared/utils/inAppToast';
 import GalleryIndexer from '../../shared/native/GalleryIndexer';
 import { DELETED_FILES_KEY } from '../gallery/utils/galleryPathUtils';
 import { sanitizeFolderName, buildUserGalleryBase } from '../gallery/utils/albumPathBuilder';
@@ -158,11 +158,13 @@ const CameraScreen = ({ navigation }) => {
   }, []);
 
   const resetInactivityTimer = useCallback(() => {
-    DeviceEventEmitter.emit(SESSION_ACTIVITY_EVENT);
+    // Using the device → reset session idle deadline + restart camera standby countdown.
+    notifyUserActivity();
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
     }
-    // Only set timer if not already in standby and screen is focused
+    // Only arm standby when camera is focused and not already in standby.
     if (isScreenFocusedRef.current && !isStandbyRef.current) {
       timeoutRef.current = setTimeout(() => {
         console.log('⏰ Inactivity timeout reached - Entering standby');
@@ -292,7 +294,18 @@ const CameraScreen = ({ navigation }) => {
   const [onCapturePress, setOnCapturePress] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [latestPhotoUri, setLatestPhotoUri] = useState(null);
+  const latestPhotoUriRef = useRef(null);
   const isLightOnRef = useRef(false);
+
+  useEffect(() => {
+    latestPhotoUriRef.current = latestPhotoUri;
+  }, [latestPhotoUri]);
+
+  // Guest ↔ user switch: never keep the previous session's corner thumbnail.
+  useEffect(() => {
+    setLatestPhotoUri(null);
+    latestCaptureSeqRef.current = 0;
+  }, [isGuest, userData?.id]);
 
   // Wrapped toggle to check battery
   const toggleLight = useCallback(() => {
@@ -1130,12 +1143,30 @@ const CameraScreen = ({ navigation }) => {
             captureSeq: seqAtStart,
           };
         });
-      }
-      // Do not clear to null after captures — empty gallery icon only when truly no files
-      // and we never took a shot this session.
-      else if (seqAtStart === 0 && seqAtStart === latestCaptureSeqRef.current) {
-        console.log('No latest image found');
-        setLatestPhotoUri(null);
+      } else if (seqAtStart === latestCaptureSeqRef.current) {
+        // Gallery base is empty — clear corner thumb unless an in-flight staged
+        // file still exists outside this base (optimistic capture path).
+        const prevPath = String(latestPhotoUriRef.current?.path || '')
+          .replace(/^file:\/\//, '')
+          .split('?')[0];
+        if (!prevPath) {
+          setLatestPhotoUri(null);
+        } else {
+          const underBase =
+            prevPath === basePath || prevPath.startsWith(`${basePath}/`);
+          let stillExists = false;
+          try {
+            stillExists = await RNFS.exists(prevPath);
+          } catch (_) {
+            stillExists = false;
+          }
+          if (!stillExists || underBase) {
+            if (seqAtStart === latestCaptureSeqRef.current) {
+              console.log('No latest image found — clearing gallery thumb');
+              setLatestPhotoUri(null);
+            }
+          }
+        }
       }
     } catch (error) {
       console.error('loadImage error:', error);
@@ -1155,6 +1186,11 @@ const CameraScreen = ({ navigation }) => {
       };
     }, [loadImage])
   );
+
+  // After guest/user switch, reload thumb for the new base path.
+  useEffect(() => {
+    loadImage();
+  }, [isGuest, userData?.id, loadImage]);
   // ========== TAP-TO-FOCUS FUNCTION ==========
   // ========== TAP-TO-FOCUS FUNCTION - ROBUST ==========
   const handleTapToFocus = useCallback(async (locationX, locationY) => {
