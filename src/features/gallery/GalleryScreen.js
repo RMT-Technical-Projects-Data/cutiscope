@@ -7,6 +7,7 @@ import {
   Platform,
   UIManager,
   DeviceEventEmitter,
+  BackHandler,
 } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useAuth } from '../auth/authSessionContext';
@@ -192,22 +193,48 @@ const GalleryScreen = ({ route, navigation }) => {
     setFullScreenPhoto(null);
   }, [setSelectedPhotos, setIsSelectionMode]);
 
+  /** Returns true when back was handled inside Gallery (do not leave the screen). */
   const handleBackPress = useCallback(() => {
+    if (fullScreenPhoto) {
+      setFullScreenPhoto(null);
+      return true;
+    }
     if (albumPath.length > 0) {
       setAlbumPath((prev) => prev.slice(0, -1));
       setIsSelectionMode(false);
       setSelectedPhotos([]);
       setSelectedAlbumPaths([]);
-      return;
+      return true;
     }
     if (isSelectionMode) {
       setSelectedPhotos([]);
       setSelectedAlbumPaths([]);
       setIsSelectionMode(false);
-    } else {
-      navigation?.goBack?.() || navigation?.navigate?.('Camera');
+      return true;
     }
-  }, [albumPath.length, isSelectionMode, navigation, setAlbumPath, setIsSelectionMode, setSelectedPhotos, setSelectedAlbumPaths]);
+    navigation?.goBack?.() || navigation?.navigate?.('Camera');
+    return false;
+  }, [fullScreenPhoto, albumPath.length, isSelectionMode, navigation, setAlbumPath, setIsSelectionMode, setSelectedPhotos, setSelectedAlbumPaths]);
+
+  // Swipe / hardware back: step out of fullscreen or folder instead of leaving Gallery.
+  useEffect(() => {
+    const shouldIntercept = !!fullScreenPhoto || albumPath.length > 0 || isSelectionMode;
+    if (!shouldIntercept) return undefined;
+
+    const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleBackPress();
+      return true;
+    });
+    const removeNav = navigation.addListener('beforeRemove', (e) => {
+      if (!shouldIntercept) return;
+      e.preventDefault();
+      handleBackPress();
+    });
+    return () => {
+      backSub.remove();
+      removeNav();
+    };
+  }, [navigation, fullScreenPhoto, albumPath.length, isSelectionMode, handleBackPress]);
 
   const handlePhotoPress = useCallback((photo) => {
     if (isSelectionMode) {

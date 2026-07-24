@@ -17,6 +17,7 @@ import {
   ScrollView,
   SectionList,
   DeviceEventEmitter,
+  BackHandler,
 } from 'react-native';
 import { showInAppToast, IN_APP_TOAST_EVENT } from '../../shared/utils/inAppToast';
 import KioskTextInput from '../../shared/ui/KioskTextInput';
@@ -212,6 +213,22 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
     suppressAppStatusBar();
     return () => releaseAppStatusBar();
   }, [visible]);
+
+  // Hardware back closes password overlay (inline View, not RN Modal).
+  useEffect(() => {
+    if (!visible || !passwordModalVisible) return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (isConnecting) return true;
+      setPasswordModalVisible(false);
+      setPassword('');
+      setPasswordError('');
+      setPasswordModalToast('');
+      setShowPassword(false);
+      Keyboard.dismiss();
+      return true;
+    });
+    return () => sub.remove();
+  }, [visible, passwordModalVisible, isConnecting]);
 
   const loadSavedPasswords = async () => {
     try {
@@ -619,16 +636,22 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
       const ssid = await WifiManager.getCurrentWifiSSID();
       if (ssid && ssid !== '<unknown ssid>' && ssid !== '0x') {
         const cleanSSID = ssid.replace(/^"|"$/g, '');
-        setCurrentNetwork({ SSID: cleanSSID });
 
         // Check for valid IP to confirm true connection (authenticated)
         const ip = await WifiManager.getIP();
         if (ip && ip !== '0.0.0.0' && ip !== '0:0:0:0:0:0:0:0') {
+          setCurrentNetwork({ SSID: cleanSSID });
           setConnectionStatus('connected');
           saveNetworkToSavedList(cleanSSID);
-        } else {
-          // Associated with AP but not yet authenticated/DHCP assigned
+        } else if (isConnectingRef.current) {
+          // Connect in flight — may be associated before DHCP finishes.
+          setCurrentNetwork({ SSID: cleanSSID });
           setConnectionStatus('verifying');
+        } else {
+          // Wrong password / failed auth often leaves an OS "current SSID" with no IP.
+          // Do not treat that as Connected — keep it under Available.
+          setCurrentNetwork(null);
+          setConnectionStatus('disconnected');
         }
       } else {
         setCurrentNetwork(null);
@@ -811,6 +834,8 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
       if (!isActiveConnectAttempt(attemptId)) return;
       console.warn('Connection error in Modal:', error);
       setConnectionStatus('disconnected');
+      // Failed auth must not keep this SSID under Connected Network.
+      setCurrentNetwork((prev) => (ssidsMatch(prev?.SSID, network.SSID) ? null : prev));
 
       let errorMessage = 'Failed to connect. Please check your password or signal strength.';
       const msg = (error.message || '').toLowerCase();
@@ -1141,23 +1166,22 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
   };
 
   const getConnectedNetworkEntries = () => {
-    if (!currentNetwork?.SSID) return [];
+    // Only real connections (or in-flight verify) belong here — not failed-password leftovers.
+    const showAsConnected =
+      connectionStatus === 'connected' ||
+      (connectionStatus === 'verifying' && isConnecting);
+    if (!showAsConnected || !currentNetwork?.SSID) return [];
 
     const normalized = normalizeSSID(currentNetwork.SSID);
     const fromScan = networks.filter((net) => ssidsMatch(net.SSID, normalized) && !net.isFading);
     if (fromScan.length > 0) return fromScan;
 
-    // Still associated according to OS — keep showing until fetchCurrentNetwork clears it.
-    if (connectionStatus === 'connected' || connectionStatus === 'verifying') {
-      return [{
-        SSID: normalized,
-        BSSID: `connected_${normalized}`,
-        level: -50,
-        capabilities: '[ESS]',
-      }];
-    }
-
-    return [];
+    return [{
+      SSID: normalized,
+      BSSID: `connected_${normalized}`,
+      level: -50,
+      capabilities: '[ESS]',
+    }];
   };
 
   const getSavedNetworksForMainList = () => {
@@ -1172,10 +1196,14 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
     });
   };
 
-  // Available list: currently scanned networks only (gone APs drop after merge aging).
+  // Available list: scanned networks, excluding only the live connected SSID.
   const getAvailableNetworksForMainList = () => {
+    const liveConnectedSSID =
+      connectionStatus === 'connected' || (connectionStatus === 'verifying' && isConnecting)
+        ? currentNetwork?.SSID
+        : null;
     return networks.filter(
-      (net) => !ssidsMatch(currentNetwork?.SSID, net.SSID)
+      (net) => !liveConnectedSSID || !ssidsMatch(liveConnectedSSID, net.SSID)
     );
   };
 
@@ -1691,25 +1719,9 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
             </View>
           </Modal>
 
-          {/* Password Modal */}
-          <Modal
-            visible={passwordModalVisible}
-            transparent
-            animationType="fade"
-            onRequestClose={() => {
-              if (!isConnecting) {
-                setPasswordModalVisible(false);
-                setPassword('');
-                setPasswordError('');
-                setPasswordModalToast('');
-                setShowPassword(false);
-                Keyboard.dismiss();
-              }
-            }}
-            statusBarTranslucent={true}
-          >
-            <View style={styles.passwordModalRoot}>
-              <CustomStatusBar />
+          {/* Password overlay — View (not RN Modal) so parent CustomStatusBar stays singular */}
+          {passwordModalVisible ? (
+            <View style={styles.passwordModalRoot} pointerEvents="auto">
               <TouchableOpacity
               style={styles.passwordModalOverlay}
               activeOpacity={1}
@@ -1761,6 +1773,7 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
                         returnKeyType="done"
                         onSubmitEditing={() => (password || '').trim().length >= 8 && connectToNetwork(selectedNetwork, password)}
                         showDismiss={true}
+                        hostKeyboardLocally
                       />
                     </PasswordField>
                     {(password || '').trim().length > 0 && (password || '').trim().length < 8 && (
@@ -1793,9 +1806,9 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
                 </View>
               </TouchableOpacity>
             </TouchableOpacity>
-            <CustomKeyboard />
+            <CustomKeyboard localHost />
             </View>
-          </Modal>
+          ) : null}
 
           {/* Saved Password Modal */}
           <Modal
@@ -2274,9 +2287,15 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     fontFamily: 'ProductSans-Regular',
   },
-  // Modal Styles
+  // Modal Styles — sits below the single parent CustomStatusBar (height 62)
   passwordModalRoot: {
-    flex: 1,
+    position: 'absolute',
+    top: 62,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1000,
+    elevation: 1000,
     backgroundColor: '#000000',
   },
   passwordModalOverlay: {
