@@ -11,7 +11,6 @@
     "test": "jest"
   },
   "dependencies": {
-    "@aws-amplify/storage": "^6.13.1",
     "@aws-sdk/client-s3": "^3.1010.0",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-native-community/blur": "^4.4.1",
@@ -25,15 +24,12 @@
     "@react-navigation/native-stack": "^7.6.2",
     "@react-navigation/stack": "^7.6.3",
     "@shopify/react-native-skia": "^2.6.0",
-    "aws-amplify": "^6.16.2",
     "axios": "^1.13.6",
     "base-64": "^1.0.0",
     "buffer": "^6.0.3",
     "events": "^3.3.0",
-    "install": "^0.13.0",
     "luxon": "^3.7.2",
     "moment-timezone": "^0.6.0",
-    "npm": "^11.7.0",
     "pretty-format": "^30.2.0",
     "react": "^19.1.1",
     "react-native": "^0.82.1",

@@ -24,6 +24,11 @@ class MainApplication : Application(), ReactApplication {
               add(KioskModePackage())
               add(ConnectivityPackage())
               add(ImageProcessorPackage())
+              add(GalleryIndexerPackage())
+              add(CapturePipelinePackage())
+              add(WifiPackage())
+              add(BluetoothPackage())
+              add(UploadQueuePackage())
             }
 
         override fun getJSMainModuleName(): String = "index"
