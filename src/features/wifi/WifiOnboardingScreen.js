@@ -662,21 +662,27 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
       const currentSSID = await WifiManager.getCurrentWifiSSID();
       if (currentSSID && currentSSID !== '<unknown ssid>' && currentSSID !== '0x') {
         const cleanSSID = currentSSID.replace(/^"|"$/g, '');
-        if (isMountedRef.current) {
-          setCurrentNetwork({ SSID: cleanSSID });
-        }
 
         // Check for valid IP to confirm true connection (authenticated)
         const ip = await WifiManager.getIP();
         if (ip && ip !== '0.0.0.0' && ip !== '0:0:0:0:0:0:0:0') {
           if (isMountedRef.current) {
+            setCurrentNetwork({ SSID: cleanSSID });
             setConnectionStatus('connected');
           }
           await persistSavedNetworkSSID(cleanSSID);
-        } else {
-          // Associated with AP but not yet authenticated/DHCP assigned
+        } else if (isConnectingRef.current) {
           if (isMountedRef.current) {
+            setCurrentNetwork({ SSID: cleanSSID });
             setConnectionStatus('verifying');
+          }
+        } else {
+          // Wrong password / failed auth often leaves OS "current SSID" with no IP — not Connected.
+          if (isMountedRef.current) {
+            setCurrentNetwork(null);
+            if (connectionStatus !== 'connecting' && connectionStatus !== 'verifying') {
+              setConnectionStatus('disconnected');
+            }
           }
         }
       } else {
@@ -788,6 +794,8 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
         } catch (connectionError) {
           console.error('Connection error:', connectionError);
           setConnectionStatus('disconnected');
+          // Failed auth must not keep this SSID under Connected Network.
+          setCurrentNetwork((prev) => (ssidsMatch(prev?.SSID, network.SSID) ? null : prev));
 
           let errorMessage = 'Failed to connect. Please check your password or signal strength.';
           const msg = (connectionError.message || '').toLowerCase();
@@ -1083,11 +1091,30 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
     }
   }, [passwordModalVisible]);
 
+  const getConnectedNetworkEntries = () => {
+    const showAsConnected =
+      connectionStatus === 'connected' ||
+      (connectionStatus === 'verifying' && isConnecting);
+    if (!showAsConnected || !currentNetwork?.SSID) return [];
+
+    return debouncedNetworks.filter((net) => ssidsMatch(currentNetwork.SSID, net.SSID));
+  };
+
+  const getAvailableNetworksForMainList = () => {
+    const liveConnectedSSID =
+      connectionStatus === 'connected' || (connectionStatus === 'verifying' && isConnecting)
+        ? currentNetwork?.SSID
+        : null;
+    return debouncedNetworks.filter(
+      (net) => !liveConnectedSSID || !ssidsMatch(liveConnectedSSID, net.SSID)
+    );
+  };
+
   const handleNetworkPress = (network) => {
     if (isConnecting) return;
 
     // Guard: Do nothing if clicking on an already connected network
-    const isActuallyConnected = currentNetwork?.SSID === network.SSID && connectionStatus === 'connected';
+    const isActuallyConnected = ssidsMatch(currentNetwork?.SSID, network.SSID) && connectionStatus === 'connected';
     if (isActuallyConnected) {
       console.log('Already connected to:', network.SSID);
       return;
@@ -1320,17 +1347,13 @@ const WifiOnboardingScreen = ({ route, onContinue, onSkip }) => {
             sections={[
               {
                 title: 'Connected Network',
-                data: debouncedNetworks.filter(net =>
-                  ssidsMatch(currentNetwork?.SSID, net.SSID)
-                ),
+                data: getConnectedNetworkEntries(),
               },
               {
                 // Saved networks that are in range appear here with a "Saved" label —
                 // do not show a separate Saved section, and never list offline saved SSIDs.
                 title: 'Available Networks',
-                data: debouncedNetworks.filter(net =>
-                  !ssidsMatch(currentNetwork?.SSID, net.SSID)
-                ),
+                data: getAvailableNetworksForMainList(),
               },
             ].filter(section => section.data.length > 0)}
             keyExtractor={(item) => item.BSSID + item.SSID + (item.timestamp || '')}

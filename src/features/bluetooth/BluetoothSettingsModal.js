@@ -21,6 +21,7 @@ import { showInAppToast } from '../../shared/utils/inAppToast';
 import settingsIcon from '../../../assets/icon_settings.png';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import BluetoothNative from '../../shared/native/BluetoothNative';
+import KioskMode from '../../shared/native/KioskMode';
 
 const { width, height } = Dimensions.get('window');
 /** Matches App CustomStatusBar height so content sits below it without moving it. */
@@ -64,6 +65,21 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
       }
     }
   }, [visible]);
+
+  useEffect(() => {
+    if (!visible) return undefined;
+    let cancelled = false;
+    const reapply = () => {
+      if (cancelled) return;
+      KioskMode.reapplyImmersiveKiosk().catch(() => {});
+    };
+    reapply();
+    const interval = setInterval(reapply, 400);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [visible, connectingAddress]);
 
   // Handle BT events
   useEffect(() => {

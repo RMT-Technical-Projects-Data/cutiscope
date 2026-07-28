@@ -51,6 +51,18 @@ class KioskModeModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
     }
 
     @ReactMethod
+    fun reapplyImmersiveKiosk(promise: Promise) {
+        waitForActivityThen(promise, maxAttempts = 10, delayMs = 100L) { activity ->
+            try {
+                MainActivity.reapplyFullKiosk(activity)
+                promise.resolve("Immersive kiosk reapplied")
+            } catch (e: Exception) {
+                promise.reject("KIOSK_ERROR", "Failed to reapply immersive kiosk", e)
+            }
+        }
+    }
+
+    @ReactMethod
     fun stopKioskMode(promise: Promise) {
         waitForActivityThen(promise, maxAttempts = 10, delayMs = 100L) { activity ->
             try {

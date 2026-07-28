@@ -146,6 +146,7 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
                             || state == BluetoothDevice.BOND_NONE) {
                         Activity activity = getCurrentActivity();
                         if (activity != null) {
+                            MainActivity.stopImmersiveKioskWatchdog(activity);
                             MainActivity.reapplyFullKiosk(activity);
                         }
                     }
@@ -313,10 +314,8 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
                     activity.runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            try {
-                                activity.stopLockTask();
-                            } catch (Exception ignored) {
-                            }
+                            MainActivity.startImmersiveKioskWatchdog(activity, 120_000L);
+                            MainActivity.reapplyFullKiosk(activity);
 
                             // Discovery Hack to refresh Bluetooth stack state
                             try {
@@ -630,15 +629,12 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
                 return true;
             }
 
-            // Exit lock-task so the system pairing UI can appear (same as pairDevice).
             final Activity activity = getCurrentActivity();
             if (activity != null) {
                 try {
                     activity.runOnUiThread(() -> {
-                        try {
-                            activity.stopLockTask();
-                        } catch (Exception ignored) {
-                        }
+                        MainActivity.startImmersiveKioskWatchdog(activity, 120_000L);
+                        MainActivity.reapplyFullKiosk(activity);
                     });
                 } catch (Exception ignored) {
                 }

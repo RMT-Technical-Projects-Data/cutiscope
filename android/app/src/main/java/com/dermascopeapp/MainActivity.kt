@@ -69,12 +69,53 @@ class MainActivity : ReactActivity() {
             val act = activity as? MainActivity ?: return
             act.runOnUiThread {
                 act.applyImmersiveUi()
+                act.setImmersiveKiosk()
                 try {
                     act.startLockTask()
                 } catch (_: Exception) {
                 }
             }
         }
+
+        /** Re-apply immersive + lock task while system overlays (e.g. BT pairing) appear. */
+        @JvmStatic
+        fun startImmersiveKioskWatchdog(activity: Activity?, durationMs: Long = 120_000L) {
+            val act = activity as? MainActivity ?: return
+            act.runOnUiThread { act.startImmersiveWatchdog(durationMs) }
+        }
+
+        @JvmStatic
+        fun stopImmersiveKioskWatchdog(activity: Activity?) {
+            val act = activity as? MainActivity ?: return
+            act.runOnUiThread { act.stopImmersiveWatchdog() }
+        }
+    }
+
+    private val immersiveWatchdogHandler = Handler(Looper.getMainLooper())
+    private var immersiveWatchdogRunnable: Runnable? = null
+
+    private fun startImmersiveWatchdog(durationMs: Long) {
+        stopImmersiveWatchdog()
+        val endAt = System.currentTimeMillis() + durationMs
+        immersiveWatchdogRunnable = object : Runnable {
+            override fun run() {
+                applyImmersiveUi()
+                setImmersiveKiosk()
+                try {
+                    startLockTask()
+                } catch (_: Exception) {
+                }
+                if (System.currentTimeMillis() < endAt) {
+                    immersiveWatchdogHandler.postDelayed(this, 250L)
+                }
+            }
+        }
+        immersiveWatchdogHandler.post(immersiveWatchdogRunnable!!)
+    }
+
+    private fun stopImmersiveWatchdog() {
+        immersiveWatchdogRunnable?.let { immersiveWatchdogHandler.removeCallbacks(it) }
+        immersiveWatchdogRunnable = null
     }
 
     // Add these fields with your existing ones

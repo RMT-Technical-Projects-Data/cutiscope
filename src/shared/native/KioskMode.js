@@ -26,6 +26,16 @@ export const KioskMode = {
    * Stop kiosk mode: normal navigation (recents, home) is restored.
    * @returns {Promise<string>} Success message or rejects with error.
    */
+  async reapplyImmersiveKiosk() {
+    if (Platform.OS !== 'android') {
+      return Promise.resolve('Kiosk mode is Android only');
+    }
+    if (!KioskModeModule?.reapplyImmersiveKiosk) {
+      return Promise.reject(new Error('reapplyImmersiveKiosk is not available'));
+    }
+    return KioskModeModule.reapplyImmersiveKiosk();
+  },
+
   async stopKioskMode() {
     if (Platform.OS !== 'android') {
       return Promise.resolve('Kiosk mode is Android only');

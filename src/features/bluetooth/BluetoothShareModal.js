@@ -23,6 +23,7 @@ import CustomStatusBar, {
 } from '../../shared/ui/CustomStatusBar';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import BluetoothNative from '../../shared/native/BluetoothNative';
+import KioskMode from '../../shared/native/KioskMode';
 const { width } = Dimensions.get('window');
 
 const BluetoothShareModal = ({
@@ -61,6 +62,22 @@ const BluetoothShareModal = ({
     suppressAppStatusBar();
     return () => releaseAppStatusBar();
   }, [visible]);
+
+  // Keep immersive kiosk while Bluetooth share / pairing UI is open (no nav gesture bar).
+  useEffect(() => {
+    if (!visible) return undefined;
+    let cancelled = false;
+    const reapply = () => {
+      if (cancelled) return;
+      KioskMode.reapplyImmersiveKiosk().catch(() => {});
+    };
+    reapply();
+    const interval = setInterval(reapply, 400);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [visible, sharePhase]);
 
   // Hardware / gesture back closes share overlay when inline (covers gallery fullscreen).
   useEffect(() => {
