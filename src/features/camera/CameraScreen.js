@@ -32,7 +32,7 @@ import { ScrollView } from 'react-native-gesture-handler';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { UserMessages } from '../../shared/utils/userMessages';
 import { getGuestPhotosDir } from '../gallery/guestPhotoStorage';
-import { notifyUserActivity, showInAppToast } from '../../shared/utils/inAppToast';
+import { notifyUserActivity, setSessionIdleHold, showInAppToast } from '../../shared/utils/inAppToast';
 import GalleryIndexer from '../../shared/native/GalleryIndexer';
 import { DELETED_FILES_KEY } from '../gallery/utils/galleryPathUtils';
 import { sanitizeFolderName, buildUserGalleryBase } from '../gallery/utils/albumPathBuilder';
@@ -177,8 +177,10 @@ const CameraScreen = ({ navigation }) => {
     return () => clearInterval(intervalId);
   }, [isFocused, isGuest, syncSelectedPatientFromServer]);
 
-  // ========== STANDBY TIMEOUT ==========
-  const INACTIVITY_STANDBY_MS = 120000;
+  // ========== CAMERA STANDBY (separate from session inactivity / logout) ==========
+  // Standby: 2 min idle on Camera → StandbyModal.
+  // Session logout: Settings "Inactivity Timer" via appSessionTimeoutManager + notifyUserActivity.
+  const CAMERA_STANDBY_MS = 120000;
   const [isStandby, setIsStandby] = useState(false);
   const timeoutRef = useRef(null);
   const isScreenFocusedRef = useRef(true);
@@ -194,23 +196,38 @@ const CameraScreen = ({ navigation }) => {
     return /session|interrupted|not-ready|not ready|closed|disconnected|recoverable|was interrupted|camera-is-restarting|in-use|invalid-output-configuration/.test(`${code} ${msg}`);
   }, []);
 
-  const resetInactivityTimer = useCallback(() => {
-    // Using the device → reset session idle deadline + restart camera standby countdown.
-    notifyUserActivity();
+  /** Restart only the camera standby countdown (does not touch session logout). */
+  const resetStandbyTimer = useCallback(() => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     }
-    // Only arm standby when camera is focused and not already in standby.
     if (isScreenFocusedRef.current && !isStandbyRef.current) {
       timeoutRef.current = setTimeout(() => {
-        console.log('⏰ Inactivity timeout reached - Entering standby');
+        console.log('⏰ Camera standby timeout — showing StandbyModal');
         isStandbyRef.current = true;
         setIsStandby(true);
-        setIsLightOn(false); // Turn off torch on standby
-      }, INACTIVITY_STANDBY_MS);
+        setIsLightOn(false);
+      }, CAMERA_STANDBY_MS);
     }
   }, []);
+
+  /**
+   * Camera UI interaction: ping session inactivity and restart standby as two steps.
+   * Alias kept as resetInactivityTimer for existing call sites / child props.
+   */
+  const resetInactivityTimer = useCallback(() => {
+    notifyUserActivity();
+    resetStandbyTimer();
+  }, [resetStandbyTimer]);
+
+  // Freeze session logout while StandbyModal is visible so it cannot cover standby.
+  useEffect(() => {
+    setSessionIdleHold(!!isStandby);
+    return () => {
+      if (isStandby) setSessionIdleHold(false);
+    };
+  }, [isStandby]);
 
   // Create a global PanResponder to catch any touches on the screen and reset the timer
   const panResponder = useRef(
@@ -743,7 +760,7 @@ const CameraScreen = ({ navigation }) => {
     };
   }, []);
 
-  // Effect 4c: Standby Timer Management
+  // Effect 4c: Camera standby timer only (not session logout).
   useEffect(() => {
     const anyModalVisible =
       menuVisible ||
@@ -760,7 +777,7 @@ const CameraScreen = ({ navigation }) => {
         timeoutRef.current = null;
       }
     } else {
-      resetInactivityTimer();
+      resetStandbyTimer();
     }
 
     return () => {
@@ -768,7 +785,7 @@ const CameraScreen = ({ navigation }) => {
         clearTimeout(timeoutRef.current);
       }
     };
-  }, [isScreenFocused, isStandby, menuVisible, patientBoxModalVisible, bodyPartModalVisible, wifiMenuVisible, exitModalVisible, powerOffModalVisible, globalPowerMenuOpen, resetInactivityTimer]);
+  }, [isScreenFocused, isStandby, menuVisible, patientBoxModalVisible, bodyPartModalVisible, wifiMenuVisible, exitModalVisible, powerOffModalVisible, globalPowerMenuOpen, resetStandbyTimer]);
 
 
 

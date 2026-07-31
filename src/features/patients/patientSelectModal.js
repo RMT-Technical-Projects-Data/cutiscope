@@ -59,9 +59,9 @@ function getNewPatientFieldErrors({ name, mrNo, dob, gender, nextId, loadingNext
   }
 
   if (!trimmedMrNo) {
-    errors.mrNo = 'MRI No. is required.';
+    errors.mrNo = 'MR No. is required.';
   } else if (trimmedMrNo.length !== MR_NO_MAX_LENGTH) {
-    errors.mrNo = `MRI No. must be exactly ${MR_NO_MAX_LENGTH} digits (you entered ${trimmedMrNo.length}).`;
+    errors.mrNo = `MR No. must be exactly ${MR_NO_MAX_LENGTH} digits (you entered ${trimmedMrNo.length}).`;
   }
 
   if (!(dob || '').trim()) {
@@ -463,10 +463,11 @@ const PatientBoxModal = ({
                 )}
 
                 {showNewPatientFormView && (
-                  <ScrollView 
-                    style={[styles.formScroll, hasFocusedInput && styles.formScrollKeyboardOpen]} 
-                    contentContainerStyle={styles.formContent} 
+                  <ScrollView
+                    style={[styles.formScroll, hasFocusedInput && styles.formScrollKeyboardOpen]}
+                    contentContainerStyle={styles.formContent}
                     keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={false}
                   >
                     <View style={styles.form}>
                     {!isBlank && (
@@ -476,7 +477,7 @@ const PatientBoxModal = ({
                       </TouchableOpacity>
                     )}
                     <Text style={styles.label} selectable={false}>ID (assigned automatically)</Text>
-                    <View style={[styles.idRow, fieldErrors.id && styles.fieldErrorBorder]}>
+                    <View style={[styles.idRow, fieldErrors.id && styles.fieldErrorBorder, fieldErrors.id && styles.fieldWithError]}>
                       {loadingNextId ? (
                         <ActivityIndicator size="small" color="#22B2A6" style={styles.idLoader} />
                       ) : (
@@ -488,7 +489,7 @@ const PatientBoxModal = ({
                     ) : null}
                     <Text style={styles.label} selectable={false}>Name</Text>
                     <KioskTextInput
-                      style={[styles.input, fieldErrors.name && styles.fieldErrorBorder]}
+                      style={[styles.input, fieldErrors.name && styles.fieldErrorBorder, fieldErrors.name && styles.fieldWithError]}
                       value={name}
                       onChangeText={(text) => {
                         setName((prev) => applyCappedTextChange(
@@ -514,7 +515,7 @@ const PatientBoxModal = ({
                     ) : null}
 
                     <Text style={styles.label} selectable={false}>MR. NO.</Text>
-                    <View style={[styles.mrNoRow, fieldErrors.mrNo && styles.fieldErrorBorder]}>
+                    <View style={[styles.mrNoRow, fieldErrors.mrNo && styles.fieldErrorBorder, fieldErrors.mrNo && styles.fieldWithError]}>
                       <View style={styles.mrNoPrefix}>
                         <Text style={styles.mrNoPrefixText} selectable={false}>{MR_NO_PREFIX}</Text>
                       </View>
@@ -561,7 +562,7 @@ const PatientBoxModal = ({
                           <MaterialCommunityIcons name="calendar" size={20} color="#666" />
                         </TouchableOpacity>
                         {fieldErrors.dob ? (
-                          <Text style={styles.pickerErrorText} selectable={false}>
+                          <Text style={styles.fieldErrorText} selectable={false}>
                             {fieldErrors.dob}
                           </Text>
                         ) : null}
@@ -601,7 +602,7 @@ const PatientBoxModal = ({
                       <MaterialCommunityIcons name="chevron-down" size={20} color="#666" />
                     </TouchableOpacity>
                     {fieldErrors.gender ? (
-                      <Text style={styles.pickerErrorText} selectable={false}>
+                      <Text style={styles.fieldErrorText} selectable={false}>
                         {fieldErrors.gender}
                       </Text>
                     ) : null}
@@ -764,7 +765,9 @@ const styles = StyleSheet.create({
     paddingTop: 8,
   },
   modalView: {
-    width: SCREEN_WIDTH * 0.92,
+    // Whole dp only — a fractional width makes Yoga round the right edge of
+    // stretched children away, eating their 1dp error border.
+    width: Math.round(SCREEN_WIDTH * 0.92),
     maxWidth: 400,
     maxHeight: SCREEN_HEIGHT * 0.85,
     backgroundColor: '#1C1C1E', // Same as PowerOffModal
@@ -823,17 +826,26 @@ const styles = StyleSheet.create({
   tabTextActive: {
     color: '#fff',
   },
+  // The card is capped at 85% of the screen, so the content must be allowed to
+  // shrink inside it. Without this the list is clipped by the card's overflow
+  // instead of scrolling, slicing the last row and the card's bottom padding.
   contentSlot: {
     width: '100%',
+    flexShrink: 1,
   },
   form: {
     paddingBottom: 10,
   },
   formScroll: {
     maxHeight: SCREEN_HEIGHT * 0.65,
+    flexShrink: 1,
+    alignSelf: 'stretch',
   },
   formContent: {
     flexGrow: 1,
+    // Keep field borders off the ScrollView's clip edge so the right-hand red
+    // outline is never shaved off.
+    paddingHorizontal: 2,
   },
   label: {
     fontSize: 14,
@@ -1039,21 +1051,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#d32f2f',
   },
-  fieldErrorText: {
-    color: '#ff8a80',
-    fontSize: 12,
-    marginTop: -8,
-    marginBottom: 12,
+  // A field drops its own bottom margin while invalid; the message below owns
+  // the spacing, so the red outline never sits on top of the next field.
+  fieldWithError: {
+    marginBottom: 0,
   },
-  // Pickers have no bottom margin of their own when invalid, so space both sides here.
-  pickerErrorText: {
+  fieldErrorText: {
     color: '#ff8a80',
     fontSize: 12,
     marginTop: 6,
     marginBottom: 16,
   },
   listContainer: {
-    maxHeight: SCREEN_HEIGHT * 0.7,
     flexShrink: 1,
   },
   selectedBanner: {
@@ -1097,11 +1106,10 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   flatList: {
-    maxHeight: SCREEN_HEIGHT * 0.6,
     flexShrink: 1,
   },
   flatListContent: {
-    paddingBottom: 16,
+    paddingBottom: 8,
   },
   patientRow: {
     flexDirection: 'row',

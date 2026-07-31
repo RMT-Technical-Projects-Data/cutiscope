@@ -5,6 +5,7 @@ import { useAuth } from '../features/auth/authSessionContext';
 import firebaseAuthService from '../features/upload/firebaseAuthService';
 import SessionTimeoutModal from '../features/device/SessionTimeoutModal';
 import { SESSION_ACTIVITY_EVENT, SESSION_IDLE_HOLD_EVENT, emitSessionForceLogout } from '../shared/utils/inAppToast';
+import { monotonicNow } from '../shared/utils/monotonicClock';
 import { resetToWelcomeScreen } from './rootNavigation';
 import {
   DEFAULT_SESSION_TIMEOUT_MINUTES,
@@ -38,7 +39,7 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
     setSecondsRemaining(SESSION_LOGOUT_COUNTDOWN_SECONDS);
     logoutDeadlineRef.current = 0;
     // Idle countdown only runs while the user is not interacting.
-    inactivityDeadlineRef.current = Date.now() + inactivityMsRef.current;
+    inactivityDeadlineRef.current = monotonicNow() + inactivityMsRef.current;
     timerArmedRef.current = true;
   }, []);
 
@@ -47,7 +48,7 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
     // While the 10s warning is open, only "Stay Logged In" renews the session.
     if (promptVisibleRef.current) return;
     // Using the device → push the inactivity deadline forward (timer restarts).
-    inactivityDeadlineRef.current = Date.now() + inactivityMsRef.current;
+    inactivityDeadlineRef.current = monotonicNow() + inactivityMsRef.current;
     timerArmedRef.current = true;
   }, [sessionActive]);
 
@@ -60,7 +61,7 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
       if (!idleHoldRef.current) {
         idleHoldRemainingMsRef.current = Math.max(
           0,
-          inactivityDeadlineRef.current - Date.now()
+          inactivityDeadlineRef.current - monotonicNow()
         );
       }
       idleHoldRef.current = true;
@@ -68,7 +69,7 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
     }
     if (idleHoldRef.current) {
       inactivityDeadlineRef.current =
-        Date.now() + (idleHoldRemainingMsRef.current || inactivityMsRef.current);
+        monotonicNow() + (idleHoldRemainingMsRef.current || inactivityMsRef.current);
       timerArmedRef.current = true;
     }
     idleHoldRef.current = false;
@@ -142,7 +143,7 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
     if (!sessionActive || logoutInProgressRef.current || !timerArmedRef.current) return;
     // Busy overlay / active use / system UI — do not fire inactivity.
     if (idleHoldRef.current || appInactiveRef.current) return;
-    const now = Date.now();
+    const now = monotonicNow();
 
     // Phase 2: 10s logout modal countdown (only after inactivity expired).
     if (promptVisibleRef.current) {

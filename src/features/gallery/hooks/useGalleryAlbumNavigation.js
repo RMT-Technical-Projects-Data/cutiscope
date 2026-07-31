@@ -266,14 +266,16 @@ const useGalleryAlbumNavigation = ({
       const cached = getGallerySnapshot(path, ownerKey);
       const pendingAlbums = getPendingAlbums();
       const pendingPhotos = getPendingPhotos();
+      const pendingUnderPath = (p) => {
+        const segs = p.albumSegments || [];
+        return path.every((seg, i) => segs[i] === seg);
+      };
       const hasPending =
         (path.length === 0 &&
           (pendingAlbums.length > 0 || (isGuest && pendingPhotos.length > 0))) ||
-        (path.length >= 3 &&
-          pendingPhotos.some((p) => {
-            const segs = p.albumSegments || [];
-            return path.every((seg, i) => segs[i] === seg);
-          }));
+        (!isGuest && path.length >= 1 && path.length <= 2 &&
+          pendingPhotos.some((p) => pendingUnderPath(p) && (p.albumSegments || []).length > path.length)) ||
+        (path.length >= 3 && pendingPhotos.some(pendingUnderPath));
 
       const cacheBelongsHere = (entries) => {
         if (!entries?.length) return false;
@@ -406,10 +408,48 @@ const useGalleryAlbumNavigation = ({
         }
       };
 
+      /**
+       * In-flight captures have no folder on disk until the watermark queue drains.
+       * Derive placeholders for the level below `path` so year / date screens are not
+       * empty while a burst is still processing.
+       */
+      const pendingAlbumsBelow = () => {
+        if (path.length === 0) return getPendingAlbums();
+        if (isGuest || path.length > 2) return [];
+        const byName = new Map();
+        for (const p of getPendingPhotos()) {
+          const segs = p.albumSegments || [];
+          if (segs.length <= path.length) continue;
+          if (!path.every((seg, i) => segs[i] === seg)) continue;
+          const name = segs[path.length];
+          if (!name || byName.has(name)) continue;
+          const coverPath = String(p.path || '');
+          byName.set(name, {
+            id: name,
+            idLabel: name,
+            nameLabel: name,
+            count: 0,
+            cover: coverPath && !coverPath.startsWith('pending://') ? { path: coverPath } : null,
+            type: path.length === 1 ? 'year' : 'date',
+            _coverDir: `${currentDir}/${name}`,
+            pending: true,
+          });
+        }
+        return Array.from(byName.values());
+      };
+
       const applyFolders = (items, { keepLoading = false } = {}) => {
         if (gen !== loadGenRef.current) return;
-        const merged =
-          path.length === 0 ? mergeAlbumItems(items, getPendingAlbums()) : items;
+        let merged = items;
+        if (path.length === 0) {
+          merged = mergeAlbumItems(items, pendingAlbumsBelow());
+        } else if (path.length <= 2) {
+          // Year / date levels are sorted newest-first — keep that order and put
+          // in-flight folders on top instead of re-sorting alphabetically.
+          const existing = new Set((items || []).map((i) => String(i.id)));
+          const extra = pendingAlbumsBelow().filter((i) => !existing.has(String(i.id)));
+          merged = extra.length ? [...extra, ...items] : items;
+        }
         const visible = filterNonEmptyAlbums(merged);
         setAlbumItems(visible);
         setCapturedPhotos([]);
@@ -501,7 +541,7 @@ const useGalleryAlbumNavigation = ({
             }
           }
           if (hasPending && (albumsOnlyLevel || path.length === 0)) {
-            await paintFoldersStable(mergeAlbumItems([], getPendingAlbums()));
+            await paintFoldersStable(pendingAlbumsBelow());
             return;
           }
           if (hasPending && path.length >= 3) {
@@ -593,8 +633,7 @@ const useGalleryAlbumNavigation = ({
 
       if (!exists) {
         if (!isGuest && path.length < 3) {
-          const pendingOnly = mergeAlbumItems([], getPendingAlbums());
-          applyFolders(pendingOnly);
+          applyFolders([]);
           return;
         }
         setAlbumItems([]);

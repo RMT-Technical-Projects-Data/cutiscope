@@ -68,10 +68,59 @@ export async function getPatients() {
   else if (data && Array.isArray(data.patients)) list = data.patients;
   else if (data && Array.isArray(data.rows)) list = data.rows;
   // Normalize to { id, name }
-  return list.map((p) => ({
-    id: String(p.id ?? p.patient_id ?? p.patientId ?? ''),
-    name: String(p.name ?? p.patient_name ?? p.patientName ?? ''),
-  })).filter((p) => p.id || p.name);
+  return list
+    .map((p) => ({
+      id: String(p.id ?? p.patient_id ?? p.patientId ?? ''),
+      name: String(p.name ?? p.patient_name ?? p.patientName ?? ''),
+    }))
+    .filter((p) => p.id || p.name)
+    .sort(comparePatientIds);
+}
+
+/**
+ * IDs are zero-padded strings ('001', '010', '100'), and some backends return
+ * plain numbers. Compare numerically so 10 never sorts before 9.
+ */
+function comparePatientIds(a, b) {
+  const digitsA = String(a.id).replace(/\D/g, '');
+  const digitsB = String(b.id).replace(/\D/g, '');
+  const numA = digitsA ? Number(digitsA) : NaN;
+  const numB = digitsB ? Number(digitsB) : NaN;
+  const aIsNum = Number.isFinite(numA);
+  const bIsNum = Number.isFinite(numB);
+
+  if (aIsNum && bIsNum && numA !== numB) return numA - numB;
+  if (aIsNum && !bIsNum) return -1;
+  if (!aIsNum && bIsNum) return 1;
+  return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
+}
+
+/**
+ * The create endpoint can answer with an id that GET /api/patients never uses for
+ * the same patient (a row key rather than the clinician's patient number), which is
+ * why a patient saved as 19 came back as 189. The list is the id every other screen
+ * and the photo folders rely on, so the created patient is looked up there.
+ */
+async function resolveCreatedPatientId(responseId, createdName) {
+  const fallback = String(responseId ?? '').trim();
+  try {
+    const list = await getPatients();
+    if (!Array.isArray(list) || list.length === 0) return fallback;
+    if (fallback && list.some((p) => String(p.id) === fallback)) return fallback;
+
+    const nameKey = String(createdName ?? '').trim().toLowerCase();
+    if (!nameKey) return fallback;
+    const matches = list.filter(
+      (p) => String(p.name ?? '').trim().toLowerCase() === nameKey
+    );
+    if (matches.length === 0) return fallback;
+    // Ids ascend, so the newest duplicate name is the one just created.
+    const newest = matches.reduce((best, p) => (comparePatientIds(p, best) > 0 ? p : best));
+    return String(newest.id).trim();
+  } catch (e) {
+    console.warn('resolveCreatedPatientId failed:', e?.message || e);
+    return fallback;
+  }
 }
 
 /**
@@ -84,9 +133,18 @@ export async function reconcileSelectedPatient(current) {
   try {
     const list = await getPatients();
     const match = list.find((p) => String(p.id) === String(current.id));
-    if (!match) return null;
-    if (String(match.name || '') === String(current.name || '')) return null;
-    return { id: String(match.id), name: String(match.name || '') };
+    if (match) {
+      if (String(match.name || '') === String(current.name || '')) return null;
+      return { id: String(match.id), name: String(match.name || '') };
+    }
+
+    // Selections saved before create returned list ids hold an id the list does not
+    // know. Recover it by name, but only when the name identifies one patient.
+    const nameKey = String(current.name || '').trim().toLowerCase();
+    if (!nameKey) return null;
+    const byName = list.filter((p) => String(p.name || '').trim().toLowerCase() === nameKey);
+    if (byName.length !== 1) return null;
+    return { id: String(byName[0].id), name: String(byName[0].name || '') };
   } catch (e) {
     console.warn('reconcileSelectedPatient failed:', e?.message || e);
     return null;
@@ -125,19 +183,23 @@ export async function createPatient({ id, name, dob, gender, age, mr_no }) {
   if (response.status === 201 || response.status === 200) {
     const resBody = response.data;
     const p = resBody?.patient || resBody;
-    if (p && (p.id != null || p.patient_id != null)) {
-      return {
-        id: String(p.id ?? p.patient_id).trim(),
-        name: String(p.name ?? p.patient_name ?? name ?? '').trim(),
-      };
-    }
-    if (resBody && (resBody.id != null || resBody.name != null)) {
-      return {
-        id: String(resBody.id ?? resBody.patient_id ?? '').trim(),
-        name: String(resBody.name ?? resBody.patient_name ?? name ?? '').trim(),
-      };
-    }
-    return { id: (id != null ? String(id) : '').trim(), name: String(name || '').trim() };
+    const createdName = String(
+      p?.name ?? p?.patient_name ?? resBody?.name ?? resBody?.patient_name ?? name ?? ''
+    ).trim();
+    const responseId = String(
+      p?.patient_number ??
+      p?.patient_id ??
+      p?.id ??
+      resBody?.patient_number ??
+      resBody?.patient_id ??
+      resBody?.id ??
+      id ??
+      ''
+    ).trim();
+    return {
+      id: await resolveCreatedPatientId(responseId, createdName),
+      name: createdName,
+    };
   }
 
   if (response.status === 404) {
