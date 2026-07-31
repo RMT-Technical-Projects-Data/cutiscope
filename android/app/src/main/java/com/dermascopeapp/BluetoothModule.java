@@ -62,6 +62,8 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
     private final AtomicReference<String> pairingAddress = new AtomicReference<>(null);
     /** Hidden BluetoothDevice.PAIRING_VARIANT_CONSENT — "just works" pairing. */
     private static final int PAIRING_VARIANT_CONSENT = 3;
+    /** Hidden BluetoothDevice.EXTRA_REASON — carries UNBOND_REASON_* on a failed bond. */
+    private static final String EXTRA_UNBOND_REASON = "android.bluetooth.device.extra.REASON";
     private static final long BOND_WAIT_SECONDS = 60L;
 
     BluetoothModule(ReactApplicationContext context) {
@@ -230,6 +232,9 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
                         map.putString("address", address);
                         map.putBoolean("bonded", false);
                         map.putBoolean("cancelled", true);
+                        // The system Bluetooth UI raises its own error toast for most of
+                        // these reasons; JS uses it to avoid stacking a second message.
+                        map.putInt("reason", intent.getIntExtra(EXTRA_UNBOND_REASON, -1));
                         getReactApplicationContext().getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
                                 .emit("onBluetoothBondStateChanged", map);
                     }

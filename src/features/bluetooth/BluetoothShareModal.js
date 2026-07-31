@@ -23,6 +23,13 @@ import BluetoothNative from '../../shared/native/BluetoothNative';
 import KioskMode from '../../shared/native/KioskMode';
 const { width } = Dimensions.get('window');
 
+/**
+ * Android BluetoothDevice.UNBOND_REASON_* values whose failed bond makes the system
+ * Bluetooth UI show its own error toast. AUTH_CANCELED (3) is left out because that is
+ * the locally cancelled case, which the system stays quiet about.
+ */
+const SYSTEM_TOASTED_UNBOND_REASONS = new Set([1, 2, 4, 5, 6, 7, 8]);
+
 const BluetoothShareModal = ({
   visible,
   onClose,
@@ -400,7 +407,10 @@ const BluetoothShareModal = ({
         } else {
           finish(
             false,
-            Object.assign(new Error('Bluetooth pairing was cancelled'), { code: 'BT_PAIRING_CANCELLED' })
+            Object.assign(new Error('Bluetooth pairing was cancelled'), {
+              code: 'BT_PAIRING_CANCELLED',
+              unbondReason: event?.reason,
+            })
           );
         }
       });
@@ -495,10 +505,12 @@ const BluetoothShareModal = ({
           { durationMs: 4000 }
         );
       } else if (isPairingCancelled) {
-        if (Platform.OS === 'android') {
-          ToastAndroid.show('Bluetooth pairing was cancelled', ToastAndroid.LONG);
+        // Android's own Bluetooth UI already toasts these ("Couldn't pair … incorrect
+        // PIN or passkey"), and that toast belongs to the system process so it cannot
+        // be suppressed — showing ours too would stack two messages.
+        if (!SYSTEM_TOASTED_UNBOND_REASONS.has(e.unbondReason)) {
+          showInAppToast('Bluetooth pairing was cancelled', { durationMs: 3000 });
         }
-        showInAppToast('Bluetooth pairing was cancelled', { durationMs: 3000 });
       } else if (isCancelled) {
         showInAppToast('transfer cancelled by device', { durationMs: 3000 });
       } else if (isConnectFailed) {
