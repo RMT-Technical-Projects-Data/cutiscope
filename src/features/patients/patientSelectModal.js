@@ -38,7 +38,7 @@ const TAB_EXISTING_BLANK = 'Existing Patient';
 const TAB_EXISTING_SET = 'Existing patients';
 
 const GENDER_OPTIONS = ['Male', 'Female', 'Other'];
-const MR_NO_PREFIX = 'MRI-';
+const MR_NO_PREFIX = 'MR-';
 const MR_NO_MAX_LENGTH = 4;
 const PATIENT_NAME_VALID = /^[a-zA-Z\s]+$/;
 const PATIENT_NAME_MAX_LENGTH = 20;
@@ -523,7 +523,7 @@ const PatientBoxModal = ({
                         style={[styles.input, styles.mrNoInput]}
                         value={mrNo}
                         onChangeText={(text) => {
-                          setMrNo(String(text).replace(/^MRI-/i, '').replace(/\D/g, '').slice(0, MR_NO_MAX_LENGTH));
+                          setMrNo(String(text).replace(/^MR[I]?-/i, '').replace(/\D/g, '').slice(0, MR_NO_MAX_LENGTH));
                           if (formError) setFormError('');
                           if (fieldErrors.mrNo) setFieldErrors((prev) => ({ ...prev, mrNo: undefined }));
                         }}
