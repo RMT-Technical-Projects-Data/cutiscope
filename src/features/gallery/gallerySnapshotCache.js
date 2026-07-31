@@ -30,7 +30,9 @@ const pathKey = (albumPath = []) => (Array.isArray(albumPath) ? albumPath.join('
 export function getGalleryOwnerKey({ isGuest, userId, username } = {}) {
   if (isGuest) return 'guest';
   if (userId != null && String(userId).trim() !== '') return `user:${userId}`;
-  const name = (username && String(username).trim()) || 'unknown';
+  const name = (username && String(username).trim()) || '';
+  // Empty key during logout — callers must not wipe/reload gallery for this.
+  if (!name) return '';
   return `user:${name}`;
 }
 

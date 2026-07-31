@@ -24,6 +24,7 @@ import authService, { checkBackendConnection, getBaseUrl } from './authService';
 import { UserMessages } from '../../shared/utils/userMessages';
 import { useAuth } from './authSessionContext';
 import { useFocusEffect } from '@react-navigation/native';
+import { notifyUserActivity } from '../../shared/utils/inAppToast';
 
 const Logo = require('../../../assets/cutiscopeLogo-removebg-preview.png');
 const GuestIcon = require('../../../assets/guest_icon.png');
@@ -97,42 +98,15 @@ const WelcomeScreen = ({ onLoginSuccess, onGuestContinue }) => {
 
   useEffect(() => {
     // Emit event to reset any lingering timer when on Welcome screen
-    DeviceEventEmitter.emit('userActivity');
+    notifyUserActivity();
 
     return () => {
       // Cleanup if needed
     };
   }, []);
   const handleScreenTouch = useCallback(() => {
-    DeviceEventEmitter.emit('userActivity');
+    notifyUserActivity();
   }, []);
-
-  useEffect(() => {
-    isMountedRef.current = true;
-
-    const handleStateChange = (state) => {
-      // Trigger native check whenever NetInfo detects a change
-      if (isMountedRef.current) {
-        checkConnectivity();
-      }
-    };
-
-    const unsubscribe = NetInfo.addEventListener(handleStateChange);
-    checkConnectivity();
-
-    // Polling as validation check can take time on system level
-    const pollId = setInterval(() => {
-      if (isMountedRef.current) {
-        checkConnectivity();
-      }
-    }, 5000);
-
-    return () => {
-      isMountedRef.current = false;
-      unsubscribe && unsubscribe();
-      pollId && clearInterval(pollId);
-    };
-  }, [checkConnectivity]);
 
   // Email: proper format (local@domain.tld), must have domain with TLD e.g. .com
   const validateEmail = (val) => {
@@ -163,22 +137,67 @@ const WelcomeScreen = ({ onLoginSuccess, onGuestContinue }) => {
     return true;
   };
 
-  const checkServer = async () => {
-    if (!isMountedRef.current) return;
+  const checkServer = useCallback(async () => {
+    if (!isMountedRef.current) return false;
     setCheckingServer(true);
     try {
+      // Prefer native force-validate against API health so a fresh hotspot
+      // is treated as online even before Android marks the network VALIDATED.
+      if (Platform.OS === 'android' && NativeModules.ConnectivityModule?.forceValidateNetwork) {
+        try {
+          const status = await NativeModules.ConnectivityModule.forceValidateNetwork(
+            `${getBaseUrl()}/api/health`
+          );
+          if (status === 'WIFI_INTERNET' || status === 'CELLULAR_INTERNET') {
+            if (isMountedRef.current) setServerReachable(true);
+            return true;
+          }
+        } catch (_) {
+          // Fall through to HTTP health check.
+        }
+      }
       await checkBackendConnection();
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current) return false;
       setServerReachable(true);
+      return true;
     } catch {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current) return false;
       setServerReachable(false);
+      return false;
     } finally {
       if (isMountedRef.current) {
         setCheckingServer(false);
       }
     }
-  };
+  }, []);
+
+  // Re-probe backend whenever Wi‑Fi / network state changes (fixes stale
+  // "Connection Error" after forget Wi‑Fi → logout → reconnect hotspot).
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    const handleStateChange = () => {
+      if (!isMountedRef.current) return;
+      checkConnectivity();
+      checkServer();
+    };
+
+    const unsubscribe = NetInfo.addEventListener(handleStateChange);
+    checkConnectivity();
+    checkServer();
+
+    const pollId = setInterval(() => {
+      if (isMountedRef.current) {
+        checkConnectivity();
+      }
+    }, 5000);
+
+    return () => {
+      isMountedRef.current = false;
+      unsubscribe && unsubscribe();
+      pollId && clearInterval(pollId);
+    };
+  }, [checkConnectivity, checkServer]);
 
   // CRITICAL FIX: Removed exitGuestMode() from useFocusEffect
   // This was causing the CameraScreen's inactivity timer to break
@@ -187,8 +206,30 @@ const WelcomeScreen = ({ onLoginSuccess, onGuestContinue }) => {
       checkServer();
       // Safety cleanup: ensure guest photos are wiped whenever we return to Welcome screen
       // exitGuestMode(); // COMMENTED OUT - THIS WAS CAUSING THE ISSUE
-    }, []) // Remove exitGuestMode from dependencies
+    }, [checkServer])
   );
+
+  const showConnectionError = useCallback(() => {
+    showAlert(
+      'Connection Error',
+      'Unable to connect to the server. Please make sure your device is connected to the network.',
+      {
+        confirmText: 'Open WiFi Settings',
+        cancelText: 'OK',
+        verticalButtons: true,
+        onConfirm: () => {
+          setAlertVisible(false);
+          navigation.navigate('WifiOnboarding', { isIntentional: true });
+        },
+      }
+    );
+  }, [navigation]);
+
+  /** Live probe — never trust a cached failed health check from while offline. */
+  const ensureServerReachable = useCallback(async () => {
+    const ok = await checkServer();
+    return ok;
+  }, [checkServer]);
 
   const handleLogin = async () => {
     if (!identifier && !password) {
@@ -211,24 +252,35 @@ const WelcomeScreen = ({ onLoginSuccess, onGuestContinue }) => {
       return;
     }
 
-    // Check for "WiFi but no internet" specialized error
+    // Check network + live server reachability (do not trust stale offline health cache).
     if (Platform.OS === 'android' && NativeModules.ConnectivityModule) {
       try {
-        const status = await NativeModules.ConnectivityModule.getNetworkStatus();
-        if (status === 'WIFI_NO_INTERNET') {
-          showAlert(
-            'No Internet Access',
-            'Your WiFi is connected but has no internet. Please check your connection or connect to a different network.',
-            {
-              confirmText: 'Connect to WiFi',
-              cancelText: 'Cancel',
-              onConfirm: () => {
-                setAlertVisible(false);
-                navigation.navigate('WifiOnboarding', { isIntentional: true });
-              }
-            }
+        let status = null;
+        if (NativeModules.ConnectivityModule.forceValidateNetwork) {
+          status = await NativeModules.ConnectivityModule.forceValidateNetwork(
+            `${getBaseUrl()}/api/health`
           );
-          return;
+        } else {
+          status = await NativeModules.ConnectivityModule.getNetworkStatus();
+        }
+        if (status === 'WIFI_NO_INTERNET') {
+          // One more HTTP probe — hotspot may work even if Android hasn't VALIDATED yet.
+          const ok = await ensureServerReachable();
+          if (!ok) {
+            showAlert(
+              'No Internet Access',
+              'Your WiFi is connected but has no internet. Please check your connection or connect to a different network.',
+              {
+                confirmText: 'Connect to WiFi',
+                cancelText: 'Cancel',
+                onConfirm: () => {
+                  setAlertVisible(false);
+                  navigation.navigate('WifiOnboarding', { isIntentional: true });
+                }
+              }
+            );
+            return;
+          }
         }
       } catch (e) {
         console.warn('handleLogin network check failed:', e);
@@ -236,20 +288,8 @@ const WelcomeScreen = ({ onLoginSuccess, onGuestContinue }) => {
     }
 
     if (!(await checkWifi())) return;
-    if (serverReachable === false) {
-      showAlert(
-        'Connection Error',
-        'Unable to connect to the server. Please make sure your device is connected to the network.',
-        {
-          confirmText: 'Open WiFi Settings',
-          cancelText: 'OK',
-          verticalButtons: true,
-          onConfirm: () => {
-            setAlertVisible(false);
-            navigation.navigate('WifiOnboarding', { isIntentional: true });
-          }
-        }
-      );
+    if (!(await ensureServerReachable())) {
+      showConnectionError();
       return;
     }
 
@@ -312,20 +352,8 @@ const WelcomeScreen = ({ onLoginSuccess, onGuestContinue }) => {
       return;
     }
     if (!(await checkWifi())) return;
-    if (serverReachable === false) {
-      showAlert(
-        'Connection Error',
-        'Unable to connect to the server. Please make sure your device is connected to the network.',
-        {
-          confirmText: 'Open WiFi Settings',
-          cancelText: 'OK',
-          verticalButtons: true,
-          onConfirm: () => {
-            setAlertVisible(false);
-            navigation.navigate('WifiOnboarding', { isIntentional: true });
-          }
-        }
-      );
+    if (!(await ensureServerReachable())) {
+      showConnectionError();
       return;
     }
 
@@ -366,21 +394,8 @@ const WelcomeScreen = ({ onLoginSuccess, onGuestContinue }) => {
       showAlert('Passwords do not match', 'New password and Confirm password must match.');
       return;
     }
-    if (serverReachable === false) {
-      showAlert(
-        'Connection Error',
-        'Unable to connect to the server. Please make sure your device is connected to the network.',
-
-        {
-          confirmText: 'Open WiFi Settings',
-          cancelText: 'OK',
-          verticalButtons: true,
-          onConfirm: () => {
-            setAlertVisible(false);
-            navigation.navigate('WifiOnboarding', { isIntentional: true });
-          }
-        }
-      );
+    if (!(await ensureServerReachable())) {
+      showConnectionError();
       return;
     }
 

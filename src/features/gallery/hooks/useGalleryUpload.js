@@ -62,7 +62,7 @@ const useGalleryUpload = ({
       return;
     }
 
-    // Legacy: no image record (e.g. old file) — use current selected patient
+    // Legacy: no image record (e.g. old file) — use current selected patient only as last resort
     const username = getUsername();
     let patientFolder = null;
     try {
@@ -72,6 +72,9 @@ const useGalleryUpload = ({
         if (box?.id || box?.name) patientFolder = box.id || box.name;
       }
     } catch (_) { }
+    if (!patientFolder) {
+      throw new Error('Select a patient before uploading this photo');
+    }
     await uploadToUserS3Folder(cleanPath, fileName, username, {}, patientFolder);
     await AsyncStorage.setItem(`uploaded_${cleanPath}`, 'true');
   }, [isGuest, getUsername]);
@@ -175,7 +178,9 @@ const useGalleryUpload = ({
         imageId: image?.id,
         patientFolder,
         isTemp: uploadPath !== cleanPath,
+        captureSeq: image?.captureSeq ?? null,
       });
+      OptimisedUploadService.resumeUploadQueue?.();
 
     } catch (error) {
       showInAppToast(error.message || 'Upload failed', { durationMs: 2000, position: 'center' });
@@ -286,8 +291,11 @@ const useGalleryUpload = ({
               imageId: image?.id,
               patientFolder: image ? null : globalPatientFolder,
               isTemp: uploadPath !== cleanPath,
+              captureSeq: image?.captureSeq ?? null,
             });
           }
+
+          OptimisedUploadService.resumeUploadQueue?.();
 
           if (skippedCount > 0) {
             showInAppToast(`Enqueued ${needingUpload.length} uploads (${skippedCount} already in queue)`, { position: 'bottom', durationMs: 2000 });

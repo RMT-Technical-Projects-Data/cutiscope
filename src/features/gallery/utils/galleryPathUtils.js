@@ -2,12 +2,18 @@ import { Dimensions } from 'react-native';
 
 export const { width, height: screenHeight } = Dimensions.get('window');
 export const HORIZONTAL_PADDING = 16;
-export const ALBUM_GAP = 10;
+export const ALBUM_GAP = 12;
+export const PHOTO_GAP = 4;
+export const PHOTO_COLUMNS = 3;
+
+/** Two-column album cards that fill the row with a consistent gap. */
 export const ALBUM_CARD_SIZE = Math.floor(
   (width - HORIZONTAL_PADDING * 2 - ALBUM_GAP) / 2
 );
+
+/** Three-column photo thumbs sized so margins never overflow the row. */
 export const THUMBNAIL_SIZE = Math.floor(
-  (width - HORIZONTAL_PADDING * 2 - 6 * 2) / 3 - 6
+  (width - HORIZONTAL_PADDING * 2 - PHOTO_GAP * (PHOTO_COLUMNS - 1)) / PHOTO_COLUMNS
 );
 
 export const MONTH_NAMES = [

@@ -14,7 +14,7 @@ import { useAuth } from '../auth/authSessionContext';
 import ConfirmationModal from '../../shared/ui/ConfirmationModal';
 import { ScreenHeader } from '../../shared/ui';
 import BluetoothShareModal from '../bluetooth/BluetoothShareModal';
-import { showInAppToast } from '../../shared/utils/inAppToast';
+import { showInAppToast, notifyUserActivity, SESSION_FORCE_LOGOUT_EVENT } from '../../shared/utils/inAppToast';
 import FullScreenGalleryModal from './FullScreenGalleryModal';
 import GalleryActions from './components/GalleryActions';
 import GalleryAlbumGrid from './components/galleryAlbumGrid';
@@ -77,6 +77,17 @@ const GalleryScreen = ({ route, navigation }) => {
   useEffect(() => {
     capturedPhotosRef.current = capturedPhotos;
   }, [capturedPhotos]);
+
+  // Session timeout: close overlays only. App remounts a Welcome-only nav tree —
+  // do NOT render a permanent blank View here (that was the stuck black screen).
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(SESSION_FORCE_LOGOUT_EVENT, () => {
+      setFullScreenPhoto(null);
+      setBluetoothShareVisible(false);
+      setConfirmModalVisible(false);
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     const subOpen = DeviceEventEmitter.addListener('onPowerMenuOpened', () => setPowerMenuOpen(true));
@@ -310,6 +321,7 @@ const GalleryScreen = ({ route, navigation }) => {
   );
 
   // Never paint a blank black body: loading → empty → albums/photos.
+  // During forced logout, skip empty copy — go straight to Welcome without "No photos found".
   const hasGalleryContent = isFolderLevel || isPhotoLevel;
   const showGalleryLoading = !hasGalleryContent && (!hasLoaded || isLoading);
   const showGalleryEmpty = !hasGalleryContent && hasLoaded && !isLoading;
@@ -319,7 +331,7 @@ const GalleryScreen = ({ route, navigation }) => {
       <View
         style={styles.container}
         onStartShouldSetResponder={() => {
-          DeviceEventEmitter.emit('userActivity');
+          notifyUserActivity();
           return false;
         }}
       >

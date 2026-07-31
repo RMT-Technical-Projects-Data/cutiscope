@@ -18,6 +18,32 @@ import {
 // ========== UPLOAD QUEUE SYSTEM ==========
 let uploadQueue = [];
 let isUploading = false;
+let networkResumeSub = null;
+
+const getItemCaptureSeq = (item) => {
+  const seq = item?.metadata?.captureSeq ?? item?.captureSeq;
+  const n = Number(seq);
+  return Number.isFinite(n) ? n : null;
+};
+
+/** Keep FIFO by capture order when captureSeq is present. */
+const insertSortedByCaptureSeq = (item) => {
+  const seq = getItemCaptureSeq(item);
+  if (seq == null) {
+    uploadQueue.push(item);
+    return;
+  }
+  let insertAt = uploadQueue.length;
+  for (let i = uploadQueue.length - 1; i >= 0; i -= 1) {
+    const prevSeq = getItemCaptureSeq(uploadQueue[i]);
+    if (prevSeq == null || prevSeq <= seq) {
+      insertAt = i + 1;
+      break;
+    }
+    insertAt = i;
+  }
+  uploadQueue.splice(insertAt, 0, item);
+};
 
 // ========== HELPER FUNCTIONS ==========
 
@@ -115,12 +141,23 @@ const saveImageLocally = async (sourcePath, fileName = null) => {
   }
 };
 
+const ensureNetworkResumeListener = () => {
+  if (networkResumeSub) return;
+  networkResumeSub = NetInfo.addEventListener((state) => {
+    if (state?.isConnected && uploadQueue.length > 0 && !isUploading) {
+      console.log('🔌 [Queue] Network restored — resuming uploads');
+      processUploadQueue();
+    }
+  });
+};
+
 // ========== QUEUE MANAGEMENT ==========
 
 /**
  * Add upload to queue (for logged-in users only)
  */
 const addToUploadQueue = (fileData, username, metadata = {}) => {
+  ensureNetworkResumeListener();
   const queueItem = {
     id: Date.now() + Math.random().toString(36).substr(2, 9),
     filePath: fileData.path,
@@ -133,7 +170,7 @@ const addToUploadQueue = (fileData, username, metadata = {}) => {
     createdAt: new Date().toISOString(),
   };
   
-  uploadQueue.push(queueItem);
+  insertSortedByCaptureSeq(queueItem);
   console.log(`📝 Added to upload queue for ${username}: ${queueItem.fileName}`);
   
   notifyQueueChange();
@@ -153,6 +190,7 @@ const addToUploadQueue = (fileData, username, metadata = {}) => {
  * Use this when capture flow already stored the file exactly once.
  */
 export const enqueueExistingFileUpload = (filePath, fileName, username, metadata = {}) => {
+  ensureNetworkResumeListener();
   const queueItem = {
     id: Date.now() + Math.random().toString(36).substr(2, 9),
     filePath,
@@ -165,7 +203,7 @@ export const enqueueExistingFileUpload = (filePath, fileName, username, metadata
     createdAt: new Date().toISOString(),
   };
 
-  uploadQueue.push(queueItem);
+  insertSortedByCaptureSeq(queueItem);
   console.log(`📝 Enqueued existing file for ${username}: ${queueItem.fileName}`);
 
   notifyQueueChange();
@@ -188,6 +226,7 @@ const processUploadQueue = async () => {
   }
   
   isUploading = true;
+  ensureNetworkResumeListener();
   
   while (uploadQueue.length > 0 && isUploading) {
     const item = uploadQueue[0];
@@ -212,6 +251,7 @@ const processUploadQueue = async () => {
         username: item.username,
         retryCount: item.retryCount,
         maxRetries: item.maxRetries,
+        captureSeq: getItemCaptureSeq(item),
         hasPatientFolder: !!item.metadata?.patientFolder,
       });
       item.status = 'uploading';
@@ -310,15 +350,33 @@ const processUploadQueue = async () => {
         notifyQueueChange();
         return;
       }
-      
-      // Perform immediate network check to handle disconnect during upload
+
+      // Offline: park as pending — do NOT burn retries. Resume when network returns.
+      let offline = false;
       try {
         const netState = await NetInfo.fetch();
-        if (!netState.isConnected) {
-            console.log(`🔌 [Queue] No internet detected during failure for ${item.fileName}. Skipping auto-retry.`);
-            item.retryCount = item.maxRetries; // Force treat as final failure
-        }
+        offline = !netState.isConnected;
       } catch (_) { }
+
+      if (offline || /no internet|network request failed|network error/i.test(String(error?.message || ''))) {
+        console.log(`🔌 [Queue] Offline — parking ${item.fileName} until network returns`);
+        item.status = 'waiting_network';
+        item.error = 'No internet connection';
+        DeviceEventEmitter.emit('IMAGE_UPLOAD_STATUS_CHANGED', {
+          filePath: item.filePath,
+          status: 'PENDING',
+        });
+        const imageId = item.metadata?.imageId;
+        if (imageId) {
+          try {
+            await ImageDatabase.updateUploadStatus(imageId, ImageDatabase.UPLOAD_STATUS.PENDING || 'PENDING');
+          } catch (_) { }
+        }
+        // Leave item at front; stop worker until NetInfo resume.
+        isUploading = false;
+        notifyQueueChange();
+        return;
+      }
 
       item.status = 'failed';
       item.error = error.message;
@@ -351,14 +409,19 @@ const processUploadQueue = async () => {
           }
         }
       } else {
-        // Retry after delay
+        // Retry after delay — must restart the worker when the timer fires.
         console.log(`🔄 Retrying ${item.fileName} (${item.retryCount}/${item.maxRetries})`);
         
-        // Move to end of queue for retry
         const failedItem = uploadQueue.shift();
+        const delayMs = item.retryCount * 5000;
         setTimeout(() => {
-          uploadQueue.push(failedItem);
-        }, item.retryCount * 5000);
+          failedItem.status = 'pending';
+          insertSortedByCaptureSeq(failedItem);
+          notifyQueueChange();
+          if (!isUploading) {
+            processUploadQueue();
+          }
+        }, delayMs);
       }
     }
     
@@ -379,6 +442,8 @@ DeviceEventEmitter.addListener(CLOCK_SKEW_EVENT, ({ ok }) => {
     processUploadQueue();
   }
 });
+
+ensureNetworkResumeListener();
 
 // ========== MAIN EXPORTED FUNCTIONS ==========
 
@@ -450,7 +515,7 @@ export const isImageInQueue = (filePath) => {
   const cleanPath = filePath.replace('file://', '');
   return uploadQueue.some(item => 
     item.filePath.replace('file://', '') === cleanPath && 
-    (item.status === 'pending' || item.status === 'uploading')
+    (item.status === 'pending' || item.status === 'uploading' || item.status === 'waiting_network')
   );
 };
 
@@ -460,7 +525,7 @@ export const isImageInQueue = (filePath) => {
 export const getQueueStatus = () => {
   return {
     total: uploadQueue.length,
-    pending: uploadQueue.filter(item => item.status === 'pending').length,
+    pending: uploadQueue.filter(item => item.status === 'pending' || item.status === 'waiting_network').length,
     uploading: uploadQueue.filter(item => item.status === 'uploading').length,
     completed: uploadQueue.filter(item => item.status === 'completed').length,
     failed: uploadQueue.filter(item => item.status === 'failed').length,
@@ -476,6 +541,13 @@ export const isUploadInProgress = () => {
   return isUploading || uploadQueue.length > 0;
 };
 
+/** Kick the worker (e.g. after manual Retry when Wi‑Fi returns). */
+export const resumeUploadQueue = () => {
+  if (uploadQueue.length > 0 && !isUploading) {
+    processUploadQueue();
+  }
+};
+
 // Export everything
 export default {
   // Core functions
@@ -487,6 +559,7 @@ export default {
   getQueueStatus,
   isUploadInProgress,
   isImageInQueue,
+  resumeUploadQueue,
   
   // Utilities
   generateFileName,

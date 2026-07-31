@@ -28,6 +28,7 @@ import firebaseAuthService from '../features/upload/firebaseAuthService';
 import { getBaseUrl } from '../features/auth/authService';
 import InAppToastHost from './inAppToastHost';
 import SessionManager from './appSessionTimeoutManager';
+import { rootNavigationRef } from './rootNavigation';
 import DeveloperPinModal from './DeveloperPinModal';
 import BluetoothNative from '../shared/native/BluetoothNative';
 
@@ -70,7 +71,7 @@ const App = () => {
   const [isKioskActive, setIsKioskActive] = useState(Platform.OS === 'android');
   const [suppressAppStatusBar, setSuppressAppStatusBar] = useState(false);
   const serialInputRef = useRef(null);
-  const navigationRef = useRef(null);
+  const hasAppSession = isLoggedIn || isGuestMode;
 
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener(
@@ -518,15 +519,13 @@ const App = () => {
     return () => subscription.remove();
   }, []);
 
+  // Only auto-show Wi-Fi onboarding from connectivity — never as a side-effect of
+  // logout (that was replacing the login screen / fighting session remount).
   useEffect(() => {
-    if (isConnected === false) {
-      if (!isLoggedIn && !isGuestMode) {
-        setShowWifiScreen(true);
-      }
-    } else if (isConnected === true) {
+    if (isConnected === true) {
       setShowWifiScreen(false);
     }
-  }, [isConnected, isLoggedIn, isGuestMode]);
+  }, [isConnected]);
 
   const handleLoginSuccess = () => {
     setIsLoggedIn(true);
@@ -633,14 +632,16 @@ const App = () => {
                     onContinue={handleWifiContinue}
                     onSkip={handleWifiSkip}
                   />
-                ) : (
+                ) : !hasAppSession ? (
+                  /* Logged out: Welcome only — Gallery/Camera cannot remain mounted. */
                   <NavigationContainer
-                    ref={navigationRef}
+                    key="logged-out"
+                    ref={rootNavigationRef}
                     theme={navTheme}
                     onStateChange={notifyUserActivity}
                   >
                     <Stack.Navigator
-                      initialRouteName={isLoggedIn ? 'Camera' : 'Welcome'}
+                      initialRouteName="Welcome"
                       screenOptions={{
                         headerShown: false,
                         contentStyle: { backgroundColor: '#000' },
@@ -652,7 +653,51 @@ const App = () => {
                     >
                       <Stack.Screen
                         name="Welcome"
+                        options={{ animation: 'none', gestureEnabled: false }}
+                      >
+                        {(props) => (
+                          <WelcomeScreen
+                            {...props}
+                            onLoginSuccess={handleLoginSuccess}
+                            onGuestContinue={handleGuestContinue}
+                          />
+                        )}
+                      </Stack.Screen>
+                      <Stack.Screen
+                        name="WifiOnboarding"
                         options={{ animation: 'none' }}
+                      >
+                        {(props) => (
+                          <WifiOnboardingScreen
+                            {...props}
+                            onContinue={() => props.navigation.goBack()}
+                            onSkip={() => props.navigation.goBack()}
+                          />
+                        )}
+                      </Stack.Screen>
+                    </Stack.Navigator>
+                  </NavigationContainer>
+                ) : (
+                  <NavigationContainer
+                    key="app-session"
+                    ref={rootNavigationRef}
+                    theme={navTheme}
+                    onStateChange={notifyUserActivity}
+                  >
+                    <Stack.Navigator
+                      initialRouteName="Camera"
+                      screenOptions={{
+                        headerShown: false,
+                        contentStyle: { backgroundColor: '#000' },
+                        screenOrientation: 'portrait',
+                        statusBarHidden: true,
+                        statusBarTranslucent: true,
+                        statusBarBackgroundColor: 'transparent',
+                      }}
+                    >
+                      <Stack.Screen
+                        name="Welcome"
+                        options={{ animation: 'none', gestureEnabled: false }}
                       >
                         {(props) => (
                           <WelcomeScreen
@@ -682,7 +727,7 @@ const App = () => {
                 )}
                 <SessionManager
                   active={isLoggedIn}
-                  navigationRef={navigationRef}
+                  navigationRef={rootNavigationRef}
                   onLoggedOut={handleSessionLoggedOut}
                 />
                 <SerialNumberModal

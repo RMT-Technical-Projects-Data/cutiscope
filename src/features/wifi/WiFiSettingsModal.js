@@ -19,7 +19,7 @@ import {
   DeviceEventEmitter,
   BackHandler,
 } from 'react-native';
-import { showInAppToast, IN_APP_TOAST_EVENT } from '../../shared/utils/inAppToast';
+import { showInAppToast, IN_APP_TOAST_EVENT, notifyUserActivity, setSessionIdleHold } from '../../shared/utils/inAppToast';
 import KioskTextInput from '../../shared/ui/KioskTextInput';
 import CustomKeyboard from '../../shared/ui/CustomKeyboard';
 import CustomStatusBar, {
@@ -197,6 +197,44 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
     return () => sub.remove();
   }, [passwordModalVisible, showPasswordModalToast]);
 
+  const dismissPasswordEntryModal = useCallback(() => {
+    if (isConnecting) return;
+    setPasswordModalVisible(false);
+    setPassword('');
+    setPasswordError('');
+    setPasswordModalToast('');
+    setShowPassword(false);
+    Keyboard.dismiss();
+  }, [isConnecting]);
+
+  const handleWifiHeaderBack = useCallback(() => {
+    if (passwordModalVisible) {
+      dismissPasswordEntryModal();
+      return;
+    }
+    if (savedPasswordModalVisible) {
+      setSavedPasswordModalVisible(false);
+      setShowSavedPassword(false);
+      return;
+    }
+    if (showCamera) {
+      setShowCamera(false);
+      return;
+    }
+    if (showSavedNetworks) {
+      setShowSavedNetworks(false);
+    } else {
+      onClose();
+    }
+  }, [
+    dismissPasswordEntryModal,
+    onClose,
+    passwordModalVisible,
+    savedPasswordModalVisible,
+    showCamera,
+    showSavedNetworks,
+  ]);
+
   const { hasPermission: cameraHasPermission, requestPermission: requestCameraPermission } = useCameraPermission();
   const device = useCameraDevice('back');
 
@@ -214,21 +252,27 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
     return () => releaseAppStatusBar();
   }, [visible]);
 
+  // Wi-Fi settings is active use — freeze session inactivity while open.
+  useEffect(() => {
+    if (!visible) {
+      setSessionIdleHold(false);
+      return undefined;
+    }
+    setSessionIdleHold(true);
+    notifyUserActivity();
+    return () => setSessionIdleHold(false);
+  }, [visible]);
+
   // Hardware back closes password overlay (inline View, not RN Modal).
   useEffect(() => {
     if (!visible || !passwordModalVisible) return undefined;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (isConnecting) return true;
-      setPasswordModalVisible(false);
-      setPassword('');
-      setPasswordError('');
-      setPasswordModalToast('');
-      setShowPassword(false);
-      Keyboard.dismiss();
+      dismissPasswordEntryModal();
       return true;
     });
     return () => sub.remove();
-  }, [visible, passwordModalVisible, isConnecting]);
+  }, [visible, passwordModalVisible, isConnecting, dismissPasswordEntryModal]);
 
   const loadSavedPasswords = async () => {
     try {
@@ -1544,7 +1588,7 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
       <View
         style={[styles.fullScreenContainer, inline && styles.inlineOverlay]}
         onStartShouldSetResponder={() => {
-          DeviceEventEmitter.emit('userActivity');
+          notifyUserActivity();
           return false;
         }}
       >
@@ -1552,15 +1596,7 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
         <View style={styles.innerFullScreen}>
           {/* Header */}
           <View style={styles.header}>
-            <BackButton
-              onPress={() => {
-                if (showSavedNetworks) {
-                  setShowSavedNetworks(false);
-                } else {
-                  onClose();
-                }
-              }}
-            />
+            <BackButton onPress={handleWifiHeaderBack} />
             <Text style={styles.title}>
               {showSavedNetworks ? 'Saved Networks' : 'Wi-Fi'}
             </Text>
@@ -1727,12 +1763,7 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
               activeOpacity={1}
               onPress={() => {
                 if (!isConnecting) {
-                  setPasswordModalVisible(false);
-                  setPassword('');
-                  setPasswordError('');
-                  setPasswordModalToast('');
-                  setShowPassword(false);
-                  Keyboard.dismiss();
+                  dismissPasswordEntryModal();
                 }
               }}
             >
@@ -1786,12 +1817,7 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
                       title="Cancel"
                       onPress={() => {
                         if (!isConnecting) {
-                          setPasswordModalVisible(false);
-                          setPassword('');
-                          setPasswordError('');
-                          setPasswordModalToast('');
-                          setShowPassword(false);
-                          Keyboard.dismiss();
+                          dismissPasswordEntryModal();
                         }
                       }}
                       disabled={isConnecting}

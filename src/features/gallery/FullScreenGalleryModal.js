@@ -5,9 +5,10 @@ import {
   TouchableOpacity,
   StyleSheet,
   Image,
-  Dimensions,
   ActivityIndicator,
   BackHandler,
+  useWindowDimensions,
+  DeviceEventEmitter,
 } from 'react-native';
 import { GestureHandlerRootView, Gesture, GestureDetector, FlatList as GHFlatList } from 'react-native-gesture-handler';
 import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS, withDelay, useAnimatedReaction } from 'react-native-reanimated';
@@ -16,8 +17,7 @@ import { BackButton } from '../../shared/ui';
 
 import deleteIcon from '../../../assets/icon_delete.png';
 import uploadIcon from '../../../assets/icon_upload.png';
-
-const { width, height: screenHeight } = Dimensions.get('window');
+import { notifyUserActivity, SESSION_FORCE_LOGOUT_EVENT } from '../../shared/utils/inAppToast';
 
 const PRIMARY_BACKGROUND = '#000000';
 const HEADER_FOOTER_BG = '#000000';
@@ -31,8 +31,21 @@ const normalizePhotoPath = (p) => {
   return (p.absolutePath || String(p.path || '').replace(/^file:\/\//, '')).split('?')[0];
 };
 
-const ZoomableImage = ({ uri, version, onTap, onZoomChange }) => {
-  const [imgDims, setImgDims] = useState({ w: width, h: screenHeight });
+/** Fit image inside the viewport the same way resizeMode="contain" would. */
+function fitContain(imgW, imgH, viewW, viewH) {
+  if (!imgW || !imgH || !viewW || !viewH) {
+    return { width: viewW || 1, height: viewH || 1 };
+  }
+  const imageRatio = imgW / imgH;
+  const viewRatio = viewW / viewH;
+  if (imageRatio > viewRatio) {
+    return { width: viewW, height: viewW / imageRatio };
+  }
+  return { width: viewH * imageRatio, height: viewH };
+}
+
+const ZoomableImage = ({ uri, version, viewWidth, viewHeight, onTap, onZoomChange }) => {
+  const [imgDims, setImgDims] = useState({ w: viewWidth, h: viewHeight });
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
@@ -56,21 +69,20 @@ const ZoomableImage = ({ uri, version, onTap, onZoomChange }) => {
   const prevTranslationY = useSharedValue(0);
 
   useEffect(() => {
-    if (uri) {
-      Image.getSize(uri, (w, h) => {
-        setImgDims({ w, h });
-      }, () => {
-        setImgDims({ w: width, h: screenHeight });
-      });
-      // Reset zoom when the underlying file is replaced with a watermarked version.
-      scale.value = 1;
-      savedScale.value = 1;
-      translateX.value = 0;
-      translateY.value = 0;
-      savedTranslateX.value = 0;
-      savedTranslateY.value = 0;
-    }
-  }, [uri, version]);
+    if (!uri) return;
+    Image.getSize(
+      uri,
+      (w, h) => setImgDims({ w, h }),
+      () => setImgDims({ w: viewWidth, h: viewHeight })
+    );
+    // Reset zoom when the underlying file is replaced with a watermarked version.
+    scale.value = 1;
+    savedScale.value = 1;
+    translateX.value = 0;
+    translateY.value = 0;
+    savedTranslateX.value = 0;
+    savedTranslateY.value = 0;
+  }, [uri, version, viewWidth, viewHeight]);
 
   const notifyZoom = useCallback((zoomed) => {
     onZoomChange?.(zoomed);
@@ -86,20 +98,10 @@ const ZoomableImage = ({ uri, version, onTap, onZoomChange }) => {
     [notifyZoom]
   );
 
-  const { displayedWidth, displayedHeight } = useMemo(() => {
-    const screenRatio = width / screenHeight;
-    const imageRatio = imgDims.w / imgDims.h;
-
-    let dWidth, dHeight;
-    if (imageRatio > screenRatio) {
-      dWidth = width;
-      dHeight = width / imageRatio;
-    } else {
-      dHeight = screenHeight;
-      dWidth = screenHeight * imageRatio;
-    }
-    return { displayedWidth: dWidth, displayedHeight: dHeight };
-  }, [imgDims]);
+  const { displayedWidth, displayedHeight } = useMemo(
+    () => fitContain(imgDims.w, imgDims.h, viewWidth, viewHeight),
+    [imgDims, viewWidth, viewHeight]
+  );
 
   // Double-tap to zoom in (to 3x) at tapped point, or zoom back out to 1x
   const doubleTap = Gesture.Tap()
@@ -116,11 +118,11 @@ const ZoomableImage = ({ uri, version, onTap, onZoomChange }) => {
         savedTranslateY.value = 0;
       } else {
         const targetScale = 3.0;
-        const tapX = e.x - width / 2;
-        const tapY = e.y - screenHeight / 2;
+        const tapX = e.x - viewWidth / 2;
+        const tapY = e.y - viewHeight / 2;
 
-        const maxTransX = Math.max(0, (displayedWidth * targetScale - width) / 2);
-        const maxTransY = Math.max(0, (displayedHeight * targetScale - screenHeight) / 2);
+        const maxTransX = Math.max(0, (displayedWidth * targetScale - viewWidth) / 2);
+        const maxTransY = Math.max(0, (displayedHeight * targetScale - viewHeight) / 2);
 
         const targetTx = Math.min(Math.max(tapX * (1 - targetScale), -maxTransX), maxTransX);
         const targetTy = Math.min(Math.max(tapY * (1 - targetScale), -maxTransY), maxTransY);
@@ -151,8 +153,8 @@ const ZoomableImage = ({ uri, version, onTap, onZoomChange }) => {
       scaleStart.value = scale.value;
       translateXStart.value = translateX.value;
       translateYStart.value = translateY.value;
-      focalXStart.value = e.focalX - width / 2;
-      focalYStart.value = e.focalY - screenHeight / 2;
+      focalXStart.value = e.focalX - viewWidth / 2;
+      focalYStart.value = e.focalY - viewHeight / 2;
       lastFocalX.value = e.focalX;
       lastFocalY.value = e.focalY;
     })
@@ -171,8 +173,8 @@ const ZoomableImage = ({ uri, version, onTap, onZoomChange }) => {
       const newScale = Math.min(Math.max(1, scaleStart.value * e.scale), 6);
       scale.value = newScale;
 
-      const currentFocalX = e.focalX - width / 2;
-      const currentFocalY = e.focalY - screenHeight / 2;
+      const currentFocalX = e.focalX - viewWidth / 2;
+      const currentFocalY = e.focalY - viewHeight / 2;
 
       // Unscaled focal point relative to image coordinate space
       const p0x = (focalXStart.value - translateXStart.value) / scaleStart.value;
@@ -182,8 +184,8 @@ const ZoomableImage = ({ uri, version, onTap, onZoomChange }) => {
       const targetTx = currentFocalX - newScale * p0x;
       const targetTy = currentFocalY - newScale * p0y;
 
-      const maxTransX = Math.max(0, (displayedWidth * newScale - width) / 2);
-      const maxTransY = Math.max(0, (displayedHeight * newScale - screenHeight) / 2);
+      const maxTransX = Math.max(0, (displayedWidth * newScale - viewWidth) / 2);
+      const maxTransY = Math.max(0, (displayedHeight * newScale - viewHeight) / 2);
 
       translateX.value = Math.min(Math.max(targetTx, -maxTransX), maxTransX);
       translateY.value = Math.min(Math.max(targetTy, -maxTransY), maxTransY);
@@ -232,8 +234,8 @@ const ZoomableImage = ({ uri, version, onTap, onZoomChange }) => {
         prevTranslationY.value = e.translationY;
 
         if (!isPinching.value && !justFinishedPinching.value) {
-          const maxTransX = Math.max(0, (displayedWidth * scale.value - width) / 2);
-          const maxTransY = Math.max(0, (displayedHeight * scale.value - screenHeight) / 2);
+          const maxTransX = Math.max(0, (displayedWidth * scale.value - viewWidth) / 2);
+          const maxTransY = Math.max(0, (displayedHeight * scale.value - viewHeight) / 2);
 
           translateX.value = Math.min(Math.max(translateX.value + dx, -maxTransX), maxTransX);
           translateY.value = Math.min(Math.max(translateY.value + dy, -maxTransY), maxTransY);
@@ -261,21 +263,50 @@ const ZoomableImage = ({ uri, version, onTap, onZoomChange }) => {
     transform: [
       { translateX: translateX.value },
       { translateY: translateY.value },
-      { scale: scale.value }
-    ]
+      { scale: scale.value },
+    ],
   }));
+
+  // Always paint into a full-viewport box. resizeMode="contain" scales the photo
+  // to fill the screen without letterboxing bugs from %/flex height collapse.
+  const imageUri = useMemo(() => {
+    if (!uri) return null;
+    const raw = String(uri);
+    if (raw.startsWith('file://') || raw.startsWith('content://') || raw.startsWith('http')) {
+      return raw;
+    }
+    return `file://${raw}`;
+  }, [uri]);
 
   return (
     <GestureDetector gesture={composed}>
-      <Reanimated.View style={[{ flex: 1, width, height: '100%', justifyContent: 'center', alignItems: 'center' }, animatedStyle]}>
-        <Image
-          key={`${uri}::${version || 0}`}
-          source={{ uri }}
-          style={{ width: '100%', height: '100%' }}
-          resizeMode="contain"
-          fadeDuration={0}
-        />
-      </Reanimated.View>
+      <View
+        collapsable={false}
+        style={{
+          width: viewWidth,
+          height: viewHeight,
+          justifyContent: 'center',
+          alignItems: 'center',
+          backgroundColor: PRIMARY_BACKGROUND,
+          overflow: 'hidden',
+        }}
+      >
+        {imageUri ? (
+          <Reanimated.Image
+            key={`${imageUri}::${version || 0}`}
+            source={{ uri: imageUri }}
+            style={[
+              {
+                width: viewWidth,
+                height: viewHeight,
+              },
+              animatedStyle,
+            ]}
+            resizeMode="contain"
+            fadeDuration={0}
+          />
+        ) : null}
+      </View>
     </GestureDetector>
   );
 };
@@ -293,6 +324,7 @@ const FullScreenGalleryModal = React.memo(({
   getShareLabel,
   onBluetoothShare
 }) => {
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [errorMsg, setErrorMsg] = useState(null);
   const errorTimerRef = useRef(null);
@@ -390,7 +422,9 @@ const FullScreenGalleryModal = React.memo(({
     return () => { cancelled = true; };
   }, [currentPhoto]);
 
-  const showUploadingFooter = overlaysVisible && isPhotoUploadInFlight(currentPhoto);
+  // Guest mode never uploads — never show "Uploading..." for guest captures.
+  const showUploadingFooter =
+    overlaysVisible && !isGuest && isPhotoUploadInFlight(currentPhoto);
   const showUploadButton =
     overlaysVisible &&
     !isGuest &&
@@ -432,6 +466,17 @@ const FullScreenGalleryModal = React.memo(({
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       onClose?.();
       return true;
+    });
+    return () => sub.remove();
+  }, [visible, onClose]);
+
+  // Allow inactivity timeout while viewing — close immediately on forced logout
+  // so Gallery never flashes "No photos found" under this overlay.
+  useEffect(() => {
+    if (!visible) return undefined;
+    notifyUserActivity();
+    const sub = DeviceEventEmitter.addListener(SESSION_FORCE_LOGOUT_EVENT, () => {
+      onClose?.();
     });
     return () => sub.remove();
   }, [visible, onClose]);
@@ -496,23 +541,28 @@ const FullScreenGalleryModal = React.memo(({
   }, [currentIndex, photoPathsKey]);
 
   const getItemLayout = useCallback((data, index) => (
-    { length: width, offset: width * index, index }
-  ), []);
+    { length: windowWidth, offset: windowWidth * index, index }
+  ), [windowWidth]);
 
   const toggleOverlays = useCallback(() => {
     setShowOverlays(prev => !prev);
   }, []);
 
-  const renderItem = useCallback(({ item }) => (
-    <View style={styles.fullScreenPage}>
-      <ZoomableImage
-        uri={item.path}
-        version={item.imageVersion || 0}
-        onTap={toggleOverlays}
-        onZoomChange={handleZoomChange}
-      />
-    </View>
-  ), [toggleOverlays, handleZoomChange]);
+  const renderItem = useCallback(({ item }) => {
+    const uri = item?.path || (item?.absolutePath ? `file://${item.absolutePath}` : null);
+    return (
+      <View style={{ width: windowWidth, height: windowHeight, backgroundColor: PRIMARY_BACKGROUND }}>
+        <ZoomableImage
+          uri={uri}
+          version={item.imageVersion || 0}
+          viewWidth={windowWidth}
+          viewHeight={windowHeight}
+          onTap={toggleOverlays}
+          onZoomChange={handleZoomChange}
+        />
+      </View>
+    );
+  }, [toggleOverlays, handleZoomChange, windowWidth, windowHeight]);
 
   if (!visible || photos.length === 0) return null;
 
@@ -521,12 +571,18 @@ const FullScreenGalleryModal = React.memo(({
   // Absolute overlay (NOT RN Modal): power menu Modal can stack on top without
   // tearing down / flickering this image surface.
   return (
-    <View style={styles.fullScreenOverlayRoot} pointerEvents="box-none">
+    <View
+      style={styles.fullScreenOverlayRoot}
+      pointerEvents="box-none"
+      onTouchStart={notifyUserActivity}
+      onTouchMove={notifyUserActivity}
+    >
       <GestureHandlerRootView style={styles.fullScreenModalBackground}>
 
         <View style={styles.gestureContainer}>
           <GHFlatList
             ref={flatListRef}
+            style={styles.pagerList}
             data={photos}
             keyExtractor={(item) => normalizePhotoPath(item)}
             renderItem={renderItem}
@@ -539,7 +595,7 @@ const FullScreenGalleryModal = React.memo(({
             onViewableItemsChanged={onViewableItemsChanged}
             viewabilityConfig={viewabilityConfig}
             decelerationRate="fast"
-            snapToInterval={width}
+            snapToInterval={windowWidth}
             snapToAlignment="start"
             disableIntervalMomentum
             scrollEventThrottle={16}
@@ -667,14 +723,14 @@ const styles = StyleSheet.create({
   gestureContainer: {
     flex: 1,
   },
-  fullScreenPage: {
-    width,
-    height: screenHeight,
+  pagerList: {
+    flex: 1,
   },
   fullScreenOverlayRoot: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 2000,
     elevation: 2000,
+    backgroundColor: PRIMARY_BACKGROUND,
   },
   fullScreenModalBackground: {
     flex: 1,

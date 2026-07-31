@@ -36,18 +36,33 @@ import android.graphics.Paint;
 import android.graphics.Rect;
 import android.bluetooth.BluetoothSocket;
 import android.app.Activity;
+import android.os.Handler;
+import android.os.Looper;
+import java.util.concurrent.atomic.AtomicReference;
 import java.io.OutputStream;
 import java.io.InputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class BluetoothModule extends ReactContextBaseJavaModule {
 
     private final ConcurrentHashMap<String, CountDownLatch> pendingBondLatches = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Boolean> pendingBondResults = new ConcurrentHashMap<>();
+    /** When true, intercept system pairing UI and auto-confirm — no app/system pair-request dialog. */
+    private final AtomicBoolean appInitiatedPairing = new AtomicBoolean(false);
+    /** Never block the main thread with su/waitFor during pairing. */
+    private final ExecutorService pairingExecutor = Executors.newSingleThreadExecutor();
+    /** Address of the bond we started, so unrelated bond events do not clear our state. */
+    private final AtomicReference<String> pairingAddress = new AtomicReference<>(null);
+    /** Hidden BluetoothDevice.PAIRING_VARIANT_CONSENT — "just works" pairing. */
+    private static final int PAIRING_VARIANT_CONSENT = 3;
+    private static final long BOND_WAIT_SECONDS = 60L;
 
     BluetoothModule(ReactApplicationContext context) {
         super(context);
@@ -58,13 +73,15 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
         super.initialize();
         try {
             IntentFilter filter = new IntentFilter();
-            // filter.setPriority(IntentFilter.SYSTEM_HIGH_PRIORITY);
+            filter.setPriority(IntentFilter.SYSTEM_HIGH_PRIORITY);
             filter.addAction(BluetoothDevice.ACTION_FOUND);
+            filter.addAction(BluetoothDevice.ACTION_NAME_CHANGED);
+            filter.addAction(BluetoothAdapter.ACTION_DISCOVERY_STARTED);
             filter.addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
             filter.addAction(BluetoothDevice.ACTION_ACL_CONNECTED);
             filter.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED);
             filter.addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
-            // filter.addAction(BluetoothDevice.ACTION_PAIRING_REQUEST);
+            filter.addAction(BluetoothDevice.ACTION_PAIRING_REQUEST);
             getReactApplicationContext().registerReceiver(bluetoothReceiver, filter);
         } catch (Exception e) {
             e.printStackTrace();
@@ -85,21 +102,36 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
         @Override
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
-            if (BluetoothDevice.ACTION_FOUND.equals(action)) {
+            if (BluetoothDevice.ACTION_FOUND.equals(action)
+                    || BluetoothDevice.ACTION_NAME_CHANGED.equals(action)) {
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
                 if (device != null) {
                     try {
+                        // getName() is often null on the first broadcast; the intent carries
+                        // the name as soon as the remote device reports it.
+                        String name = intent.getStringExtra(BluetoothDevice.EXTRA_NAME);
+                        if (name == null || name.trim().isEmpty()) {
+                            name = device.getName();
+                        }
+
                         WritableMap map = Arguments.createMap();
-                        map.putString("name", device.getName() != null ? device.getName() : "Unknown Device");
+                        map.putString("name", name != null ? name : "");
                         map.putString("address", device.getAddress());
 
+                        String event = BluetoothDevice.ACTION_NAME_CHANGED.equals(action)
+                                ? "onBluetoothDeviceNameChanged"
+                                : "onBluetoothDeviceFound";
                         getReactApplicationContext()
                                 .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                                .emit("onBluetoothDeviceFound", map);
+                                .emit(event, map);
                     } catch (SecurityException e) {
                         // Silently handle
                     }
                 }
+            } else if (BluetoothAdapter.ACTION_DISCOVERY_STARTED.equals(action)) {
+                getReactApplicationContext()
+                        .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                        .emit("onBluetoothDiscoveryStarted", null);
             } else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)) {
                 getReactApplicationContext()
                         .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
@@ -134,6 +166,35 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
                         // Silently handle
                     }
                 }
+            } else if (BluetoothDevice.ACTION_PAIRING_REQUEST.equals(action)) {
+                BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+                if (device == null) return;
+                if (!appInitiatedPairing.get()) return;
+
+                int variant = intent.getIntExtra(BluetoothDevice.EXTRA_PAIRING_VARIANT, -1);
+                boolean autoConfirmable = variant == BluetoothDevice.PAIRING_VARIANT_PASSKEY_CONFIRMATION
+                        || variant == PAIRING_VARIANT_CONSENT;
+
+                boolean confirmed = false;
+                if (autoConfirmable) {
+                    try {
+                        // Fast binder call; only works on privileged builds. Never run
+                        // su/waitFor here — that blocked the main thread and caused ANRs.
+                        confirmed = device.setPairingConfirmation(true);
+                    } catch (Throwable t) {
+                        confirmed = false;
+                    }
+                }
+
+                if (confirmed) {
+                    try {
+                        abortBroadcast();
+                    } catch (Exception ignored) {
+                    }
+                }
+                // If we could not confirm, let the system pairing dialog through. Swallowing
+                // it left the bond unanswered until Android timed out and cancelled it.
+                // Do not reapply lock-task here — fighting the pairing overlay causes black screens.
             } else if (BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(action)) {
                 int state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR);
                 int prevState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.ERROR);
@@ -141,9 +202,12 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
 
                 if (device != null) {
                     String address = device.getAddress();
+                    String pairing = pairingAddress.get();
+                    boolean isOurBond = pairing == null || pairing.equalsIgnoreCase(address);
 
-                    if (state == BluetoothDevice.BOND_BONDED
-                            || state == BluetoothDevice.BOND_NONE) {
+                    if (isOurBond && (state == BluetoothDevice.BOND_BONDED || state == BluetoothDevice.BOND_NONE)) {
+                        appInitiatedPairing.set(false);
+                        pairingAddress.set(null);
                         Activity activity = getCurrentActivity();
                         if (activity != null) {
                             MainActivity.stopImmersiveKioskWatchdog(activity);
@@ -158,7 +222,9 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
                         map.putBoolean("bonded", true);
                         getReactApplicationContext().getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
                                 .emit("onBluetoothBondStateChanged", map);
-                    } else if (state == BluetoothDevice.BOND_NONE && prevState == BluetoothDevice.BOND_BONDING) {
+                    } else if (state == BluetoothDevice.BOND_NONE && prevState != BluetoothDevice.BOND_BONDED) {
+                        // Includes BOND_BONDING -> BOND_NONE (rejected / timed out) and builds
+                        // that report an unknown previous state.
                         completeBondWait(address, false);
                         WritableMap map = Arguments.createMap();
                         map.putString("address", address);
@@ -241,17 +307,32 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
     @ReactMethod
     public void startBluetoothScan(com.facebook.react.bridge.Promise promise) {
         try {
-            BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+            final BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
             if (adapter == null) {
                 promise.reject("BLUETOOTH_ERROR", "Bluetooth not supported");
                 return;
             }
-            if (adapter.isDiscovering()) {
-                adapter.cancelDiscovery();
+            if (!adapter.isEnabled()) {
+                promise.reject("BT_DISABLED", "Bluetooth is turned off");
+                return;
             }
 
-            adapter.startDiscovery();
-            promise.resolve(true);
+            if (adapter.isDiscovering()) {
+                adapter.cancelDiscovery();
+                // cancelDiscovery() is asynchronous — starting immediately makes the
+                // adapter drop the new scan, so no devices are ever reported.
+                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                    try {
+                        adapter.startDiscovery();
+                    } catch (Exception ignored) {
+                    }
+                }, 400);
+                promise.resolve(true);
+                return;
+            }
+
+            boolean started = adapter.startDiscovery();
+            promise.resolve(started);
         } catch (SecurityException e) {
             promise.reject("BT_PERMISSION", "BLUETOOTH_SCAN permission required", e);
         } catch (Exception e) {
@@ -314,31 +395,51 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
                     activity.runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            MainActivity.startImmersiveKioskWatchdog(activity, 120_000L);
-                            MainActivity.reapplyFullKiosk(activity);
+                            if (device.getBondState() == BluetoothDevice.BOND_BONDED) {
+                                promise.resolve(true);
+                                return;
+                            }
 
-                            // Discovery Hack to refresh Bluetooth stack state
+                            appInitiatedPairing.set(true);
+                            pairingAddress.set(address);
+                            // Pause kiosk lock-task so system pairing UI can appear without black screens.
+                            MainActivity.stopImmersiveKioskWatchdog(activity);
+                            try {
+                                activity.stopLockTask();
+                            } catch (Exception ignored) {
+                            }
+
+                            // Discovery keeps the radio busy and makes bonding slow enough to
+                            // time out — stop it and give the adapter a moment to settle.
                             try {
                                 if (adapter.isDiscovering()) {
                                     adapter.cancelDiscovery();
                                 }
-                                adapter.startDiscovery();
-                                adapter.cancelDiscovery();
                             } catch (SecurityException ignored) {
                             }
 
-                            try {
-                                boolean success = device.createBond();
-                                if (success) {
-                                    promise.resolve(true);
-                                } else {
+                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                try {
+                                    if (device.getBondState() == BluetoothDevice.BOND_BONDING
+                                            || device.getBondState() == BluetoothDevice.BOND_BONDED) {
+                                        promise.resolve(true);
+                                        return;
+                                    }
+                                    if (device.createBond()) {
+                                        promise.resolve(true);
+                                    } else {
+                                        appInitiatedPairing.set(false);
+                                        pairingAddress.set(null);
+                                        MainActivity.reapplyFullKiosk(activity);
+                                        promise.reject("PAIR_ERROR", "Failed to start bonding");
+                                    }
+                                } catch (Exception e) {
+                                    appInitiatedPairing.set(false);
+                                    pairingAddress.set(null);
                                     MainActivity.reapplyFullKiosk(activity);
-                                    promise.reject("PAIR_ERROR", "Failed to start bonding");
+                                    promise.reject("PAIR_ERROR", e.getMessage());
                                 }
-                            } catch (Exception e) {
-                                MainActivity.reapplyFullKiosk(activity);
-                                promise.reject("PAIR_ERROR", e.getMessage());
-                            }
+                            }, 350);
                         }
                     });
                 } else {
@@ -399,99 +500,68 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
         }
     }
 
+    /**
+     * Confirms or rejects an in-flight pairing request.
+     *
+     * Only the documented API is used. Blind "service call bluetooth <code>"
+     * transactions were previously attempted as a root fallback, but those
+     * transaction ids differ per Android version and frequently landed on
+     * cancelBondProcess/removeBond — silently aborting the pairing instead.
+     */
     @ReactMethod
     public void confirmPairing(String address, boolean confirm, com.facebook.react.bridge.Promise promise) {
+        pairingExecutor.execute(() -> {
+            try {
+                BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+                BluetoothDevice device = adapter != null ? adapter.getRemoteDevice(address) : null;
+                if (device == null) {
+                    promise.reject("ERROR", "Device not found");
+                    return;
+                }
+                if (confirm) {
+                    promise.resolve(device.setPairingConfirmation(true));
+                } else {
+                    promise.resolve(cancelBondProcess(device));
+                }
+            } catch (SecurityException e) {
+                promise.reject("BT_NOT_PRIVILEGED", "Pairing must be confirmed on screen", e);
+            } catch (Exception e) {
+                promise.reject("ERROR", e.getMessage());
+            }
+        });
+    }
+
+    /** Aborts a bond that is still in progress, e.g. after a JS-side timeout. */
+    @ReactMethod
+    public void cancelPairing(String address, com.facebook.react.bridge.Promise promise) {
         try {
             BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
-            BluetoothDevice device = adapter.getRemoteDevice(address);
-            if (device != null) {
-                try {
-                    device.setPairingConfirmation(confirm);
-                    promise.resolve(true);
-                } catch (SecurityException e) {
-                    // Standard method failed, try root-based input simulation
-                    if (confirm) {
-                        confirmPairingViaRoot(address);
-                    } else {
-                        cancelPairingViaRoot(address);
-                    }
-                    promise.resolve(true);
-                }
-            } else {
-                promise.reject("ERROR", "Device not found");
+            BluetoothDevice device = adapter != null ? adapter.getRemoteDevice(address) : null;
+            if (device == null) {
+                promise.resolve(false);
+                return;
             }
+            appInitiatedPairing.set(false);
+            pairingAddress.set(null);
+            boolean cancelled = device.getBondState() == BluetoothDevice.BOND_BONDING
+                    && cancelBondProcess(device);
+            Activity activity = getCurrentActivity();
+            if (activity != null) {
+                MainActivity.reapplyFullKiosk(activity);
+            }
+            promise.resolve(cancelled);
         } catch (Exception e) {
-            promise.reject("ERROR", e.getMessage());
+            promise.resolve(false);
         }
     }
 
-    private void confirmPairingViaRoot(String address) {
+    private boolean cancelBondProcess(BluetoothDevice device) {
         try {
-            Process process = Runtime.getRuntime().exec("su");
-            DataOutputStream os = new DataOutputStream(process.getOutputStream());
-            // Direct binder calls are much faster than UI automation
-            // We try common transaction codes for setPairingConfirmation(String address,
-            // boolean confirm)
-            // Android 11: 40, Android 12: 43, Android 13: 44, Android 14: 45
-            // s16 = String, i32 1 = true
-            os.writeBytes("service call bluetooth 40 s16 " + address + " i32 1\n");
-            os.writeBytes("service call bluetooth 43 s16 " + address + " i32 1\n");
-            os.writeBytes("service call bluetooth 44 s16 " + address + " i32 1\n");
-            os.writeBytes("service call bluetooth 45 s16 " + address + " i32 1\n");
-
-            // Fallback: If binder calls failed, try a quick keyevent
-            os.writeBytes("input keyevent KEYCODE_DPAD_RIGHT\n");
-            os.writeBytes("input keyevent KEYCODE_ENTER\n");
-
-            os.writeBytes("exit\n");
-            os.flush();
-            os.close();
-            process.waitFor();
-        } catch (IOException e) {
-            // su not found, fallback to standard keyevents if possible via 'sh'
-            try {
-                Process sh = Runtime.getRuntime().exec("sh");
-                DataOutputStream os = new DataOutputStream(sh.getOutputStream());
-                os.writeBytes("input keyevent KEYCODE_DPAD_RIGHT\n");
-                os.writeBytes("input keyevent KEYCODE_ENTER\n");
-                os.writeBytes("exit\n");
-                os.flush();
-                os.close();
-                sh.waitFor();
-            } catch (Exception ignored) {
-            }
+            Method m = device.getClass().getMethod("cancelBondProcess", (Class[]) null);
+            Object result = m.invoke(device, (Object[]) null);
+            return result instanceof Boolean ? (Boolean) result : true;
         } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    private void cancelPairingViaRoot(String address) {
-        try {
-            Process process = Runtime.getRuntime().exec("su");
-            DataOutputStream os = new DataOutputStream(process.getOutputStream());
-            os.writeBytes("service call bluetooth 40 s16 " + address + " i32 0\n");
-            os.writeBytes("service call bluetooth 43 s16 " + address + " i32 0\n");
-            os.writeBytes("service call bluetooth 44 s16 " + address + " i32 0\n");
-            os.writeBytes("service call bluetooth 45 s16 " + address + " i32 0\n");
-            os.writeBytes("input keyevent KEYCODE_ENTER\n");
-            os.writeBytes("exit\n");
-            os.flush();
-            os.close();
-            process.waitFor();
-        } catch (IOException e) {
-            // su not found, try fallback via 'sh'
-            try {
-                Process sh = Runtime.getRuntime().exec("sh");
-                DataOutputStream os = new DataOutputStream(sh.getOutputStream());
-                os.writeBytes("input keyevent KEYCODE_ENTER\n");
-                os.writeBytes("exit\n");
-                os.flush();
-                os.close();
-                sh.waitFor();
-            } catch (Exception ignored) {
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
+            return false;
         }
     }
 
@@ -633,22 +703,35 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
             if (activity != null) {
                 try {
                     activity.runOnUiThread(() -> {
-                        MainActivity.startImmersiveKioskWatchdog(activity, 120_000L);
-                        MainActivity.reapplyFullKiosk(activity);
+                        appInitiatedPairing.set(true);
+                        pairingAddress.set(address);
+                        MainActivity.stopImmersiveKioskWatchdog(activity);
+                        try {
+                            activity.stopLockTask();
+                        } catch (Exception ignored) {
+                        }
                     });
                 } catch (Exception ignored) {
                 }
+            } else {
+                appInitiatedPairing.set(true);
             }
 
             if (device.getBondState() == BluetoothDevice.BOND_NONE) {
                 device.createBond();
             }
 
-            latch.await(90, TimeUnit.SECONDS);
+            latch.await(BOND_WAIT_SECONDS, TimeUnit.SECONDS);
             return device.getBondState() == BluetoothDevice.BOND_BONDED;
         } finally {
+            appInitiatedPairing.set(false);
+            pairingAddress.set(null);
             pendingBondLatches.remove(address);
             pendingBondResults.remove(address);
+            Activity activity = getCurrentActivity();
+            if (activity != null) {
+                MainActivity.reapplyFullKiosk(activity);
+            }
         }
     }
 

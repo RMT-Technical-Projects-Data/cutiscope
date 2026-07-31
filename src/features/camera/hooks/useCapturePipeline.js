@@ -33,6 +33,7 @@ export function useCapturePipeline({
           username: job.username,
           userData: job.userCtx,
           currentBox: job.boxCtx,
+          captureSeq: job.captureSeq,
         });
       } catch (e) {
         console.warn('registerAndEnqueue failed:', e?.message || e);

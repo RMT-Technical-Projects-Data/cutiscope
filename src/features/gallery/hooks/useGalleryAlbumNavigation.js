@@ -165,7 +165,9 @@ const useGalleryAlbumNavigation = ({
   }, []);
 
   // Drop previous session UI when switching user ↔ guest.
+  // Skip empty/logout owner keys so inactivity logout does not flash "No photos found".
   useEffect(() => {
+    if (!galleryOwnerKey) return;
     if (galleryOwnerKeyRef.current === galleryOwnerKey) return;
     galleryOwnerKeyRef.current = galleryOwnerKey;
     setAlbumPath([]);

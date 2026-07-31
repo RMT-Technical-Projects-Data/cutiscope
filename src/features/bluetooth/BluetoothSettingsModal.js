@@ -68,6 +68,8 @@ const BluetoothSettingsModal = ({ visible, onClose }) => {
 
   useEffect(() => {
     if (!visible) return undefined;
+    // Pause lock-task hammering while a bond is in progress.
+    if (connectingAddress) return undefined;
     let cancelled = false;
     const reapply = () => {
       if (cancelled) return;

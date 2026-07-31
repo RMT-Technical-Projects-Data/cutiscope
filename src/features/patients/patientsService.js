@@ -75,6 +75,25 @@ export async function getPatients() {
 }
 
 /**
+ * If the locally selected patient still exists on the server but its name (or
+ * other display fields) changed on the web portal, return the fresh { id, name }.
+ * Returns null when unchanged, missing selection, or fetch fails.
+ */
+export async function reconcileSelectedPatient(current) {
+  if (!current?.id) return null;
+  try {
+    const list = await getPatients();
+    const match = list.find((p) => String(p.id) === String(current.id));
+    if (!match) return null;
+    if (String(match.name || '') === String(current.name || '')) return null;
+    return { id: String(match.id), name: String(match.name || '') };
+  } catch (e) {
+    console.warn('reconcileSelectedPatient failed:', e?.message || e);
+    return null;
+  }
+}
+
+/**
  * Create a patient in the backend (patients table).
  * Sends POST /api/patients with { name }. Backend assigns next id.
  * Optional { id } for backward compat; if omitted backend uses next available.

@@ -63,6 +63,7 @@ import PowerOffModal from '../device/PowerOffModal';
 import PatientBoxModal from '../patients/patientSelectModal';
 import StandbyModal from '../device/StandbyModal';
 import BodyPartModal from '../patients/BodyPartModal';
+import { reconcileSelectedPatient } from '../patients/patientsService';
 
 import TitleImg from '../../../assets/dscope-app.png';
 import VolumeManager from 'react-native-volume-manager';
@@ -120,6 +121,8 @@ const CameraScreen = ({ navigation }) => {
 
   // ========== PATIENT / BOX (images saved to folder with this ID and name) ==========
   const [currentBox, setCurrentBox] = useState({ id: '', name: '' });
+  const currentBoxRef = useRef(currentBox);
+  currentBoxRef.current = currentBox;
   const [patientBoxModalVisible, setPatientBoxModalVisible] = useState(false);
   const [bodyPart, setBodyPart] = useState('');
   const [bodyPartModalVisible, setBodyPartModalVisible] = useState(false);
@@ -139,6 +142,40 @@ const CameraScreen = ({ navigation }) => {
       }
     })();
   }, []);
+
+  // Keep selected patient in sync with portal edits (same id, updated name → new folder).
+  const syncSelectedPatientFromServer = useCallback(async () => {
+    if (isGuest) return;
+    const box = currentBoxRef.current;
+    if (!box?.id) return;
+    try {
+      const updated = await reconcileSelectedPatient(box);
+      if (!updated) return;
+      setCurrentBox(updated);
+      await AsyncStorage.setItem('@patient_box', JSON.stringify(updated));
+      console.log('Synced patient from portal:', updated.id, updated.name);
+    } catch (e) {
+      console.warn('Patient sync failed:', e?.message || e);
+    }
+  }, [isGuest]);
+
+  // When patient picker opens, refresh selected patient from server immediately.
+  useEffect(() => {
+    if (patientBoxModalVisible && !isGuest) {
+      syncSelectedPatientFromServer();
+    }
+  }, [patientBoxModalVisible, isGuest, syncSelectedPatientFromServer]);
+
+  // While camera is open, periodically pull portal renames so new captures
+  // use the updated {id}__{name} folder without requiring a manual re-tap.
+  useEffect(() => {
+    if (!isFocused || isGuest) return undefined;
+    syncSelectedPatientFromServer();
+    const intervalId = setInterval(() => {
+      syncSelectedPatientFromServer();
+    }, 30000);
+    return () => clearInterval(intervalId);
+  }, [isFocused, isGuest, syncSelectedPatientFromServer]);
 
   // ========== STANDBY TIMEOUT ==========
   const INACTIVITY_STANDBY_MS = 120000;
@@ -1180,11 +1217,13 @@ const CameraScreen = ({ navigation }) => {
       // Refresh gallery icon when screen comes into focus
       console.log('CameraScreen focused - refreshing gallery icon');
       loadImage();
+      // Pull latest patient name from server so portal renames apply before next capture.
+      syncSelectedPatientFromServer();
 
       return () => {
         // Optional cleanup
       };
-    }, [loadImage])
+    }, [loadImage, syncSelectedPatientFromServer])
   );
 
   // After guest/user switch, reload thumb for the new base path.
@@ -1421,7 +1460,7 @@ const CameraScreen = ({ navigation }) => {
     resetInactivityTimer();
     if (isCapturingRef.current) {
       if (Platform.OS === 'android') {
-        showInAppToast('Please wait, saving photo...', { durationMs: 2000, position: 'center' });
+        showInAppToast(UserMessages.photoSaveInProgress, { durationMs: 2000, position: 'center' });
       }
       return;
     }
@@ -1438,7 +1477,12 @@ const CameraScreen = ({ navigation }) => {
 
   const handleGalleryPress = () => {
     resetInactivityTimer();
-    // Never block gallery open on capture — photos are already on disk (instant save).
+    if (isCapturingRef.current || isPhotoSavePending?.()) {
+      if (Platform.OS === 'android') {
+        showInAppToast(UserMessages.photoSaveInProgress, { durationMs: 2000, position: 'center' });
+      }
+      return;
+    }
     ignoreKeysRef.current = true;
     console.log('🖼️ Going to Gallery screen');
 
@@ -1602,6 +1646,7 @@ const CameraScreen = ({ navigation }) => {
     handleCapturePress,
     startContinuousCapture,
     stopContinuousCapture,
+    isPhotoSavePending,
   } = useCameraCapture({
     cameraRef,
     device,
@@ -2022,7 +2067,19 @@ const CameraScreen = ({ navigation }) => {
                 id: String(patient.id || ''),
                 name: String(patient.name || ''),
               };
+              // Don't drop patient while an in-flight capture still needs the association
+              // for UI — job already snapshotted, but clearing confuses users mid-save.
+              if (!next.id && isPhotoSavePending?.()) {
+                if (Platform.OS === 'android') {
+                  showInAppToast(UserMessages.photoSaveInProgress, {
+                    durationMs: 2000,
+                    position: 'center',
+                  });
+                }
+                return;
+              }
               setCurrentBox(next);
+              currentBoxRef.current = next;
               await AsyncStorage.setItem('@patient_box', JSON.stringify(next));
             } catch (e) {
               console.warn('Save patient box:', e);

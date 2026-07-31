@@ -65,6 +65,8 @@ export function useCameraCapture({
   // Dermascope is fixed to the phone; ignore device tilt so we never rotate
   // landscape-left / landscape-right captures (that was inverting the image).
   const FORCE_PORTRAIT_NO_DEVICE_TILT_ROTATION = true;
+  /** In-flight stage/enqueue jobs — Gallery must wait until these finish. */
+  const pendingStageCountRef = useRef(0);
 
   const saveDebugCaptureImage = async (sourcePath, label, debugTs, orientation = null) => {
     if (!DEBUG_SAVE_CAPTURE_PAIR) return null;
@@ -363,7 +365,7 @@ export function useCameraCapture({
         directory: savedDirectory,
         timestamp: new Date(),
         mtime: new Date().toISOString(),
-        uploadStatus: 'PENDING',
+        uploadStatus: job.isGuest ? 'LOCAL' : 'PENDING',
         hasScale: true,
         imageVersion: Date.now(),
         captureSeq: job.captureSeq,
@@ -432,7 +434,7 @@ export function useCameraCapture({
           directory: savedDirectory,
           timestamp: new Date(),
           mtime: new Date().toISOString(),
-          uploadStatus: 'PENDING',
+          uploadStatus: job.isGuest ? 'LOCAL' : 'PENDING',
           hasScale: true,
           imageVersion: Date.now(),
           captureSeq: job.captureSeq,
@@ -510,9 +512,20 @@ export function useCameraCapture({
       clearTimeout(timeoutRef.current);
     }
 
+    // Snapshot patient/body-part BEFORE takePhoto — clearing selection during the
+    // async shutter must not orphan the save or drop patient association.
+    const boxSnap = currentBox?.id
+      ? { id: currentBox.id, name: currentBox.name }
+      : null;
+    const bodyPartSnap = bodyPart;
+    const userSnap = userData ? { id: userData.id, username: userData.username } : null;
+    const guestSnap = isGuest;
+    const zoomSnap = zoomBtnValue;
+    const usernameSnap = isGuest ? '' : getUsername();
+
     // For logged-in users: require a selected patient box before capturing.
     // Guests can always capture without selecting a patient.
-    if (!isGuest && !currentBox?.id) {
+    if (!guestSnap && !boxSnap?.id) {
       if (Platform.OS === 'android') {
         showInAppToast('Please select a patient to capture image', { durationMs: 2000, position: 'center' });
       }
@@ -520,7 +533,7 @@ export function useCameraCapture({
     }
 
     // Also require a selected body part
-    if (!isGuest && !bodyPart) {
+    if (!guestSnap && !bodyPartSnap) {
       if (Platform.OS === 'android') {
         showInAppToast('Please select Patients body part to capture image', { durationMs: 2000, position: 'center' });
       }
@@ -528,7 +541,7 @@ export function useCameraCapture({
     }
 
     const now = Date.now();
-    const throttleMs = isGuest ? CAPTURE_THROTTLE_MS_GUEST : CAPTURE_THROTTLE_MS_LOGGED_IN;
+    const throttleMs = guestSnap ? CAPTURE_THROTTLE_MS_GUEST : CAPTURE_THROTTLE_MS_LOGGED_IN;
     if (isCapturingRef.current || (now - lastCaptureTimeRef.current < throttleMs)) {
       return false;
     }
@@ -589,22 +602,15 @@ export function useCameraCapture({
         const ms = String(stamp.getMilliseconds()).padStart(3, '0');
 
         const captureSeq = ++latestCaptureSeqRef.current;
-        const fileName = currentBox?.id
-          ? `Cutiscope_${currentBox.id}_${year}${month}${day}_${hours}${minutes}${seconds}${ms}_${captureSeq}.jpg`
+        const fileName = boxSnap?.id
+          ? `Cutiscope_${boxSnap.id}_${year}${month}${day}_${hours}${minutes}${seconds}${ms}_${captureSeq}.jpg`
           : `Cutiscope_${year}${month}${day}_${hours}${minutes}${seconds}${ms}_${captureSeq}.jpg`;
 
-        // Snapshot UI context now — background work must not depend on later selection changes.
-        const boxSnap = currentBox ? { id: currentBox.id, name: currentBox.name } : null;
-        const userSnap = userData ? { id: userData.id, username: userData.username } : null;
-        const guestSnap = isGuest;
-        const zoomSnap = zoomBtnValue;
-        const bodyPartSnap = bodyPart;
         // Dermascope + UI are portrait-locked. Never pass device-tilt orientations
         // (landscape-left/right) into processing — that was inverting captures.
         const orientationSnap = FORCE_PORTRAIT_NO_DEVICE_TILT_ROTATION
           ? 'portrait'
           : photo.orientation;
-        const usernameSnap = isGuest ? '' : getUsername();
 
         if (!guestSnap) {
           if (boxSnap?.id) recordPhotoCapture(boxSnap.id);
@@ -617,6 +623,7 @@ export function useCameraCapture({
         // Stage raw + enqueue watermark. Gallery gets a pending album hint immediately
         // so Camera → Gallery never shows "No photos found" during burst.
         // Camera thumb updates on every click (staged), then upgrades to final DCIM.
+        pendingStageCountRef.current += 1;
         (async () => {
           const ownerKey = getGalleryOwnerKey({
             isGuest: guestSnap,
@@ -719,6 +726,8 @@ export function useCameraCapture({
             } catch (fallbackErr) {
               console.error('Capture fallback also failed:', fallbackErr);
             }
+          } finally {
+            pendingStageCountRef.current = Math.max(0, pendingStageCountRef.current - 1);
           }
         })();
 
@@ -777,10 +786,14 @@ export function useCameraCapture({
   }, [isFocused]);
 
 
+  const isPhotoSavePending = () =>
+    isCapturingRef.current || pendingStageCountRef.current > 0;
+
   return {
     handleCapturePress,
     startContinuousCapture,
     stopContinuousCapture,
     handleCapturePressRef,
+    isPhotoSavePending,
   };
 }

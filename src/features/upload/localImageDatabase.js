@@ -74,6 +74,7 @@ export const saveImage = async (params) => {
     createdAt: params.createdAt || new Date().toISOString(),
     uploadStatus: params.uploadStatus || UPLOAD_STATUS.PENDING,
     awsUrl: params.awsUrl || null,
+    captureSeq: params.captureSeq != null ? Number(params.captureSeq) : null,
   };
 
   if (UploadQueueNative.isAvailable()) {

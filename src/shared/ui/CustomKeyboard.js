@@ -1,7 +1,8 @@
 import React, { useState, useCallback, memo, useRef, useEffect } from 'react';
-import { View, Text, Pressable, StyleSheet, Vibration, DeviceEventEmitter } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Vibration } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useCustomKeyboard } from './CustomKeyboardContext';
+import { notifyUserActivity } from '../utils/inAppToast';
 
 const KEY_HAPTIC_MS = 3;
 
@@ -36,7 +37,7 @@ const Key = memo(function Key({ label, onPress, style, size = 'normal', labelSty
   onPressRef.current = onPress;
   const handlePress = useCallback(() => {
     onPressRef.current();
-    DeviceEventEmitter.emit('userActivity');
+    notifyUserActivity();
     setImmediate(() => Vibration.vibrate(KEY_HAPTIC_MS));
   }, []);
   return (
@@ -75,13 +76,13 @@ const BackspaceKey = memo(function BackspaceKey({ onBackspace, style, iconSize =
 
   const handlePressIn = useCallback(() => {
     onBackspaceRef.current();
-    DeviceEventEmitter.emit('userActivity');
+    notifyUserActivity();
     setImmediate(() => Vibration.vibrate(KEY_HAPTIC_MS));
     repeatTimerRef.current = setTimeout(() => {
       repeatTimerRef.current = null;
       repeatIntervalRef.current = setInterval(() => { 
         onBackspaceRef.current(); 
-        DeviceEventEmitter.emit('userActivity');
+        notifyUserActivity();
       }, BACKSPACE_REPEAT_INTERVAL_MS);
     }, BACKSPACE_REPEAT_DELAY_MS);
   }, []);
@@ -114,7 +115,7 @@ const CapsKey = memo(function CapsKey({ capsState, onPress, style }) {
                   :                          '#22B2A6'; // LOCK = accent
 
   const handlePress = useCallback(() => {
-    DeviceEventEmitter.emit('userActivity');
+    notifyUserActivity();
     setImmediate(() => Vibration.vibrate(KEY_HAPTIC_MS));
     onPress();
   }, [onPress]);
@@ -222,7 +223,7 @@ function CustomKeyboard({ onKeyPressFeedback, localHost = false }) {
             <Pressable
               style={({ pressed }) => [styles.key, styles.keyEnter, pressed && styles.keyPressed]}
               onPress={() => {
-                DeviceEventEmitter.emit('userActivity');
+                notifyUserActivity();
                 setImmediate(() => Vibration.vibrate(KEY_HAPTIC_MS));
                 submitEditing();
               }}
@@ -260,7 +261,7 @@ function CustomKeyboard({ onKeyPressFeedback, localHost = false }) {
             <Pressable
               style={({ pressed }) => [styles.key, styles.keyEnter, pressed && styles.keyPressed]}
               onPress={() => {
-                DeviceEventEmitter.emit('userActivity');
+                notifyUserActivity();
                 setImmediate(() => Vibration.vibrate(KEY_HAPTIC_MS));
                 submitEditing();
               }}

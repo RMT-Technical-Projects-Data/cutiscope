@@ -12,10 +12,11 @@ import {
   Animated,
   BackHandler,
   ToastAndroid,
+  PermissionsAndroid,
 } from 'react-native';
 import ToggleSwitch from 'toggle-switch-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { showInAppToast } from '../../shared/utils/inAppToast';
+import { showInAppToast, notifyUserActivity, setSessionIdleHold } from '../../shared/utils/inAppToast';
 import { BackButton } from '../../shared/ui';
 import CustomStatusBar, {
   suppressAppStatusBar,
@@ -55,6 +56,10 @@ const BluetoothShareModal = ({
   const toastOpacity = useRef(new Animated.Value(0)).current;
   const toastTranslateY = useRef(new Animated.Value(6)).current;
   const toastHideTimerRef = useRef(null);
+  const scanTimeoutRef = useRef(null);
+  const rescanTimerRef = useRef(null);
+  // Discovery must never run during pairing/transfer — it starves the radio.
+  const canScanRef = useRef(false);
 
   // Full-screen share has its own status bar — hide the App-level one.
   useEffect(() => {
@@ -63,9 +68,11 @@ const BluetoothShareModal = ({
     return () => releaseAppStatusBar();
   }, [visible]);
 
-  // Keep immersive kiosk while Bluetooth share / pairing UI is open (no nav gesture bar).
+  // Keep immersive kiosk while Bluetooth share UI is open — pause during pairing
+  // so the system bond dialog is not fought by lock-task reapply.
   useEffect(() => {
     if (!visible) return undefined;
+    if (sharePhase === 'pairing') return undefined;
     let cancelled = false;
     const reapply = () => {
       if (cancelled) return;
@@ -76,6 +83,21 @@ const BluetoothShareModal = ({
     return () => {
       cancelled = true;
       clearInterval(interval);
+    };
+  }, [visible, sharePhase]);
+
+  // Freeze session inactivity while share / pairing / transfer is in progress.
+  useEffect(() => {
+    if (!visible) {
+      setSessionIdleHold(false);
+      return undefined;
+    }
+    setSessionIdleHold(true);
+    notifyUserActivity();
+    const keepAlive = setInterval(notifyUserActivity, 5000);
+    return () => {
+      clearInterval(keepAlive);
+      setSessionIdleHold(false);
     };
   }, [visible, sharePhase]);
 
@@ -134,42 +156,56 @@ const BluetoothShareModal = ({
 
   // Load Bluetooth State and check permissions on open
   useEffect(() => {
-    if (visible) {
-      // Temporarily exit Kiosk mode to permit standard Bluetooth activities / sharing intents
-      // KioskMode.stopKioskMode()
-      //   .then(() => console.log('[BluetoothShareModal] Kiosk Mode stopped successfully'))
-      //   .catch(err => console.warn('[BluetoothShareModal] Failed to stop Kiosk Mode', err));
-
-      checkAndActivateBluetooth();
-
-      // Fetch device serial number
-      AsyncStorage.getItem('serial_number')
-        .then(sn => setSerialNumber(sn || ''))
-        .catch(err => console.warn('[BluetoothShareModal] Failed to load serial number:', err));
-    } else {
+    if (!visible) {
       stopScan();
+      return undefined;
     }
+
+    checkAndActivateBluetooth();
+
+    AsyncStorage.getItem('serial_number')
+      .then(sn => setSerialNumber(sn || ''))
+      .catch(err => console.warn('[BluetoothShareModal] Failed to load serial number:', err));
+
+    // Leaving the screen must stop discovery — an orphaned scan keeps the radio
+    // busy and makes the next pairing attempt fail.
+    return () => {
+      stopScan();
+    };
   }, [visible]);
 
   // Bluetooth event listeners
   useEffect(() => {
     if (!visible) return;
 
-    const foundSub = DeviceEventEmitter.addListener('onBluetoothDeviceFound', (device) => {
-      if (!device.name || device.name.trim() === '' || device.name === 'Unknown Device') return;
-      setScannedDevices(prev => {
-        if (!pairedDevices.find(d => d.address === device.address) &&
-          !prev.find(d => d.address === device.address)) {
-          return [...prev, device];
+    // Discovery reports the same device repeatedly and often supplies the friendly
+    // name only on a later broadcast — upsert by address instead of dropping it.
+    const upsertDevice = (device) => {
+      if (!device?.address) return;
+      setScannedDevices((prev) => {
+        const index = prev.findIndex((d) => d.address === device.address);
+        const name = device.name && device.name.trim() ? device.name.trim() : '';
+        if (index === -1) {
+          return [...prev, { address: device.address, name }];
         }
-        return prev;
+        if (!name || prev[index].name === name) return prev;
+        const next = prev.slice();
+        next[index] = { ...next[index], name };
+        return next;
       });
-    });
+    };
 
+    const foundSub = DeviceEventEmitter.addListener('onBluetoothDeviceFound', upsertDevice);
+    const nameSub = DeviceEventEmitter.addListener('onBluetoothDeviceNameChanged', upsertDevice);
 
-
+    // Android discovery only runs ~12s. Keep cycling it so a phone that is put
+    // into "discoverable" mode after the screen was opened still shows up.
     const finishSub = DeviceEventEmitter.addListener('onBluetoothDiscoveryFinished', () => {
       setIsScanning(false);
+      if (rescanTimerRef.current) clearTimeout(rescanTimerRef.current);
+      rescanTimerRef.current = setTimeout(() => {
+        if (canScanRef.current) startScan({ reset: false });
+      }, 2000);
     });
 
     const bondSub = DeviceEventEmitter.addListener('onBluetoothBondStateChanged', (event) => {
@@ -180,10 +216,22 @@ const BluetoothShareModal = ({
 
     return () => {
       foundSub.remove();
+      nameSub.remove();
       finishSub.remove();
       bondSub.remove();
+      if (rescanTimerRef.current) clearTimeout(rescanTimerRef.current);
     };
-  }, [visible, pairedDevices]);
+  }, [visible]);
+
+  // Auto-rescan is only safe while the screen is open, Bluetooth is on and no
+  // pairing/transfer is running.
+  useEffect(() => {
+    canScanRef.current = visible && bluetoothEnabled && !sharingAddress;
+    if (!canScanRef.current && rescanTimerRef.current) {
+      clearTimeout(rescanTimerRef.current);
+      rescanTimerRef.current = null;
+    }
+  }, [visible, bluetoothEnabled, sharingAddress]);
 
   useEffect(() => {
     if (!visible) return;
@@ -204,37 +252,34 @@ const BluetoothShareModal = ({
   }, [visible]);
 
   const requestPermissions = async () => {
-    if (Platform.OS === 'android') {
-      try {
-        const permissions = [
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        ];
-        if (Platform.Version >= 31) {
-          permissions.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN);
-          permissions.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT);
-        }
-        const granted = await PermissionsAndroid.requestMultiple(permissions);
-
-        const fineLocGranted = granted[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] === PermissionsAndroid.RESULTS.GRANTED;
-        if (Platform.Version >= 31) {
-          const scanGranted = granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN] === PermissionsAndroid.RESULTS.GRANTED;
-          const connectGranted = granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT] === PermissionsAndroid.RESULTS.GRANTED;
-          return scanGranted && connectGranted;
-        }
-        return fineLocGranted;
-      } catch (err) {
-        console.warn('Permission request error:', err);
-        return false;
+    if (Platform.OS !== 'android') return true;
+    try {
+      const permissions = [PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION];
+      if (Platform.Version >= 31) {
+        permissions.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN);
+        permissions.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT);
       }
+      const granted = await PermissionsAndroid.requestMultiple(permissions);
+      const isGranted = (p) => granted[p] === PermissionsAndroid.RESULTS.GRANTED;
+
+      if (Platform.Version >= 31) {
+        return (
+          isGranted(PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN) &&
+          isGranted(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT)
+        );
+      }
+      return isGranted(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+    } catch (err) {
+      // Pre-granted / privileged kiosk builds can throw here — try scanning anyway.
+      console.warn('Permission request error:', err);
+      return true;
     }
-    return true;
   };
 
   const checkAndActivateBluetooth = async () => {
     const hasPerms = await requestPermissions();
     if (!hasPerms) {
       showInAppToast('Permissions required for Bluetooth file sharing');
-      return;
     }
 
     try {
@@ -273,27 +318,38 @@ const BluetoothShareModal = ({
     }
   };
 
-  const startScan = async () => {
-    if (BluetoothNative && BluetoothNative.startBluetoothScan) {
-      try {
-        setScannedDevices([]);
-        setIsScanning(true);
-        await BluetoothNative.startBluetoothScan();
-      } catch (e) {
-        console.warn('Error starting scan:', e);
-        setIsScanning(false);
-      }
+  const startScan = async ({ reset = true } = {}) => {
+    if (!BluetoothNative?.startBluetoothScan) return;
+    if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+    try {
+      // Background rescans keep previously found devices so the list never blinks empty.
+      if (reset) setScannedDevices([]);
+      setIsScanning(true);
+      await BluetoothNative.startBluetoothScan();
+      // Classic discovery runs ~12s; clear the spinner even if the finish
+      // broadcast is missed while the app is backgrounded.
+      scanTimeoutRef.current = setTimeout(() => setIsScanning(false), 20000);
+    } catch (e) {
+      console.warn('Error starting scan:', e);
+      setIsScanning(false);
     }
   };
 
   const stopScan = async () => {
-    if (BluetoothNative && BluetoothNative.stopBluetoothScan) {
-      try {
-        await BluetoothNative.stopBluetoothScan();
-        setIsScanning(false);
-      } catch (e) {
-        console.warn('Error stopping scan:', e);
-      }
+    if (scanTimeoutRef.current) {
+      clearTimeout(scanTimeoutRef.current);
+      scanTimeoutRef.current = null;
+    }
+    if (rescanTimerRef.current) {
+      clearTimeout(rescanTimerRef.current);
+      rescanTimerRef.current = null;
+    }
+    if (!BluetoothNative?.stopBluetoothScan) return;
+    try {
+      await BluetoothNative.stopBluetoothScan();
+      setIsScanning(false);
+    } catch (e) {
+      console.warn('Error stopping scan:', e);
     }
   };
 
@@ -326,7 +382,9 @@ const BluetoothShareModal = ({
     }
   };
 
-  const waitForBond = useCallback((address, timeoutMs = 90000) => {
+  // The remote device may show its own confirmation prompt, so allow plenty of
+  // time — Android's own bond attempt runs about 60s before it gives up.
+  const waitForBond = useCallback((address, timeoutMs = 65000) => {
     return new Promise((resolve, reject) => {
       let settled = false;
       const finish = (ok, err) => {
@@ -335,19 +393,26 @@ const BluetoothShareModal = ({
         clearTimeout(timer);
         sub.remove();
         if (ok) resolve(true);
-        else reject(err || Object.assign(new Error('Bluetooth pairing was cancelled'), { code: 'BT_PAIRING_CANCELLED' }));
+        else reject(err);
       };
 
       const timer = setTimeout(() => {
-        finish(false, Object.assign(new Error('Bluetooth pairing timed out'), { code: 'BT_PAIRING_CANCELLED' }));
+        BluetoothNative.cancelPairing(address).catch(() => {});
+        finish(
+          false,
+          Object.assign(new Error('Bluetooth pairing timed out'), { code: 'BT_PAIRING_TIMEOUT' })
+        );
       }, timeoutMs);
 
       const sub = DeviceEventEmitter.addListener('onBluetoothBondStateChanged', (event) => {
-        if (!event?.address || event.address !== address) return;
+        if (!event?.address || event.address.toUpperCase() !== String(address).toUpperCase()) return;
         if (event.bonded) {
           finish(true);
-        } else if (event.cancelled || event.bonded === false) {
-          finish(false);
+        } else {
+          finish(
+            false,
+            Object.assign(new Error('Bluetooth pairing was cancelled'), { code: 'BT_PAIRING_CANCELLED' })
+          );
         }
       });
     });
@@ -358,13 +423,18 @@ const BluetoothShareModal = ({
     if (alreadyPaired) return true;
 
     setSharePhase('pairing');
-    showInAppToast(`Pairing with ${device.name || 'device'}...`, { durationMs: 2500, position: 'bottom' });
+    showInAppToast(`Pairing with ${device.name || 'device'}. Confirm on both devices if asked.`, {
+      durationMs: 4000,
+      position: 'bottom',
+    });
 
+    // Subscribe before requesting the bond so an instant result is not missed.
     const bondPromise = waitForBond(device.address);
+    bondPromise.catch(() => {});
     try {
       await BluetoothNative.pairDevice(device.address);
     } catch (e) {
-      // createBond may reject if already bonding; still wait for bond event briefly
+      // createBond rejects when a bond is already in flight; keep waiting for the event.
       console.warn('[BluetoothShareModal] pairDevice start:', e?.message || e);
     }
     await bondPromise;
@@ -427,9 +497,15 @@ const BluetoothShareModal = ({
         (e && e.code === 'BT_TRANSFER_FAILED') || msg.includes('0xc3');
 
       const isPairingCancelled = e && e.code === 'BT_PAIRING_CANCELLED';
+      const isPairingTimeout = e && e.code === 'BT_PAIRING_TIMEOUT';
       const isConnectFailed = e && e.code === 'BT_CONNECT_FAILED';
 
-      if (isPairingCancelled) {
+      if (isPairingTimeout) {
+        showInAppToast(
+          'Pairing timed out. Accept the pairing request on the other device, then try again.',
+          { durationMs: 4000 }
+        );
+      } else if (isPairingCancelled) {
         if (Platform.OS === 'android') {
           ToastAndroid.show('Bluetooth pairing was cancelled', ToastAndroid.LONG);
         }
@@ -505,7 +581,7 @@ const BluetoothShareModal = ({
           style={{ marginRight: 15 }}
         />
         <View style={{ flex: 1 }}>
-          <Text style={styles.deviceName}>{item.name}</Text>
+          <Text style={styles.deviceName}>{item.name || 'Unknown device'}</Text>
           <Text style={styles.deviceMac}>{item.address}</Text>
         </View>
         {sharingAddress === item.address ? (
@@ -524,12 +600,23 @@ const BluetoothShareModal = ({
     </TouchableOpacity>
   );
 
+  // Devices that never report a name are background BLE radios (wearables, beacons,
+  // randomised-MAC phones) that cannot receive files — keep them out of the picker.
+  const availableDevices = scannedDevices.filter(
+    (d) => d.name && !pairedDevices.some((p) => p.address === d.address)
+  );
+
   if (!visible) {
     return null;
   }
 
   return (
-    <View style={[styles.fullScreenContainer, styles.inlineOverlay]} pointerEvents="auto">
+    <View
+      style={[styles.fullScreenContainer, styles.inlineOverlay]}
+      pointerEvents="auto"
+      onTouchStart={notifyUserActivity}
+      onTouchMove={notifyUserActivity}
+    >
       <CustomStatusBar />
       <View style={styles.modalContainer}>
         <View style={styles.header}>
@@ -580,16 +667,16 @@ const BluetoothShareModal = ({
                 {isScanning ? (
                   <ActivityIndicator size="small" color="#22B2A6" />
                 ) : (
-                  <TouchableOpacity onPress={startScan} style={styles.scanButton}>
+                  <TouchableOpacity onPress={() => startScan()} style={styles.scanButton}>
                     <MaterialCommunityIcons name="refresh" size={16} color="#22B2A6" style={{ marginRight: 4 }} />
                     <Text style={styles.scanText}>Scan</Text>
                   </TouchableOpacity>
                 )}
               </View>
 
-              {scannedDevices.filter(d => !pairedDevices.find(p => p.address === d.address)).length > 0 ? (
+              {availableDevices.length > 0 ? (
                 <FlatList
-                  data={scannedDevices.filter(d => !pairedDevices.find(p => p.address === d.address))}
+                  data={availableDevices}
                   keyExtractor={(item) => item.address}
                   renderItem={(props) => renderDevice({ ...props, isPaired: false })}
                   showsVerticalScrollIndicator={false}
@@ -598,7 +685,11 @@ const BluetoothShareModal = ({
               ) : (
                 <View style={styles.emptyContainer}>
                   <Text style={styles.emptyText}>
-                    {isScanning ? "Scanning for nearby devices..." : "No new devices found. Tap Scan to search."}
+                    {isScanning ? 'Scanning for nearby devices...' : 'No new devices found.'}
+                  </Text>
+                  <Text style={styles.emptyHintText}>
+                    On the other device, open Bluetooth settings and keep that screen open so it
+                    stays visible to nearby devices.
                   </Text>
                 </View>
               )}
@@ -824,6 +915,15 @@ const styles = StyleSheet.create({
     fontFamily: 'ProductSans-Regular',
     fontStyle: 'italic',
     textAlign: 'center',
+  },
+  emptyHintText: {
+    color: '#5A6472',
+    fontSize: 13,
+    fontFamily: 'ProductSans-Regular',
+    textAlign: 'center',
+    marginTop: 10,
+    paddingHorizontal: 20,
+    lineHeight: 19,
   },
   kebabButton: {
     height: 44,

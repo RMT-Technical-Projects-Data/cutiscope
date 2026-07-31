@@ -7,7 +7,7 @@
 import ImageDatabase from './localImageDatabase';
 import OptimisedUploadService from './optimisedUploadQueue';
 
-export async function registerAndEnqueue({ localPath, fileName, username, userData, currentBox }) {
+export async function registerAndEnqueue({ localPath, fileName, username, userData, currentBox, captureSeq }) {
   const imageId = ImageDatabase.generateImageId();
   await ImageDatabase.saveImage({
     id: imageId,
@@ -18,11 +18,13 @@ export async function registerAndEnqueue({ localPath, fileName, username, userDa
     filePath: localPath,
     createdAt: new Date().toISOString(),
     uploadStatus: 'PENDING',
+    captureSeq: captureSeq ?? null,
   });
 
   OptimisedUploadService.enqueueExistingFileUpload(localPath, fileName, username, {
     directUpload: false,
     imageId,
+    captureSeq: captureSeq ?? null,
   });
 
   return { imageId };

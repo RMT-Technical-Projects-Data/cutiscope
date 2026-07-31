@@ -37,9 +37,10 @@ export const UserMessages = {
   logoutFailed: 'We couldn\'t sign you out. Please try again.',
 
   // Camera / capture
-  captureFailed: 'We couldn\'t save the photo. Please try again.',
+  captureFailed: 'Picture can\'t be saved. Please wait a moment and try again.',
   captureOnlyFailed: 'Couldn\'t capture. Please try again.',
   cameraNotReady: 'Camera isn\'t ready. Tap Try again.',
+  photoSaveInProgress: 'Please wait, saving photo...',
   soundLoadFailed: 'We couldn\'t load the sound. Please try again.',
 
   // Updates

@@ -98,11 +98,29 @@ class CaptureQueue {
 
   enqueue(job) {
     const id = job.id || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    this.queue.push({ ...job, id, retries: 0 });
+    this._insertByCaptureSeq({ ...job, id, retries: 0 });
     this._emit();
     this._schedulePersist();
     this._drain();
     return id;
+  }
+
+  _insertByCaptureSeq(job) {
+    const seq = Number(job?.captureSeq);
+    if (!Number.isFinite(seq)) {
+      this.queue.push(job);
+      return;
+    }
+    let insertAt = this.queue.length;
+    for (let i = this.queue.length - 1; i >= 0; i -= 1) {
+      const prevSeq = Number(this.queue[i]?.captureSeq);
+      if (!Number.isFinite(prevSeq) || prevSeq <= seq) {
+        insertAt = i + 1;
+        break;
+      }
+      insertAt = i;
+    }
+    this.queue.splice(insertAt, 0, job);
   }
 
   async _drain() {
@@ -141,7 +159,7 @@ class CaptureQueue {
               `CaptureQueue: retry ${job.retries}/${this.maxRetries} for ${job.fileName || job.id}:`,
               e?.message || e
             );
-            this.queue.push(job);
+            this._insertByCaptureSeq(job);
             this._schedulePersist();
             await this._wait(300 * job.retries);
           } else {
@@ -166,8 +184,6 @@ class CaptureQueue {
     if (this.queue.length !== before) {
       this._emit();
     }
-    this.queue = [];
-    this._emit();
     await this._flushPersist();
   }
 }

@@ -28,6 +28,7 @@ import { BackButton } from '../../shared/ui';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { getPatients, createPatient, getNextPatientId } from './patientsService';
 import { applyCappedTextChange } from '../../shared/utils/textInputLimits';
+import { notifyUserActivity } from '../../shared/utils/inAppToast';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const IS_SMALL = SCREEN_WIDTH < 360 || SCREEN_HEIGHT < 600;
@@ -40,6 +41,7 @@ const TAB_EXISTING_SET = 'Existing patients';
 
 const GENDER_OPTIONS = ['Male', 'Female', 'Other'];
 const MR_NO_PREFIX = 'MRI-';
+const MR_NO_MAX_LENGTH = 4;
 const PATIENT_NAME_VALID = /^[a-zA-Z\s]+$/;
 const PATIENT_NAME_MAX_LENGTH = 20;
 
@@ -54,7 +56,7 @@ function isNewPatientFormReady({ name, mrNo, dob, gender, nextId, loadingNextId 
     trimmedName.length > 0 &&
     PATIENT_NAME_VALID.test(trimmedName) &&
     /[a-zA-Z]/.test(trimmedName) &&
-    trimmedMrNo.length === 4 &&
+    trimmedMrNo.length === MR_NO_MAX_LENGTH &&
     (dob || '').trim().length > 0 &&
     (gender || '').trim().length > 0 &&
     !loadingNextId &&
@@ -115,6 +117,14 @@ const PatientBoxModal = ({
     return () => releaseAppStatusBar();
   }, [visible]);
 
+  // Create Patient must still honor the session inactivity timer (no idle hold).
+  // Touch / typing renews the deadline via notifyUserActivity.
+  useEffect(() => {
+    if (!visible) return undefined;
+    notifyUserActivity();
+    return undefined;
+  }, [visible]);
+
   const tabNew = isBlank ? TAB_NEW_BLANK : TAB_NEW_SET;
   const tabExisting = isBlank ? TAB_EXISTING_BLANK : TAB_EXISTING_SET;
 
@@ -160,14 +170,29 @@ const PatientBoxModal = ({
       setLoadingList(true);
       setListError(null);
       getPatients()
-        .then((list) => setExistingList(Array.isArray(list) ? list : []))
+        .then((list) => {
+          const nextList = Array.isArray(list) ? list : [];
+          setExistingList(nextList);
+          // Portal may have renamed the selected patient — sync without requiring a re-tap.
+          if (initialId) {
+            const match = nextList.find((p) => String(p.id) === String(initialId));
+            if (match && String(match.name || '') !== String(initialName || '')) {
+              onSet({
+                id: String(match.id),
+                name: String(match.name || ''),
+              });
+            }
+          }
+        })
         .catch((err) => {
           setListError(err.message || 'Could not load patients');
           setExistingList([]);
         })
         .finally(() => setLoadingList(false));
     }
-  }, [visible, activeTab]);
+    // intentionally omit onSet/initialName — avoid re-fetch loops when parent re-renders
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, activeTab, initialId]);
 
   const showForm = activeTab === tabNew;
   const showList = activeTab === tabExisting;
@@ -266,8 +291,8 @@ const PatientBoxModal = ({
     }
 
     const trimmedMrNo = (mrNo || '').trim();
-    if (trimmedMrNo.length !== 4) {
-      setFormError('MRI number must be exactly 4 digits.');
+    if (trimmedMrNo.length !== MR_NO_MAX_LENGTH) {
+      setFormError(`MRI number must be exactly ${MR_NO_MAX_LENGTH} digits.`);
       return;
     }
 
@@ -365,7 +390,11 @@ const PatientBoxModal = ({
       statusBarTranslucent={true}
     >
       {/* Simple container like PowerOffModal */}
-      <View style={styles.container}>
+      <View
+        style={styles.container}
+        onTouchStart={notifyUserActivity}
+        onTouchMove={notifyUserActivity}
+      >
         <CustomStatusBar />
         <View style={styles.modalBody}>
           <View style={[styles.modalView, hasFocusedInput && styles.modalViewKeyboardOpen]}>
@@ -473,12 +502,13 @@ const PatientBoxModal = ({
                         style={[styles.input, styles.mrNoInput]}
                         value={mrNo}
                         onChangeText={(text) => {
-                          setMrNo(String(text).replace(/^MRI-/i, '').replace(/\D/g, ''));
+                          setMrNo(String(text).replace(/^MRI-/i, '').replace(/\D/g, '').slice(0, MR_NO_MAX_LENGTH));
                           if (formError) setFormError('');
                         }}
                         placeholder="1234"
                         placeholderTextColor="#666"
                         keyboardType="numeric"
+                        maxLength={MR_NO_MAX_LENGTH}
                         contextMenuHidden
                         selectTextOnFocus={false}
                         showDismiss={true}

@@ -65,6 +65,12 @@ export const BluetoothNative = {
     return mod.unpairDevice(address);
   },
 
+  async cancelPairing(address) {
+    const mod = btNative();
+    if (!mod?.cancelPairing) return false;
+    return mod.cancelPairing(address);
+  },
+
   async confirmPairing(address, confirm) {
     const mod = btNative();
     if (!mod?.confirmPairing) throw new Error('Bluetooth not available');

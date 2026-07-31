@@ -4,7 +4,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../features/auth/authSessionContext';
 import firebaseAuthService from '../features/upload/firebaseAuthService';
 import SessionTimeoutModal from '../features/device/SessionTimeoutModal';
-import { SESSION_ACTIVITY_EVENT } from '../shared/utils/inAppToast';
+import { SESSION_ACTIVITY_EVENT, SESSION_IDLE_HOLD_EVENT, emitSessionForceLogout } from '../shared/utils/inAppToast';
+import { resetToWelcomeScreen } from './rootNavigation';
 import {
   DEFAULT_SESSION_TIMEOUT_MINUTES,
   SESSION_TIMEOUT_CHANGED_EVENT,
@@ -27,6 +28,9 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
   const logoutInProgressRef = useRef(false);
   const inactivityMsRef = useRef(DEFAULT_SESSION_TIMEOUT_MINUTES * 60 * 1000);
   const timerArmedRef = useRef(false);
+  const idleHoldRef = useRef(false);
+  const idleHoldRemainingMsRef = useRef(0);
+  const appInactiveRef = useRef(false);
 
   const startFreshSessionWindow = useCallback(() => {
     promptVisibleRef.current = false;
@@ -47,6 +51,29 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
     timerArmedRef.current = true;
   }, [sessionActive]);
 
+  const setIdleHold = useCallback((hold) => {
+    if (!sessionActive) {
+      idleHoldRef.current = false;
+      return;
+    }
+    if (hold) {
+      if (!idleHoldRef.current) {
+        idleHoldRemainingMsRef.current = Math.max(
+          0,
+          inactivityDeadlineRef.current - Date.now()
+        );
+      }
+      idleHoldRef.current = true;
+      return;
+    }
+    if (idleHoldRef.current) {
+      inactivityDeadlineRef.current =
+        Date.now() + (idleHoldRemainingMsRef.current || inactivityMsRef.current);
+      timerArmedRef.current = true;
+    }
+    idleHoldRef.current = false;
+  }, [sessionActive]);
+
   const applyInactivityMinutes = useCallback((minutes) => {
     const next = SESSION_TIMEOUT_OPTIONS.includes(Number(minutes))
       ? Number(minutes)
@@ -62,12 +89,21 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
     promptVisibleRef.current = false;
     setPromptVisible(false);
 
-    // Navigate to login first so Settings/Camera never flash guest-mode UI mid-logout.
+    // Close fullscreen / gallery overlays first.
+    emitSessionForceLogout();
+
+    // Let the RN Modal finish dismissing before remounting nav. Dismissing the
+    // timeout Modal and tearing down Gallery in the same frame often leaves a
+    // blank black Android window instead of Welcome.
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    // Flip app session flags → App swaps to logged-out NavigationContainer
+    // (Welcome only; Camera/Gallery are unmounted).
     onLoggedOut();
-    navigationRef.current?.resetRoot?.({
-      index: 0,
-      routes: [{ name: 'Welcome' }],
-    });
+
+    // Belt-and-suspenders once the logged-out tree is ready.
+    setTimeout(() => resetToWelcomeScreen(), 50);
+    setTimeout(() => resetToWelcomeScreen(), 200);
 
     try {
       await signOut();
@@ -82,7 +118,6 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
       try {
         await firebaseAuthService.signOut();
       } catch (cloudError) {
-        // Ignore expected no-user cases during forced logout.
         const msg = String(cloudError?.message || cloudError || '');
         if (!/no-current-user|No user currently signed in/i.test(msg)) {
           console.warn('Cloud sign-out during session expiry failed:', msg);
@@ -90,7 +125,6 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
       }
     } catch (error) {
       console.error('Session logout failed:', error);
-      // Security-first fallback: remove local credentials even if a service sign-out fails.
       await AsyncStorage.multiRemove([
         'userToken',
         'userEmail',
@@ -99,12 +133,15 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
         '@patient_box',
       ]).catch(() => {});
     } finally {
+      resetToWelcomeScreen();
       logoutInProgressRef.current = false;
     }
-  }, [navigationRef, onLoggedOut, signOut]);
+  }, [onLoggedOut, signOut]);
 
   const checkDeadlines = useCallback(() => {
     if (!sessionActive || logoutInProgressRef.current || !timerArmedRef.current) return;
+    // Busy overlay / active use / system UI — do not fire inactivity.
+    if (idleHoldRef.current || appInactiveRef.current) return;
     const now = Date.now();
 
     // Phase 2: 10s logout modal countdown (only after inactivity expired).
@@ -129,6 +166,7 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
       // Hold deadline until persisted inactivity minutes are loaded.
       inactivityDeadlineRef.current = Number.MAX_SAFE_INTEGER;
       timerArmedRef.current = false;
+      idleHoldRef.current = false;
       let cancelled = false;
       getSessionTimeoutMinutes().then((minutes) => {
         if (cancelled) return;
@@ -144,6 +182,7 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
     inactivityDeadlineRef.current = 0;
     logoutDeadlineRef.current = 0;
     timerArmedRef.current = false;
+    idleHoldRef.current = false;
     return undefined;
   }, [applyInactivityMinutes, sessionActive]);
 
@@ -153,6 +192,9 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
     const activitySub = DeviceEventEmitter.addListener(SESSION_ACTIVITY_EVENT, () => {
       noteUserActivity();
     });
+    const holdSub = DeviceEventEmitter.addListener(SESSION_IDLE_HOLD_EVENT, (hold) => {
+      setIdleHold(!!hold);
+    });
     const timeoutChangedSub = DeviceEventEmitter.addListener(
       SESSION_TIMEOUT_CHANGED_EVENT,
       (minutes) => {
@@ -161,20 +203,25 @@ const SessionManager = ({ active, navigationRef, onLoggedOut }) => {
     );
     const appStateSub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
+        appInactiveRef.current = false;
         // Returning to foreground counts as activity — restart idle window.
         noteUserActivity();
         checkDeadlines();
+      } else {
+        // System overlay / background: freeze idle so pairing waits do not force logout.
+        appInactiveRef.current = true;
       }
     });
     const interval = setInterval(checkDeadlines, 250);
 
     return () => {
       activitySub.remove();
+      holdSub.remove();
       timeoutChangedSub.remove();
       appStateSub.remove();
       clearInterval(interval);
     };
-  }, [applyInactivityMinutes, checkDeadlines, noteUserActivity, sessionActive]);
+  }, [applyInactivityMinutes, checkDeadlines, noteUserActivity, sessionActive, setIdleHold]);
 
   return (
     <SessionTimeoutModal

@@ -118,6 +118,7 @@ const GalleryPhotoGrid = ({
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         numColumns={3}
+        columnWrapperStyle={styles.photoRow}
         contentContainerStyle={[styles.photosContainer, isSelectionMode && selectedPhotos.length > 0 && { paddingBottom: 100 }]}
         showsVerticalScrollIndicator={false}
         extraData={`${isSelectionMode}:${selectedPhotos.length}:${count}:${revealed}`}
