@@ -279,7 +279,7 @@ const BluetoothShareModal = ({
   const checkAndActivateBluetooth = async () => {
     const hasPerms = await requestPermissions();
     if (!hasPerms) {
-      showInAppToast('Permissions required for Bluetooth file sharing');
+      // showInAppToast('Permissions required for Bluetooth file sharing');
     }
 
     try {
