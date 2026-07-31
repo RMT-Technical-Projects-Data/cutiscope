@@ -49,20 +49,36 @@ function sanitizePatientName(text) {
   return String(text).replace(/[^a-zA-Z\s]/g, '').slice(0, PATIENT_NAME_MAX_LENGTH);
 }
 
-function isNewPatientFormReady({ name, mrNo, dob, gender, nextId, loadingNextId }) {
+function getNewPatientFieldErrors({ name, mrNo, dob, gender, nextId, loadingNextId }) {
+  const errors = {};
   const trimmedName = (name || '').trim();
   const trimmedMrNo = (mrNo || '').trim();
-  return (
-    trimmedName.length > 0 &&
-    PATIENT_NAME_VALID.test(trimmedName) &&
-    /[a-zA-Z]/.test(trimmedName) &&
-    trimmedMrNo.length === MR_NO_MAX_LENGTH &&
-    (dob || '').trim().length > 0 &&
-    (gender || '').trim().length > 0 &&
-    !loadingNextId &&
-    Boolean(nextId) &&
-    nextId !== '--'
-  );
+
+  if (!trimmedName) {
+    errors.name = 'Patient name is required.';
+  } else if (!PATIENT_NAME_VALID.test(trimmedName) || !/[a-zA-Z]/.test(trimmedName)) {
+    errors.name = 'Patient name must contain only letters.';
+  }
+
+  if (!trimmedMrNo) {
+    errors.mrNo = 'MRI No. is required.';
+  } else if (trimmedMrNo.length !== MR_NO_MAX_LENGTH) {
+    errors.mrNo = `MRI No. must be exactly ${MR_NO_MAX_LENGTH} digits (you entered ${trimmedMrNo.length}).`;
+  }
+
+  if (!(dob || '').trim()) {
+    errors.dob = 'Date of birth is required.';
+  }
+
+  if (!(gender || '').trim()) {
+    errors.gender = 'Gender is required.';
+  }
+
+  if (loadingNextId || !nextId || nextId === '--') {
+    errors.id = 'Patient ID is not ready yet. Check your connection and try again.';
+  }
+
+  return errors;
 }
 
 const PatientBoxModal = ({
@@ -95,6 +111,7 @@ const PatientBoxModal = ({
   const [listError, setListError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [isKeyboardVisible, setKeyboardVisible] = useState(false);
 
   // Track whether the new-patient form is currently mounted so the NetInfo
@@ -132,6 +149,7 @@ const PatientBoxModal = ({
     if (visible) {
       setSearchQuery('');
       setFormError('');
+      setFieldErrors({});
       setShowNewPatientForm(false);
       setNoInternet(false);
       if (isBlank) {
@@ -257,6 +275,8 @@ const PatientBoxModal = ({
       const month = String(selectedDate.getMonth() + 1).padStart(2, '0');
       const year = selectedDate.getFullYear();
       setDob(`${day}/${month}/${year}`);
+      setFormError('');
+      setFieldErrors((prev) => (prev.dob ? { ...prev, dob: undefined } : prev));
 
       // Calculate age
       const today = new Date();
@@ -278,36 +298,27 @@ const PatientBoxModal = ({
   }, [onSet, onClose]);
 
   const handleSetNew = useCallback(async () => {
+    const errors = getNewPatientFieldErrors({
+      name,
+      mrNo,
+      dob,
+      gender,
+      nextId,
+      loadingNextId,
+    });
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      setFormError('Please fix the highlighted fields below.');
+      return;
+    }
+
     const trimmedName = (name || '').trim();
-    if (!trimmedName) {
-      onSet({ id: '', name: '' });
-      onClose();
-      return;
-    }
-
-    if (!PATIENT_NAME_VALID.test(trimmedName) || !/[a-zA-Z]/.test(trimmedName)) {
-      setFormError('Patient name must contain only letters.');
-      return;
-    }
-
     const trimmedMrNo = (mrNo || '').trim();
-    if (trimmedMrNo.length !== MR_NO_MAX_LENGTH) {
-      setFormError(`MRI number must be exactly ${MR_NO_MAX_LENGTH} digits.`);
-      return;
-    }
-
-    if (!(dob || '').trim()) {
-      setFormError('Date of birth is required.');
-      return;
-    }
-
-    if (!(gender || '').trim()) {
-      setFormError('Gender is required.');
-      return;
-    }
 
     setSaving(true);
     setFormError('');
+    setFieldErrors({});
     try {
       const created = await createPatient({
         id: nextId,
@@ -327,7 +338,7 @@ const PatientBoxModal = ({
     } finally {
       setSaving(false);
     }
-  }, [name, dob, gender, age, mrNo, nextId, onSet, onClose, formError]);
+  }, [name, dob, gender, age, mrNo, nextId, loadingNextId, onSet, onClose]);
 
   const handleClearSelection = useCallback(() => {
     onSet({ id: '', name: '' });
@@ -347,8 +358,6 @@ const PatientBoxModal = ({
         String(p.name || '').toLowerCase().includes(q)
     );
   }, [existingList, searchQuery]);
-
-  const canSaveNewPatient = isNewPatientFormReady({ name, mrNo, dob, gender, nextId, loadingNextId });
 
   const renderPatientItem = useCallback(({ item }) => {
     const isSelected = String(item.id) === String(initialId);
@@ -463,16 +472,19 @@ const PatientBoxModal = ({
                       </TouchableOpacity>
                     )}
                     <Text style={styles.label} selectable={false}>ID (assigned automatically)</Text>
-                    <View style={styles.idRow}>
+                    <View style={[styles.idRow, fieldErrors.id && styles.fieldErrorBorder]}>
                       {loadingNextId ? (
                         <ActivityIndicator size="small" color="#22B2A6" style={styles.idLoader} />
                       ) : (
                         <Text style={styles.idValue} selectable={false}>{nextId || '—'}</Text>
                       )}
                     </View>
+                    {fieldErrors.id ? (
+                      <Text style={styles.fieldErrorText} selectable={false}>{fieldErrors.id}</Text>
+                    ) : null}
                     <Text style={styles.label} selectable={false}>Name</Text>
                     <KioskTextInput
-                      style={styles.input}
+                      style={[styles.input, fieldErrors.name && styles.fieldErrorBorder]}
                       value={name}
                       onChangeText={(text) => {
                         setName((prev) => applyCappedTextChange(
@@ -482,6 +494,7 @@ const PatientBoxModal = ({
                           (value) => value.replace(/[^a-zA-Z\s]/g, '')
                         ));
                         if (formError) setFormError('');
+                        if (fieldErrors.name) setFieldErrors((prev) => ({ ...prev, name: undefined }));
                       }}
                       placeholder="Patient"
                       placeholderTextColor="#666"
@@ -492,9 +505,12 @@ const PatientBoxModal = ({
                       showDismiss={true}
                       hostKeyboardLocally
                     />
+                    {fieldErrors.name ? (
+                      <Text style={styles.fieldErrorText} selectable={false}>{fieldErrors.name}</Text>
+                    ) : null}
 
                     <Text style={styles.label} selectable={false}>MR. NO.</Text>
-                    <View style={styles.mrNoRow}>
+                    <View style={[styles.mrNoRow, fieldErrors.mrNo && styles.fieldErrorBorder]}>
                       <View style={styles.mrNoPrefix}>
                         <Text style={styles.mrNoPrefixText} selectable={false}>{MR_NO_PREFIX}</Text>
                       </View>
@@ -504,6 +520,7 @@ const PatientBoxModal = ({
                         onChangeText={(text) => {
                           setMrNo(String(text).replace(/^MRI-/i, '').replace(/\D/g, '').slice(0, MR_NO_MAX_LENGTH));
                           if (formError) setFormError('');
+                          if (fieldErrors.mrNo) setFieldErrors((prev) => ({ ...prev, mrNo: undefined }));
                         }}
                         placeholder="1234"
                         placeholderTextColor="#666"
@@ -515,12 +532,19 @@ const PatientBoxModal = ({
                       hostKeyboardLocally
                       />
                     </View>
+                    {fieldErrors.mrNo ? (
+                      <Text style={styles.fieldErrorText} selectable={false}>{fieldErrors.mrNo}</Text>
+                    ) : null}
 
                     <View style={styles.row}>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.label} selectable={false}>DOB</Text>
                         <TouchableOpacity 
-                          style={[styles.pickerTrigger, { marginBottom: 16 }]} 
+                          style={[
+                            styles.pickerTrigger,
+                            { marginBottom: fieldErrors.dob ? 4 : 16 },
+                            fieldErrors.dob && styles.fieldErrorBorder,
+                          ]} 
                           onPress={() => setShowDatePicker(true)}
                           activeOpacity={0.7}
                         >
@@ -532,6 +556,11 @@ const PatientBoxModal = ({
                           </Text>
                           <MaterialCommunityIcons name="calendar" size={20} color="#666" />
                         </TouchableOpacity>
+                        {fieldErrors.dob ? (
+                          <Text style={[styles.fieldErrorText, { marginBottom: 12 }]} selectable={false}>
+                            {fieldErrors.dob}
+                          </Text>
+                        ) : null}
                       </View>
                       {/* Commented out Age input field
                       <View style={{ flex: 0.8 }}>
@@ -554,15 +583,24 @@ const PatientBoxModal = ({
 
                     <Text style={styles.label} selectable={false}>Gender</Text>
                     <TouchableOpacity 
-                      style={[styles.pickerTrigger, { marginBottom: 16 }]} 
+                      style={[
+                        styles.pickerTrigger,
+                        { marginBottom: fieldErrors.gender ? 4 : 16 },
+                        fieldErrors.gender && styles.fieldErrorBorder,
+                      ]} 
                       onPress={() => setShowGenderMenu(true)}
                       activeOpacity={0.7}
                     >
                       <Text style={[styles.pickerTriggerText, !gender && styles.pickerPlaceholder]}>
-                        {gender || 'Select Gender'}
+                        {gender || 'Select gender'}
                       </Text>
-                      <MaterialCommunityIcons name="chevron-down" size={24} color="#666" />
+                      <MaterialCommunityIcons name="chevron-down" size={20} color="#666" />
                     </TouchableOpacity>
+                    {fieldErrors.gender ? (
+                      <Text style={[styles.fieldErrorText, { marginBottom: 12 }]} selectable={false}>
+                        {fieldErrors.gender}
+                      </Text>
+                    ) : null}
 
                     {showDatePicker && (
                       <DateTimePicker
@@ -591,6 +629,9 @@ const PatientBoxModal = ({
                                 setGender(opt);
                                 setShowGenderMenu(false);
                                 if (formError) setFormError('');
+                                if (fieldErrors.gender) {
+                                  setFieldErrors((prev) => ({ ...prev, gender: undefined }));
+                                }
                               }}
                             >
                               <Text style={[styles.menuOptionText, gender === opt && styles.menuOptionTextSelected]}>
@@ -611,10 +652,10 @@ const PatientBoxModal = ({
                     <TouchableOpacity
                       style={[
                         styles.setButton,
-                        (saving || !canSaveNewPatient) && styles.setButtonDisabled
+                        saving && styles.setButtonDisabled
                       ]}
                       onPress={handleSetNew}
-                      disabled={saving || !canSaveNewPatient}
+                      disabled={saving}
                     >
                       {saving ? (
                         <ActivityIndicator color="#fff" size="small" />
@@ -871,6 +912,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 16,
+    borderRadius: 10,
   },
   mrNoPrefix: {
     backgroundColor: '#2a2a2a',
@@ -979,6 +1021,16 @@ const styles = StyleSheet.create({
   formErrorMessage: {
     color: '#ffcccc',
     fontSize: 13,
+  },
+  fieldErrorBorder: {
+    borderWidth: 1,
+    borderColor: '#d32f2f',
+  },
+  fieldErrorText: {
+    color: '#ff8a80',
+    fontSize: 12,
+    marginTop: -8,
+    marginBottom: 12,
   },
   listContainer: {
     maxHeight: SCREEN_HEIGHT * 0.7,

@@ -2067,19 +2067,14 @@ const CameraScreen = ({ navigation }) => {
                 id: String(patient.id || ''),
                 name: String(patient.name || ''),
               };
-              // Don't drop patient while an in-flight capture still needs the association
-              // for UI — job already snapshotted, but clearing confuses users mid-save.
-              if (!next.id && isPhotoSavePending?.()) {
-                if (Platform.OS === 'android') {
-                  showInAppToast(UserMessages.photoSaveInProgress, {
-                    durationMs: 2000,
-                    position: 'center',
-                  });
-                }
-                return;
-              }
+              // Clearing is always allowed — capture already snapshotted patient before
+              // takePhoto, so in-flight saves keep the correct association. Blocking clear
+              // closed the modal but left the selection, which felt like a UI jerk.
               setCurrentBox(next);
               currentBoxRef.current = next;
+              if (!next.id) {
+                setBodyPart('');
+              }
               await AsyncStorage.setItem('@patient_box', JSON.stringify(next));
             } catch (e) {
               console.warn('Save patient box:', e);
