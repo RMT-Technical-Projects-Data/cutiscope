@@ -18,10 +18,6 @@ import ToggleSwitch from 'toggle-switch-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { showInAppToast, notifyUserActivity, setSessionIdleHold } from '../../shared/utils/inAppToast';
 import { BackButton } from '../../shared/ui';
-import CustomStatusBar, {
-  suppressAppStatusBar,
-  releaseAppStatusBar,
-} from '../../shared/ui/CustomStatusBar';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import BluetoothNative from '../../shared/native/BluetoothNative';
 import KioskMode from '../../shared/native/KioskMode';
@@ -60,13 +56,6 @@ const BluetoothShareModal = ({
   const rescanTimerRef = useRef(null);
   // Discovery must never run during pairing/transfer — it starves the radio.
   const canScanRef = useRef(false);
-
-  // Full-screen share has its own status bar — hide the App-level one.
-  useEffect(() => {
-    if (!visible) return undefined;
-    suppressAppStatusBar();
-    return () => releaseAppStatusBar();
-  }, [visible]);
 
   // Keep immersive kiosk while Bluetooth share UI is open — pause during pairing
   // so the system bond dialog is not fought by lock-task reapply.
@@ -617,7 +606,6 @@ const BluetoothShareModal = ({
       onTouchStart={notifyUserActivity}
       onTouchMove={notifyUserActivity}
     >
-      <CustomStatusBar />
       <View style={styles.modalContainer}>
         <View style={styles.header}>
           <BackButton onPress={onClose} style={styles.backButton} iconStyle={styles.backIcon} />

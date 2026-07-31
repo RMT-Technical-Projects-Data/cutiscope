@@ -19,10 +19,6 @@ import NetInfo from '@react-native-community/netinfo';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import KioskTextInput from '../../shared/ui/KioskTextInput';
 import CustomKeyboard from '../../shared/ui/CustomKeyboard';
-import CustomStatusBar, {
-  suppressAppStatusBar,
-  releaseAppStatusBar,
-} from '../../shared/ui/CustomStatusBar';
 import { useCustomKeyboard } from '../../shared/ui/CustomKeyboardContext';
 import { BackButton } from '../../shared/ui';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -33,6 +29,8 @@ import { notifyUserActivity } from '../../shared/utils/inAppToast';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const IS_SMALL = SCREEN_WIDTH < 360 || SCREEN_HEIGHT < 600;
 const H_PAD = IS_SMALL ? 16 : 24;
+/** Matches App CustomStatusBar — leave a gap so it stays mounted (no camera jerk). */
+const APP_STATUS_BAR_HEIGHT = 62;
 
 const TAB_NEW_BLANK = 'Enter Patient';
 const TAB_NEW_SET = 'New Patient';
@@ -88,7 +86,7 @@ const PatientBoxModal = ({
   initialName = '',
   onSet,
 }) => {
-  const { hasFocusedInput } = useCustomKeyboard();
+  const { hasFocusedInput, dismissKeyboard } = useCustomKeyboard();
   const isBlank = !initialId && !initialName;
   const [activeTab, setActiveTab] = useState(TAB_NEW_BLANK);
   const [showNewPatientForm, setShowNewPatientForm] = useState(false);
@@ -127,12 +125,8 @@ const PatientBoxModal = ({
     };
   }, []);
 
-  // Modal has its own status bar — hide the App-level one.
-  useEffect(() => {
-    if (!visible) return undefined;
-    suppressAppStatusBar();
-    return () => releaseAppStatusBar();
-  }, [visible]);
+  // Do NOT suppress the App CustomStatusBar — unmounting it shifts the camera
+  // preview by ~62px (the "jerk" when opening/closing this modal).
 
   // Create Patient must still honor the session inactivity timer (no idle hold).
   // Touch / typing renews the deadline via notifyUserActivity.
@@ -309,7 +303,7 @@ const PatientBoxModal = ({
 
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
-      setFormError('Please fix the highlighted fields below.');
+      setFormError('Please fix the highlighted fields above.');
       return;
     }
 
@@ -341,13 +335,22 @@ const PatientBoxModal = ({
   }, [name, dob, gender, age, mrNo, nextId, loadingNextId, onSet, onClose]);
 
   const handleClearSelection = useCallback(() => {
+    dismissKeyboard?.();
     onSet({ id: '', name: '' });
     onClose();
-  }, [onSet, onClose]);
+  }, [onSet, onClose, dismissKeyboard]);
 
   const handleBackdrop = useCallback(() => {
+    dismissKeyboard?.();
     onClose();
-  }, [onClose]);
+  }, [onClose, dismissKeyboard]);
+
+  const handleBackFromNewPatientForm = useCallback(() => {
+    dismissKeyboard?.();
+    setShowNewPatientForm(false);
+    setFormError('');
+    setFieldErrors({});
+  }, [dismissKeyboard]);
 
   const filteredList = useMemo(() => {
     const q = (searchQuery || '').trim().toLowerCase();
@@ -392,19 +395,20 @@ const PatientBoxModal = ({
 
   return (
     <Modal
-      animationType="fade"
+      animationType="none"
       transparent={true}
       visible={visible}
       onRequestClose={handleBackdrop}
       statusBarTranslucent={true}
     >
-      {/* Simple container like PowerOffModal */}
+      {/* Transparent status-bar gap keeps App CustomStatusBar visible & mounted */}
       <View
         style={styles.container}
         onTouchStart={notifyUserActivity}
         onTouchMove={notifyUserActivity}
       >
-        <CustomStatusBar />
+        <View style={styles.statusBarSpacer} />
+        <View style={styles.dimArea}>
         <View style={styles.modalBody}>
           <View style={[styles.modalView, hasFocusedInput && styles.modalViewKeyboardOpen]}>
           {/* Header with back button */}
@@ -466,7 +470,7 @@ const PatientBoxModal = ({
                   >
                     <View style={styles.form}>
                     {!isBlank && (
-                      <TouchableOpacity style={styles.backToSelection} onPress={() => setShowNewPatientForm(false)}>
+                      <TouchableOpacity style={styles.backToSelection} onPress={handleBackFromNewPatientForm}>
                         <MaterialCommunityIcons name="arrow-left" size={20} color="#22B2A6" />
                         <Text style={[styles.backToSelectionText, { marginLeft: 6 }]} selectable={false}>Back to selected</Text>
                       </TouchableOpacity>
@@ -542,7 +546,7 @@ const PatientBoxModal = ({
                         <TouchableOpacity 
                           style={[
                             styles.pickerTrigger,
-                            { marginBottom: fieldErrors.dob ? 4 : 16 },
+                            { marginBottom: fieldErrors.dob ? 0 : 16 },
                             fieldErrors.dob && styles.fieldErrorBorder,
                           ]} 
                           onPress={() => setShowDatePicker(true)}
@@ -557,7 +561,7 @@ const PatientBoxModal = ({
                           <MaterialCommunityIcons name="calendar" size={20} color="#666" />
                         </TouchableOpacity>
                         {fieldErrors.dob ? (
-                          <Text style={[styles.fieldErrorText, { marginBottom: 12 }]} selectable={false}>
+                          <Text style={styles.pickerErrorText} selectable={false}>
                             {fieldErrors.dob}
                           </Text>
                         ) : null}
@@ -585,7 +589,7 @@ const PatientBoxModal = ({
                     <TouchableOpacity 
                       style={[
                         styles.pickerTrigger,
-                        { marginBottom: fieldErrors.gender ? 4 : 16 },
+                        { marginBottom: fieldErrors.gender ? 0 : 16 },
                         fieldErrors.gender && styles.fieldErrorBorder,
                       ]} 
                       onPress={() => setShowGenderMenu(true)}
@@ -597,7 +601,7 @@ const PatientBoxModal = ({
                       <MaterialCommunityIcons name="chevron-down" size={20} color="#666" />
                     </TouchableOpacity>
                     {fieldErrors.gender ? (
-                      <Text style={[styles.fieldErrorText, { marginBottom: 12 }]} selectable={false}>
+                      <Text style={styles.pickerErrorText} selectable={false}>
                         {fieldErrors.gender}
                       </Text>
                     ) : null}
@@ -732,6 +736,7 @@ const PatientBoxModal = ({
           </View>
         </View>
         </View>
+        </View>
       </View>
       <CustomKeyboard localHost />
     </Modal>
@@ -739,10 +744,18 @@ const PatientBoxModal = ({
 };
 
 const styles = StyleSheet.create({
-  // Container like PowerOffModal - full screen with dark background
+  // Root is transparent so the App status bar shows through the top spacer.
   container: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.8)', // Same as PowerOffModal
+    backgroundColor: 'transparent',
+  },
+  statusBarSpacer: {
+    height: APP_STATUS_BAR_HEIGHT,
+    backgroundColor: 'transparent',
+  },
+  dimArea: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.8)',
   },
   modalBody: {
     flex: 1,
@@ -1031,6 +1044,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: -8,
     marginBottom: 12,
+  },
+  // Pickers have no bottom margin of their own when invalid, so space both sides here.
+  pickerErrorText: {
+    color: '#ff8a80',
+    fontSize: 12,
+    marginTop: 6,
+    marginBottom: 16,
   },
   listContainer: {
     maxHeight: SCREEN_HEIGHT * 0.7,

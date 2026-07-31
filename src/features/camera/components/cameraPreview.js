@@ -89,7 +89,6 @@ const CameraPreview = (props) => {
                   device={device}
                   isActive={
                     isScreenFocused
-                    && !wifiMenuVisible
                     && !isStandby
                   }
                   photo={true}

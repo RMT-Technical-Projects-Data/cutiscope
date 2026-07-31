@@ -272,7 +272,7 @@ const SettingsMenu = () => {
                                     </View>
                                 </TouchableOpacity>
 
-                                {/* Date & Time Menu Item */}
+                                {/* Date & Time Menu Item — temporarily hidden
                                 <TouchableOpacity
                                     style={[styles.menuItem, isPressed === 'Date&Time' && styles.menuItemPressed]}
                                     onPress={handlePressDateandTime}
@@ -291,6 +291,7 @@ const SettingsMenu = () => {
                                         <Text style={styles.arrow}>›</Text>
                                     </View>
                                 </TouchableOpacity>
+                                */}
 
                                 {/* Session inactivity timer */}
                                 <TouchableOpacity

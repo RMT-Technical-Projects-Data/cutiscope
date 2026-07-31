@@ -8,10 +8,6 @@ import {
 } from 'react-native';
 import KioskTextInput from '../../shared/ui/KioskTextInput';
 import CustomKeyboard from '../../shared/ui/CustomKeyboard';
-import CustomStatusBar, {
-  suppressAppStatusBar,
-  releaseAppStatusBar,
-} from '../../shared/ui/CustomStatusBar';
 import { useCustomKeyboard } from '../../shared/ui/CustomKeyboardContext';
 import { applyCappedTextChange } from '../../shared/utils/textInputLimits';
 import { CancelButton, PrimaryButton } from '../../shared/ui';
@@ -22,6 +18,8 @@ const BODY_PART_MAX_LENGTH = 20;
 const BODY_PART_VALID = /^[a-zA-Z\s]+$/;
 // Reserve space for the in-app keyboard so the form sits above it on open.
 const MODAL_BOTTOM_OFFSET = Math.min(300, Math.round(SCREEN_HEIGHT * 0.34));
+/** Matches App CustomStatusBar — leave a gap so it stays mounted (no camera jerk). */
+const APP_STATUS_BAR_HEIGHT = 62;
 
 function sanitizeBodyPart(text) {
   return String(text).replace(/[^a-zA-Z\s]/g, '').slice(0, BODY_PART_MAX_LENGTH);
@@ -57,12 +55,7 @@ const BodyPartModal = ({ visible, onClose, onSave, initialValue = '' }) => {
     return () => clearTimeout(t);
   }, [visible]);
 
-  // Modal has its own status bar — hide the App-level one.
-  useEffect(() => {
-    if (!visible) return undefined;
-    suppressAppStatusBar();
-    return () => releaseAppStatusBar();
-  }, [visible]);
+  // Do NOT suppress the App CustomStatusBar — unmounting it shifts the camera.
 
   const handleClose = () => {
     dismissKeyboard();
@@ -83,52 +76,54 @@ const BodyPartModal = ({ visible, onClose, onSave, initialValue = '' }) => {
     <Modal
       visible={visible}
       transparent
-      animationType="fade"
+      animationType="none"
       onRequestClose={handleClose}
       statusBarTranslucent
     >
       <View style={styles.root}>
-        <CustomStatusBar />
-        <View style={styles.modalBody}>
-          <View style={styles.modalLayer}>
-            <View style={styles.modalView}>
-              <Text style={styles.title}>Enter Body Part</Text>
-              <KioskTextInput
-                ref={inputRef}
-                style={styles.input}
-                value={value}
-                onChangeText={(text) => {
-                  setValue((prev) => applyCappedTextChange(
-                    prev,
-                    text,
-                    BODY_PART_MAX_LENGTH,
-                    (value) => value.replace(/[^a-zA-Z\s]/g, '')
-                  ));
-                }}
-                placeholder="e.g. Left Arm, Back"
-                placeholderTextColor="#666"
-                autoCapitalize="words"
-                autoCorrect={false}
-                maxLength={BODY_PART_MAX_LENGTH}
-                contextMenuHidden
-                selectTextOnFocus={false}
-                showDismiss
-                hostKeyboardLocally
-              />
-              <View style={styles.buttonRow}>
-                <CancelButton variant="text" title="Cancel" onPress={handleClose} />
-                <PrimaryButton
-                  title="Save"
-                  onPress={handleSave}
-                  disabled={!canSave}
-                  style={[styles.saveBtn, !canSave && styles.saveBtnDisabled]}
-                  textStyle={styles.saveText}
+        <View style={styles.statusBarSpacer} />
+        <View style={styles.dimArea}>
+          <View style={styles.modalBody}>
+            <View style={styles.modalLayer}>
+              <View style={styles.modalView}>
+                <Text style={styles.title}>Enter Body Part</Text>
+                <KioskTextInput
+                  ref={inputRef}
+                  style={styles.input}
+                  value={value}
+                  onChangeText={(text) => {
+                    setValue((prev) => applyCappedTextChange(
+                      prev,
+                      text,
+                      BODY_PART_MAX_LENGTH,
+                      (value) => value.replace(/[^a-zA-Z\s]/g, '')
+                    ));
+                  }}
+                  placeholder="e.g. Left Arm, Back"
+                  placeholderTextColor="#666"
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                  maxLength={BODY_PART_MAX_LENGTH}
+                  contextMenuHidden
+                  selectTextOnFocus={false}
+                  showDismiss
+                  hostKeyboardLocally
                 />
+                <View style={styles.buttonRow}>
+                  <CancelButton variant="text" title="Cancel" onPress={handleClose} />
+                  <PrimaryButton
+                    title="Save"
+                    onPress={handleSave}
+                    disabled={!canSave}
+                    style={[styles.saveBtn, !canSave && styles.saveBtnDisabled]}
+                    textStyle={styles.saveText}
+                  />
+                </View>
               </View>
             </View>
-          </View>
-          <View style={styles.keyboardLayer} pointerEvents="box-none">
-            <CustomKeyboard localHost />
+            <View style={styles.keyboardLayer} pointerEvents="box-none">
+              <CustomKeyboard localHost />
+            </View>
           </View>
         </View>
       </View>
@@ -138,6 +133,14 @@ const BodyPartModal = ({ visible, onClose, onSave, initialValue = '' }) => {
 
 const styles = StyleSheet.create({
   root: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  statusBarSpacer: {
+    height: APP_STATUS_BAR_HEIGHT,
+    backgroundColor: 'transparent',
+  },
+  dimArea: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.85)',
   },
