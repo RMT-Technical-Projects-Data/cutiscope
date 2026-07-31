@@ -407,12 +407,11 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
 
                             appInitiatedPairing.set(true);
                             pairingAddress.set(address);
-                            // Pause kiosk lock-task so system pairing UI can appear without black screens.
-                            MainActivity.stopImmersiveKioskWatchdog(activity);
-                            try {
-                                activity.stopLockTask();
-                            } catch (Exception ignored) {
-                            }
+                            // Keep immersive kiosk during bonding — never stopLockTask here,
+                            // or the gesture nav / status bars flash back in. The watchdog
+                            // re-hides them if a system overlay briefly clears the flags.
+                            MainActivity.startImmersiveKioskWatchdog(activity, 120_000L);
+                            MainActivity.reapplyFullKiosk(activity);
 
                             // Discovery keeps the radio busy and makes bonding slow enough to
                             // time out — stop it and give the adapter a moment to settle.
@@ -435,12 +434,14 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
                                     } else {
                                         appInitiatedPairing.set(false);
                                         pairingAddress.set(null);
+                                        MainActivity.stopImmersiveKioskWatchdog(activity);
                                         MainActivity.reapplyFullKiosk(activity);
                                         promise.reject("PAIR_ERROR", "Failed to start bonding");
                                     }
                                 } catch (Exception e) {
                                     appInitiatedPairing.set(false);
                                     pairingAddress.set(null);
+                                    MainActivity.stopImmersiveKioskWatchdog(activity);
                                     MainActivity.reapplyFullKiosk(activity);
                                     promise.reject("PAIR_ERROR", e.getMessage());
                                 }
@@ -552,6 +553,7 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
                     && cancelBondProcess(device);
             Activity activity = getCurrentActivity();
             if (activity != null) {
+                MainActivity.stopImmersiveKioskWatchdog(activity);
                 MainActivity.reapplyFullKiosk(activity);
             }
             promise.resolve(cancelled);
@@ -710,11 +712,8 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
                     activity.runOnUiThread(() -> {
                         appInitiatedPairing.set(true);
                         pairingAddress.set(address);
-                        MainActivity.stopImmersiveKioskWatchdog(activity);
-                        try {
-                            activity.stopLockTask();
-                        } catch (Exception ignored) {
-                        }
+                        MainActivity.startImmersiveKioskWatchdog(activity, 120_000L);
+                        MainActivity.reapplyFullKiosk(activity);
                     });
                 } catch (Exception ignored) {
                 }
@@ -735,6 +734,7 @@ public class BluetoothModule extends ReactContextBaseJavaModule {
             pendingBondResults.remove(address);
             Activity activity = getCurrentActivity();
             if (activity != null) {
+                MainActivity.stopImmersiveKioskWatchdog(activity);
                 MainActivity.reapplyFullKiosk(activity);
             }
         }

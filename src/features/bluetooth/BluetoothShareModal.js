@@ -64,11 +64,9 @@ const BluetoothShareModal = ({
   // Discovery must never run during pairing/transfer — it starves the radio.
   const canScanRef = useRef(false);
 
-  // Keep immersive kiosk while Bluetooth share UI is open — pause during pairing
-  // so the system bond dialog is not fought by lock-task reapply.
+  // Keep immersive kiosk while Bluetooth share / pairing UI is open (no nav gesture bar).
   useEffect(() => {
     if (!visible) return undefined;
-    if (sharePhase === 'pairing') return undefined;
     let cancelled = false;
     const reapply = () => {
       if (cancelled) return;
@@ -473,7 +471,7 @@ const BluetoothShareModal = ({
     try {
       await stopScan();
 
-      // 1) Pair first for unpaired / available devices (exits lock task for system pairing UI).
+      // 1) Pair first for unpaired / available devices (kiosk stays immersive).
       await pairThenReady(device);
 
       // 2) Then send files over OPP/OBEX.
