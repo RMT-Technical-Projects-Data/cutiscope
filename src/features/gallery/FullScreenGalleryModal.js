@@ -98,7 +98,8 @@ const ZoomableImage = ({ uri, version, viewWidth, viewHeight, onTap, onZoomChang
     [notifyZoom]
   );
 
-  const { displayedWidth, displayedHeight } = useMemo(
+  // fitContain returns { width, height } — rename for pan/zoom + layout.
+  const { width: displayedWidth, height: displayedHeight } = useMemo(
     () => fitContain(imgDims.w, imgDims.h, viewWidth, viewHeight),
     [imgDims, viewWidth, viewHeight]
   );
@@ -267,8 +268,7 @@ const ZoomableImage = ({ uri, version, viewWidth, viewHeight, onTap, onZoomChang
     ],
   }));
 
-  // Always paint into a full-viewport box. resizeMode="contain" scales the photo
-  // to fill the screen without letterboxing bugs from %/flex height collapse.
+  // Local file URI — guest and logged-in both use file:// paths here.
   const imageUri = useMemo(() => {
     if (!uri) return null;
     const raw = String(uri);
@@ -278,6 +278,8 @@ const ZoomableImage = ({ uri, version, viewWidth, viewHeight, onTap, onZoomChang
     return `file://${raw}`;
   }, [uri]);
 
+  // Transform a sized View, not Reanimated.Image: scaling a full-res ImageView
+  // (up to 4096px) on Android often drops the hardware layer → solid black.
   return (
     <GestureDetector gesture={composed}>
       <View
@@ -292,19 +294,25 @@ const ZoomableImage = ({ uri, version, viewWidth, viewHeight, onTap, onZoomChang
         }}
       >
         {imageUri ? (
-          <Reanimated.Image
-            key={`${imageUri}::${version || 0}`}
-            source={{ uri: imageUri }}
+          <Reanimated.View
+            collapsable={false}
+            renderToHardwareTextureAndroid={false}
             style={[
               {
-                width: viewWidth,
-                height: viewHeight,
+                width: displayedWidth,
+                height: displayedHeight,
               },
               animatedStyle,
             ]}
-            resizeMode="contain"
-            fadeDuration={0}
-          />
+          >
+            <Image
+              key={`${imageUri}::${version || 0}`}
+              source={{ uri: imageUri }}
+              style={{ width: displayedWidth, height: displayedHeight }}
+              resizeMode="cover"
+              fadeDuration={0}
+            />
+          </Reanimated.View>
         ) : null}
       </View>
     </GestureDetector>
