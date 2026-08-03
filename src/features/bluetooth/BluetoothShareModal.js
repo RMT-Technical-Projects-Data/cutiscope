@@ -420,7 +420,7 @@ const BluetoothShareModal = ({
     if (alreadyPaired) return true;
 
     setSharePhase('pairing');
-    showInAppToast(`Pairing with ${device.name || 'device'}. Confirm on both devices if asked.`, {
+    showInAppToast(`Pairing with ${device.name || 'device'}. Confirm on both devices.`, {
       durationMs: 4000,
       position: 'bottom',
     });
