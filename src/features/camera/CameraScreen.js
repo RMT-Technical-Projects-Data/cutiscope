@@ -63,7 +63,7 @@ import PowerOffModal from '../device/PowerOffModal';
 import PatientBoxModal from '../patients/patientSelectModal';
 import StandbyModal from '../device/StandbyModal';
 import BodyPartModal from '../patients/BodyPartModal';
-import { reconcileSelectedPatient } from '../patients/patientsService';
+import { applyPatientUpdateFromServer } from '../patients/patientsService';
 
 import TitleImg from '../../../assets/dscope-app.png';
 import VolumeManager from 'react-native-volume-manager';
@@ -143,13 +143,16 @@ const CameraScreen = ({ navigation }) => {
     })();
   }, []);
 
-  // Keep selected patient in sync with portal edits (same id, updated name → new folder).
+  // Keep selected patient in sync with portal edits; rename local album folders to match.
   const syncSelectedPatientFromServer = useCallback(async () => {
     if (isGuest) return;
     const box = currentBoxRef.current;
     if (!box?.id) return;
     try {
-      const updated = await reconcileSelectedPatient(box);
+      const updated = await applyPatientUpdateFromServer(box, {
+        userId: userData?.id,
+        username: getUsername?.(),
+      });
       if (!updated) return;
       setCurrentBox(updated);
       await AsyncStorage.setItem('@patient_box', JSON.stringify(updated));
@@ -157,7 +160,7 @@ const CameraScreen = ({ navigation }) => {
     } catch (e) {
       console.warn('Patient sync failed:', e?.message || e);
     }
-  }, [isGuest]);
+  }, [isGuest, userData?.id, getUsername]);
 
   // When patient picker opens, refresh selected patient from server immediately.
   useEffect(() => {
@@ -166,8 +169,7 @@ const CameraScreen = ({ navigation }) => {
     }
   }, [patientBoxModalVisible, isGuest, syncSelectedPatientFromServer]);
 
-  // While camera is open, periodically pull portal renames so new captures
-  // use the updated {id}__{name} folder without requiring a manual re-tap.
+  // While camera is open, periodically pull portal renames and consolidate local folders.
   useEffect(() => {
     if (!isFocused || isGuest) return undefined;
     syncSelectedPatientFromServer();

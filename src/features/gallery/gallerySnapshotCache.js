@@ -247,6 +247,62 @@ export function notifyGalleryPhotoUpdated(absolutePath) {
 }
 
 /**
+ * After a portal rename consolidates on-disk folders, remap in-memory album ids.
+ * @param {string[]} oldSegments previous folder names (e.g. 001__Old_Name)
+ * @param {string} newSegment canonical folder name (e.g. 001__New_Name)
+ */
+export function renamePatientFoldersInSnapshot(oldSegments = [], newSegment = '') {
+  const oldSet = new Set((oldSegments || []).filter(Boolean).map(String));
+  if (!newSegment || oldSet.size === 0) return;
+
+  const remapAlbum = (item) => {
+    const id = String(item?.id || '');
+    if (!oldSet.has(id)) return item;
+    const [idPart, namePart] = newSegment.split('__');
+    return {
+      ...item,
+      id: newSegment,
+      idLabel: newSegment.includes('__') ? idPart || newSegment : newSegment,
+      nameLabel:
+        newSegment.includes('__') && namePart ? namePart.replace(/_/g, ' ') : item.nameLabel,
+      _coverDir: item._coverDir
+        ? String(item._coverDir).replace(`/${id}`, `/${newSegment}`)
+        : item._coverDir,
+    };
+  };
+
+  const remapPhoto = (photo) => {
+    const folder = String(photo?.patientFolder || photo?.albumSegments?.[0] || '');
+    if (!oldSet.has(folder)) return photo;
+    const nextSegments = [...(photo.albumSegments || [])];
+    if (nextSegments.length > 0) nextSegments[0] = newSegment;
+    return {
+      ...photo,
+      patientFolder: newSegment,
+      albumSegments: nextSegments,
+      directory: photo.directory
+        ? String(photo.directory).replace(`/${folder}/`, `/${newSegment}/`)
+        : photo.directory,
+      absolutePath: photo.absolutePath
+        ? String(photo.absolutePath).replace(`/${folder}/`, `/${newSegment}/`)
+        : photo.absolutePath,
+      path: photo.path
+        ? String(photo.path).replace(`/${folder}/`, `/${newSegment}/`)
+        : photo.path,
+    };
+  };
+
+  snapshot = {
+    ...snapshot,
+    albumItems: (snapshot.albumItems || []).map(remapAlbum),
+    pendingAlbums: (snapshot.pendingAlbums || []).map(remapAlbum),
+    pendingPhotos: (snapshot.pendingPhotos || []).map(remapPhoto),
+    capturedPhotos: (snapshot.capturedPhotos || []).map(remapPhoto),
+    ts: Date.now(),
+  };
+}
+
+/**
  * Immediately drop deleted albums / pending placeholders from the in-memory snapshot
  * so a refresh cannot resurrect them from stale cache.
  * @param {string[]} albumIds folder segment names (e.g. patientId__Name)
@@ -287,6 +343,7 @@ export default {
   getPendingPhotos,
   getPendingAlbums,
   removeAlbumsFromSnapshot,
+  renamePatientFoldersInSnapshot,
   notifyGalleryPhotoUpdated,
   clearGallerySnapshot,
   getGalleryOwnerKey,

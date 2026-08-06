@@ -22,7 +22,8 @@ import CustomKeyboard from '../../shared/ui/CustomKeyboard';
 import { useCustomKeyboard } from '../../shared/ui/CustomKeyboardContext';
 import { BackButton } from '../../shared/ui';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-import { getPatients, createPatient, getNextPatientId } from './patientsService';
+import { getPatients, createPatient, getNextPatientId, applyPatientUpdateFromServer } from './patientsService';
+import { useAuth } from '../auth/authSessionContext';
 import { applyCappedTextChange } from '../../shared/utils/textInputLimits';
 import { notifyUserActivity } from '../../shared/utils/inAppToast';
 
@@ -87,6 +88,7 @@ const PatientBoxModal = ({
   onSet,
 }) => {
   const { hasFocusedInput, dismissKeyboard } = useCustomKeyboard();
+  const { userData, getUsername } = useAuth();
   const isBlank = !initialId && !initialName;
   const [activeTab, setActiveTab] = useState(TAB_NEW_BLANK);
   const [showNewPatientForm, setShowNewPatientForm] = useState(false);
@@ -182,13 +184,17 @@ const PatientBoxModal = ({
       setLoadingList(true);
       setListError(null);
       getPatients()
-        .then((list) => {
+        .then(async (list) => {
           const nextList = Array.isArray(list) ? list : [];
           setExistingList(nextList);
-          // Portal may have renamed the selected patient — sync without requiring a re-tap.
+          // Portal may have renamed the selected patient — sync folders and selection.
           if (initialId) {
             const match = nextList.find((p) => String(p.id) === String(initialId));
             if (match && String(match.name || '') !== String(initialName || '')) {
+              await applyPatientUpdateFromServer(
+                { id: String(initialId), name: String(initialName || '') },
+                { userId: userData?.id, username: getUsername?.() }
+              );
               onSet({
                 id: String(match.id),
                 name: String(match.name || ''),

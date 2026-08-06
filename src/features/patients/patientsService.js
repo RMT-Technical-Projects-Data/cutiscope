@@ -2,6 +2,7 @@ import axios from 'axios';
 import Config from 'react-native-config';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import authService from '../auth/authService';
+import { consolidatePatientFoldersForPatient } from './patientFolderSync';
 
 const BASE_URL = (Config.API_BASE_URL || 'http://35.154.32.201:4040').replace(/\/$/, '');
 const PATIENTS_URL = `${BASE_URL}/api/patients`;
@@ -149,6 +150,25 @@ export async function reconcileSelectedPatient(current) {
     console.warn('reconcileSelectedPatient failed:', e?.message || e);
     return null;
   }
+}
+
+/**
+ * Pull portal changes for the selected patient and merge any duplicate local folders
+ * into the canonical `{id}__{name}` album (same behavior as web S3 folder rename).
+ * Returns updated { id, name } when metadata changed, otherwise null.
+ */
+export async function applyPatientUpdateFromServer(current, { userId, username } = {}) {
+  const updated = await reconcileSelectedPatient(current);
+  const next = updated || current;
+  if (next?.id && next?.name) {
+    await consolidatePatientFoldersForPatient({
+      userId,
+      username,
+      patientId: next.id,
+      patientName: next.name,
+    });
+  }
+  return updated;
 }
 
 /**

@@ -27,6 +27,8 @@ import { imageCache as IMAGE_CACHE } from '../components/galleryThumbnailItem';
 import { showInAppToast } from '../../../shared/utils/inAppToast';
 import GalleryIndexer from '../../../shared/native/GalleryIndexer';
 import { sanitizeFolderName } from '../utils/albumPathBuilder';
+import { getPatients } from '../../patients/patientsService';
+import { consolidateDuplicatePatientFolders } from '../../patients/patientFolderSync';
 
 export { sanitizeFolderName } from '../utils/albumPathBuilder';
 
@@ -130,6 +132,7 @@ const useGalleryAlbumNavigation = ({
   const loadingDelayRef = useRef(null);
   /** Once a photo-leaf folder has been revealed, never flash loading again for that path. */
   const photoLeafReadyPathRef = useRef('');
+  const patientFolderConsolidateRef = useRef(0);
 
   albumPathRef.current = albumPath;
 
@@ -245,6 +248,25 @@ const useGalleryAlbumNavigation = ({
     }
     return `${RNFS.DocumentDirectoryPath}/Dermscope/${userSegment}`;
   }, [isGuest, userData, getUsername]);
+
+  const maybeConsolidateDuplicatePatientFolders = useCallback(async () => {
+    if (isGuest) return false;
+    const now = Date.now();
+    if (now - patientFolderConsolidateRef.current < 60000) return false;
+    patientFolderConsolidateRef.current = now;
+    try {
+      const patients = await getPatients();
+      const { groupsMerged } = await consolidateDuplicatePatientFolders({
+        userId: userData?.id,
+        username: getUsername?.(),
+        patients,
+      });
+      return groupsMerged > 0;
+    } catch (e) {
+      console.warn('Gallery patient folder consolidate:', e?.message || e);
+      return false;
+    }
+  }, [isGuest, userData?.id, getUsername]);
 
   // Entering a folder: clear previous level tiles so we never flash the wrong albums.
   // Mark not-loaded immediately so Gallery shows "Fetching…" instead of a black body.
@@ -520,7 +542,7 @@ const useGalleryAlbumNavigation = ({
         // Single paint path only — no warm intermediate paint (that caused one-by-one covers).
 
         // Album levels always request latest covers (patient / year / date).
-        const listing = await GalleryIndexer.listDirectory(
+        let listing = await GalleryIndexer.listDirectory(
           currentDir,
           deletedArr,
           albumsOnlyLevel,
@@ -566,6 +588,15 @@ const useGalleryAlbumNavigation = ({
               await applyPhotos((recursive.photos || []).map(formatPhoto));
             }
             return;
+          }
+          if (await maybeConsolidateDuplicatePatientFolders()) {
+            listing = await GalleryIndexer.listDirectory(
+              currentDir,
+              deletedArr,
+              albumsOnlyLevel,
+              albumsOnlyLevel
+            );
+            if (gen !== loadGenRef.current) return;
           }
           if (listing.dirs.length > 0) {
             let items = buildPatientAlbumItems(listing.dirs.map(toRnfsLikeDir));
@@ -687,6 +718,9 @@ const useGalleryAlbumNavigation = ({
       };
 
       if (path.length === 0) {
+        if (!isGuest) {
+          await maybeConsolidateDuplicatePatientFolders();
+        }
         const list = await RNFS.readDir(currentDir);
         if (gen !== loadGenRef.current) return;
         const dirs = list.filter((i) => i.isDirectory());
@@ -760,7 +794,7 @@ const useGalleryAlbumNavigation = ({
         showInAppToast('Failed to load gallery', { durationMs: 2000, position: 'bottom' });
       }
     }
-  }, [getBasePath, galleryOwnerKey, setCapturedPhotos, isGuest, beginLoadIndicator, endLoadIndicator, clearLoadingDelay]);
+  }, [getBasePath, galleryOwnerKey, setCapturedPhotos, isGuest, beginLoadIndicator, endLoadIndicator, clearLoadingDelay, maybeConsolidateDuplicatePatientFolders]);
 
   const loadImages = useCallback(async (isSilent = false) => {
     const granted = await requestStoragePermissionForGallery(require('react-native').PermissionsAndroid);
