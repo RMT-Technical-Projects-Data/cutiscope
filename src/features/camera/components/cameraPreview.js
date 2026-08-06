@@ -95,7 +95,7 @@ const CameraPreview = (props) => {
                   animatedProps={animatedCameraProps}
                   format={format}
                   torch={isFlashOn ? 'on' : 'off'} // FLASHLIGHT CONTROL
-                  photoQualityBalance="speed"
+                  photoQualityBalance="quality"
                   enableZoomGesture={false}
                   enableFpsGraph={false}
                   // Lock photo orientation to the portrait-locked preview so a tilted

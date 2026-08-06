@@ -573,11 +573,9 @@ export function useCameraCapture({
         }
 
         const photo = await takePhotoWithRetry(cameraRef, {
-          // 'speed' returns from the shutter as fast as possible (no multi-frame
-          // HDR fusion) — best for rapid, continuous capture. Still a full-
-          // resolution image. Bump to 'balanced'/'quality' if more processing is
-          // acceptable at the cost of shutter lag.
-          qualityPrioritization: 'speed',
+          // 'quality' uses the sensor's max resolution with full processing — required for
+          // 48MP clinical captures. Upload queue compresses separately; local DCIM stays full-res.
+          qualityPrioritization: 'quality',
           flash: 'off',
           enableShutterSound: false,
         });

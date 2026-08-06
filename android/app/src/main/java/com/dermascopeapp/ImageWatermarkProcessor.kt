@@ -75,19 +75,9 @@ object ImageWatermarkProcessor {
         var bitmap = BitmapFactory.decodeFile(cleanPath, options)
             ?: throw IllegalStateException("Failed to decode bitmap from $cleanPath")
 
-        val maxEdge = 4096
-        val srcW = bitmap.width
-        val srcH = bitmap.height
-        if (srcW > maxEdge || srcH > maxEdge) {
-            val scale = min(maxEdge.toFloat() / srcW, maxEdge.toFloat() / srcH)
-            val scaledW = max(1, (srcW * scale).toInt())
-            val scaledH = max(1, (srcH * scale).toInt())
-            val scaled = Bitmap.createScaledBitmap(bitmap, scaledW, scaledH, true)
-            if (scaled != bitmap) {
-                bitmap.recycle()
-                bitmap = scaled
-            }
-        }
+        // Preserve full sensor resolution (48MP ≈ 8064×6048). Do not downscale here —
+        // upload compression is handled separately in compressIfNeeded().
+        Log.d(TAG, "processToCache decode: ${bitmap.width}×${bitmap.height}px")
 
         val originalW = bitmap.width
         val originalH = bitmap.height
@@ -205,7 +195,8 @@ object ImageWatermarkProcessor {
 
         val outputFile = File(cacheDir, "processed_${System.currentTimeMillis()}_${Thread.currentThread().id}.jpg")
         FileOutputStream(outputFile).use { out ->
-            outputBitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+            // High quality for local clinical archive — upload path compresses separately if needed.
+            outputBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
         }
         outputBitmap.recycle()
         return outputFile.absolutePath
