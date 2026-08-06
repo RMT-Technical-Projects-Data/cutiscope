@@ -51,7 +51,7 @@ export function useCameraTorch({
     if (toggleLight) {
       toggleLight();
     } else if (batteryLevel <= 0.2) {
-      showInAppToast('Battery too low. Please charge the phone to use the flashlight.', { durationMs: 2000 });
+      showInAppToast('Battery is low. Please charge the device to use the polarized leds.', { durationMs: 2000 });
       resetInactivityTimer?.();
       return;
     }

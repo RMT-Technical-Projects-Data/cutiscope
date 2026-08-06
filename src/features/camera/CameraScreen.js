@@ -115,7 +115,7 @@ const CameraScreen = ({ navigation }) => {
       if (Platform.OS === 'android' && NativeModules.DermascopeModule) {
         NativeModules.DermascopeModule.setPolarization(false, 0);
       }
-      showInAppToast('Battery is low. Please charge the phone to use the flashlight.', { durationMs: 3500 });
+      showInAppToast('Battery is low. Please charge the device to use the polarized leds.', { durationMs: 3500 });
     },
   });
 
@@ -364,7 +364,7 @@ const CameraScreen = ({ navigation }) => {
   // Wrapped toggle to check battery
   const toggleLight = useCallback(() => {
     if (batteryLevel <= 0.2) {
-      showInAppToast('Battery too low. Please charge the phone to use the flashlight.', { durationMs: 2000 });
+      showInAppToast('Battery is low. Please charge the device to use the polarized leds.', { durationMs: 2000 });
       return;
     }
     setIsLightOn(prev => !prev);
