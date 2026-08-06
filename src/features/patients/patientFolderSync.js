@@ -8,6 +8,8 @@ import {
   GALLERY_PENDING_CHANGED,
   renamePatientFoldersInSnapshot,
 } from '../gallery/gallerySnapshotCache';
+import { remapPatientFolderPaths } from '../upload/localImageDatabase';
+import { remapQueuedFilePaths } from '../upload/optimisedUploadQueue';
 
 const patientNumberFromFolderName = (folderName) => {
   const raw = String(folderName || '').includes('__')
@@ -116,6 +118,13 @@ export async function consolidatePatientFoldersForPatient({
   }
 
   if (mergedFolders.length > 0) {
+    const { pathMap } = await remapPatientFolderPaths({
+      oldSegments: mergedFolders,
+      newSegment: targetSegment,
+      patientId,
+      patientName,
+    });
+    remapQueuedFilePaths(pathMap);
     renamePatientFoldersInSnapshot(mergedFolders, targetSegment);
     notifyGalleryFoldersChanged();
     console.log(

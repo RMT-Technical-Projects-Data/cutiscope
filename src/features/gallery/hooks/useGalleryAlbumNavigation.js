@@ -224,7 +224,11 @@ const useGalleryAlbumNavigation = ({
       queueStatus(filePath, 'UPLOADED');
     });
 
-    const statusSub = DeviceEventEmitter.addListener('IMAGE_UPLOAD_STATUS_CHANGED', ({ filePath, status }) => {
+    const statusSub = DeviceEventEmitter.addListener('IMAGE_UPLOAD_STATUS_CHANGED', ({ filePath, status, previousPath }) => {
+      if (previousPath) {
+        const oldClean = String(previousPath).replace('file://', '').split('?')[0];
+        pendingStatuses.delete(oldClean);
+      }
       queueStatus(filePath, status);
     });
 

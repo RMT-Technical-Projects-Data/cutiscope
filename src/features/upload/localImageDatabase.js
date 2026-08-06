@@ -5,6 +5,7 @@
 
 import RNFS from 'react-native-fs';
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import UploadQueueNative from '../../shared/native/UploadQueueNative';
 
 const REGISTRY_FILENAME = 'dermaScope_image_registry.json';
@@ -206,6 +207,86 @@ export const getUploadStatusMap = async () => {
   return map;
 };
 
+/**
+ * After a patient album folder is renamed/consolidated on disk, keep upload registry
+ * paths and flags aligned so already-uploaded photos are not treated as new uploads.
+ */
+export const remapPatientFolderPaths = async ({
+  oldSegments = [],
+  newSegment,
+  patientId,
+  patientName,
+}) => {
+  const segments = (oldSegments || []).filter(Boolean).map(String);
+  if (!newSegment || segments.length === 0) {
+    return { updated: 0, pathMap: {} };
+  }
+
+  const reg = await loadRegistry();
+  const pathMap = {};
+  let updated = 0;
+
+  for (let idx = 0; idx < reg.images.length; idx += 1) {
+    const img = reg.images[idx];
+    let newPath = normalizePath(img.filePath);
+    let changed = false;
+
+    for (const oldSeg of segments) {
+      const needle = `/${oldSeg}/`;
+      if (newPath.includes(needle)) {
+        newPath = newPath.replace(needle, `/${newSegment}/`);
+        changed = true;
+      }
+    }
+
+    if (!changed || newPath === normalizePath(img.filePath)) continue;
+
+    const oldPath = normalizePath(img.filePath);
+    pathMap[oldPath] = newPath;
+
+    const updatedRecord = {
+      ...img,
+      filePath: newPath,
+      ...(patientId != null ? { patientId: String(patientId) } : {}),
+      ...(patientName != null ? { patientName: String(patientName) } : {}),
+    };
+
+    if (UploadQueueNative.isAvailable()) {
+      try {
+        await UploadQueueNative.updateFilePath(oldPath, newPath);
+      } catch (e) {
+        console.warn('UploadQueueNative.updateFilePath failed, upserting:', e?.message || e);
+        try {
+          await UploadQueueNative.removeByFilePath(oldPath);
+          await UploadQueueNative.upsertImage(updatedRecord);
+        } catch (err) {
+          console.warn('UploadQueueNative path remap fallback failed:', err?.message || err);
+        }
+      }
+    }
+
+    reg.images[idx] = updatedRecord;
+    updated += 1;
+  }
+
+  if (updated > 0) {
+    cacheDirty = true;
+    await saveRegistry();
+  }
+
+  for (const [oldPath, newPath] of Object.entries(pathMap)) {
+    try {
+      const flag = await AsyncStorage.getItem(`uploaded_${oldPath}`);
+      if (flag != null) {
+        await AsyncStorage.setItem(`uploaded_${newPath}`, flag);
+        await AsyncStorage.removeItem(`uploaded_${oldPath}`);
+      }
+    } catch (_) {}
+  }
+
+  return { updated, pathMap };
+};
+
 export { UPLOAD_STATUS };
 
 export default {
@@ -220,5 +301,6 @@ export default {
   removeImageByFilePath,
   removeImagesByFilePaths,
   getUploadStatusMap,
+  remapPatientFolderPaths,
   UPLOAD_STATUS,
 };

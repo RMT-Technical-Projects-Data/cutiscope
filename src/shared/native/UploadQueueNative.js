@@ -42,6 +42,11 @@ export const UploadQueueNative = {
     return UploadQueueModule.removeByFilePaths(paths || []);
   },
 
+  async updateFilePath(oldPath, newPath) {
+    if (!this.isAvailable()) return false;
+    return UploadQueueModule.updateFilePath(oldPath, newPath);
+  },
+
   async getUploadStatusMap() {
     if (!this.isAvailable()) return {};
     return UploadQueueModule.getUploadStatusMap();

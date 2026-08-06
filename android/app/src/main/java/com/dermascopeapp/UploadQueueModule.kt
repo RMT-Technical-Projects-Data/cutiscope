@@ -242,6 +242,26 @@ class UploadQueueModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun updateFilePath(oldPath: String, newPath: String, promise: Promise) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val old = normalizePath(oldPath)
+                val newP = normalizePath(newPath)
+                if (old.isEmpty() || newP.isEmpty() || old == newP) {
+                    withContext(Dispatchers.Main) { promise.resolve(false) }
+                    return@launch
+                }
+                val values = ContentValues().apply { put("filePath", newP) }
+                val rows = dbHelper.writableDatabase.update("images", values, "filePath=?", arrayOf(old))
+                withContext(Dispatchers.Main) { promise.resolve(rows > 0) }
+            } catch (e: Exception) {
+                Log.e("UploadQueue", "updateFilePath failed", e)
+                withContext(Dispatchers.Main) { promise.reject("PATH_UPDATE_FAILED", e.message, e) }
+            }
+        }
+    }
+
+    @ReactMethod
     fun getUploadStatusMap(promise: Promise) {
         CoroutineScope(Dispatchers.IO).launch {
             try {

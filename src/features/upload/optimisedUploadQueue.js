@@ -277,6 +277,21 @@ const processUploadQueue = async () => {
             patientFolder
           );
         } else {
+          if (image.uploadStatus === ImageDatabase.UPLOAD_STATUS.UPLOADED) {
+            console.log('☁️ [Queue] Skipping already uploaded image:', imageId);
+            item.status = 'completed';
+            uploadQueue.shift();
+            notifyQueueChange();
+            try {
+              await AsyncStorage.setItem(`uploaded_${item.filePath}`, 'true');
+            } catch (_) {}
+            DeviceEventEmitter.emit('IMAGE_UPLOADED', item.filePath);
+            DeviceEventEmitter.emit('IMAGE_UPLOAD_STATUS_CHANGED', {
+              filePath: item.filePath,
+              status: 'UPLOADED',
+            });
+            continue;
+          }
           try {
             await ImageDatabase.updateUploadStatus(imageId, ImageDatabase.UPLOAD_STATUS.UPLOADING);
           } catch (_) { }
@@ -541,6 +556,38 @@ export const isUploadInProgress = () => {
   return isUploading || uploadQueue.length > 0;
 };
 
+/** After patient folder rename, retarget in-flight queue items to moved file paths. */
+export const remapQueuedFilePaths = (pathMap = {}) => {
+  if (!pathMap || typeof pathMap !== 'object') return 0;
+  const normalize = (p) => (p && String(p).replace(/^file:\/\//, '')) || '';
+  let count = 0;
+
+  for (const item of uploadQueue) {
+    const clean = normalize(item.filePath);
+    const newPath = pathMap[clean];
+    if (!newPath || newPath === clean) continue;
+
+    item.filePath = newPath;
+    count += 1;
+
+    const status =
+      item.status === 'uploading'
+        ? 'UPLOADING'
+        : item.status === 'completed'
+          ? 'UPLOADED'
+          : 'PENDING';
+
+    DeviceEventEmitter.emit('IMAGE_UPLOAD_STATUS_CHANGED', {
+      filePath: newPath,
+      status,
+      previousPath: clean,
+    });
+  }
+
+  if (count > 0) notifyQueueChange();
+  return count;
+};
+
 /** Kick the worker (e.g. after manual Retry when Wi‑Fi returns). */
 export const resumeUploadQueue = () => {
   if (uploadQueue.length > 0 && !isUploading) {
@@ -559,6 +606,7 @@ export default {
   getQueueStatus,
   isUploadInProgress,
   isImageInQueue,
+  remapQueuedFilePaths,
   resumeUploadQueue,
   
   // Utilities
