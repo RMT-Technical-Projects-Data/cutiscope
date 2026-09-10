@@ -373,7 +373,6 @@ const App = () => {
   const lastPowerPressRef = useRef(0);
   const isBlackScreenVisibleRef = useRef(false);
   const usedRootBacklightRef = useRef(false);
-   
   // "Lock" simulation: instead of really sleeping the device (which lets Android
   // kill this kiosk process and crash on resume), cover the screen with a full
   // black overlay AND kill the backlight for a true "screen off" look.
