@@ -31,6 +31,7 @@ export function isClockSkewError(err) {
   const msg = String(err.message || err || '');
   return (
     msg.includes(CLOCK_SKEW_CODE) ||
+    /RequestTimeTooSkewed/i.test(msg) ||
     /Chain validation failed/i.test(msg) ||
     /certificate.*(not yet valid|expired|chain)/i.test(msg)
   );
@@ -64,26 +65,32 @@ function deviceLooksSkewed(nowMs = Date.now()) {
  * Returns epoch ms or null.
  */
 async function fetchNetworkTimeMs() {
+  const ts = Date.now();
   const httpUrls = [
-    // Cleartext backends already allowed in network_security_config
-    'http://35.154.32.201:4040/',
+    // Cleartext backends already allowed in network_security_config (with cache busting)
+    `http://35.154.32.201:4040/?_t=${ts}`,
   ];
   for (const url of httpUrls) {
     try {
       const controller =
         typeof AbortController !== 'undefined' ? new AbortController() : null;
       const timer = controller
-        ? setTimeout(() => controller.abort(), 4000)
+        ? setTimeout(() => controller.abort(), 3000)
         : null;
       const res = await fetch(url, {
         method: 'GET',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+        },
+        cache: 'no-store',
         ...(controller ? { signal: controller.signal } : {}),
       });
       if (timer) clearTimeout(timer);
       const dateHdr = res.headers?.get?.('date') || res.headers?.get?.('Date');
       if (dateHdr) {
         const ms = Date.parse(dateHdr);
-        if (!Number.isNaN(ms)) return ms;
+        if (!Number.isNaN(ms) && new Date(ms).getFullYear() >= MIN_VALID_YEAR) return ms;
       }
       try {
         const text = await res.text();
@@ -91,7 +98,7 @@ async function fetchNetworkTimeMs() {
         const iso = json?.datetime || json?.utc_datetime || json?.currentDateTime;
         if (iso) {
           const ms = Date.parse(iso);
-          if (!Number.isNaN(ms)) return ms;
+          if (!Number.isNaN(ms) && new Date(ms).getFullYear() >= MIN_VALID_YEAR) return ms;
         }
       } catch (_) {}
     } catch (_) {
@@ -100,25 +107,30 @@ async function fetchNetworkTimeMs() {
   }
 
   const httpsUrls = [
-    'https://s3.ap-south-1.amazonaws.com',
-    'https://www.google.com',
+    `https://s3.ap-south-1.amazonaws.com?_t=${ts}`,
+    `https://www.google.com?_t=${ts}`,
   ];
   for (const url of httpsUrls) {
     try {
       const controller =
         typeof AbortController !== 'undefined' ? new AbortController() : null;
       const timer = controller
-        ? setTimeout(() => controller.abort(), 4000)
+        ? setTimeout(() => controller.abort(), 3000)
         : null;
       const res = await fetch(url, {
         method: 'HEAD',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+        },
+        cache: 'no-store',
         ...(controller ? { signal: controller.signal } : {}),
       });
       if (timer) clearTimeout(timer);
       const dateHdr = res.headers?.get?.('date') || res.headers?.get?.('Date');
       if (dateHdr) {
         const ms = Date.parse(dateHdr);
-        if (!Number.isNaN(ms)) return ms;
+        if (!Number.isNaN(ms) && new Date(ms).getFullYear() >= MIN_VALID_YEAR) return ms;
       }
     } catch (_) {
       /* try next */
@@ -147,11 +159,21 @@ async function trySetSystemTime(targetMs) {
 
 /**
  * Ensure device clock is sane for TLS + SigV4 before any S3 put.
+ * Fast path: If the local device clock year is already valid (>= 2025) and not paused,
+ * it returns true immediately without blocking uploads.
+ *
+ * @param {boolean} forceCheck - Set true to force network time verification.
  * @throws {ClockSkewError} when skew cannot be corrected
  */
-export async function ensureS3ClockOk() {
+export async function ensureS3ClockOk(forceCheck = false) {
   const localMs = Date.now();
-  console.log('🕒 Device time for S3 signing:', new Date(localMs).toISOString());
+
+  // Fast path: If not forced, not currently paused, and year looks sane (>= 2025), proceed immediately
+  if (!forceCheck && !pausedForSkew && !deviceLooksSkewed(localMs)) {
+    return true;
+  }
+
+  console.log('🕒 Checking clock sanity for S3 signing:', new Date(localMs).toISOString());
 
   let networkMs = null;
   try {
