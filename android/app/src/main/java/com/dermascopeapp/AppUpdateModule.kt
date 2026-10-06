@@ -30,7 +30,7 @@ class AppUpdateModule(private val reactContext: ReactApplicationContext) : React
 
     companion object {
         private const val TAG = "AppUpdateModule"
-        private const val GITHUB_API_URL = "https://api.github.com/repos/noory22/cutiscope/releases/latest"
+        private const val GITHUB_API_URL = "https://api.github.com/repos/RMT-Technical-Projects-Data/cutiscope/releases/latest"
         private const val APK_FILE_NAME = "cutiscope-update.apk"
     }
 
@@ -46,23 +46,25 @@ class AppUpdateModule(private val reactContext: ReactApplicationContext) : React
 
     /**
      * Fetches the latest release from GitHub API and compares versions.
-     * Returns a WritableMap: { isAvailable, versionName, releaseNotes, downloadUrl }
+     * Returns a WritableMap: { isAvailable, versionName, installedVersion, releaseNotes, downloadUrl }
      */
     @ReactMethod
     fun checkForUpdate(promise: Promise) {
         Thread {
             try {
+                Log.d(TAG, "Checking for update at: $GITHUB_API_URL")
                 val url = URL(GITHUB_API_URL)
                 val connection = url.openConnection() as HttpURLConnection
                 connection.requestMethod = "GET"
                 connection.setRequestProperty("Accept", "application/vnd.github.v3+json")
+                connection.setRequestProperty("User-Agent", "CutiScope-Android-App")
                 connection.connectTimeout = 10000
                 connection.readTimeout = 10000
 
                 val responseCode = connection.responseCode
                 if (responseCode != 200) {
-                    Log.e(TAG, "GitHub API returned $responseCode")
-                    promise.resolve(createNoUpdateResult())
+                    Log.e(TAG, "GitHub API returned HTTP $responseCode")
+                    promise.resolve(createNoUpdateResult(errorMessage = "GitHub API returned HTTP $responseCode"))
                     return@Thread
                 }
 
@@ -97,13 +99,13 @@ class AppUpdateModule(private val reactContext: ReactApplicationContext) : React
                 val remoteVersion = tagName.removePrefix("v").removePrefix("V").trim()
                 val installedVersion = getInstalledVersionName()
 
-                Log.d(TAG, "Installed version: $installedVersion, Remote version: $remoteVersion")
-
                 val isUpdateAvailable = isNewerVersion(remoteVersion, installedVersion)
+                Log.i(TAG, "Update check result: installed=$installedVersion, remote=$remoteVersion, isAvailable=$isUpdateAvailable, downloadUrl=$downloadUrl")
 
                 val result = Arguments.createMap()
                 result.putBoolean("isAvailable", isUpdateAvailable)
                 result.putString("versionName", remoteVersion)
+                result.putString("installedVersion", installedVersion)
                 result.putString("releaseNotes", releaseNotes)
                 result.putString("downloadUrl", downloadUrl)
 
@@ -111,8 +113,8 @@ class AppUpdateModule(private val reactContext: ReactApplicationContext) : React
 
             } catch (e: Exception) {
                 Log.e(TAG, "Check for update failed", e)
-                // On failure, don't show update — resolve with isAvailable=false
-                promise.resolve(createNoUpdateResult())
+                // On failure, don't show update — resolve with isAvailable=false and error info
+                promise.resolve(createNoUpdateResult(errorMessage = e.message ?: "Unknown error"))
             }
         }.start()
     }
@@ -235,12 +237,20 @@ class AppUpdateModule(private val reactContext: ReactApplicationContext) : React
         }
     }
 
-    private fun createNoUpdateResult(): com.facebook.react.bridge.WritableMap {
+    private fun createNoUpdateResult(
+        installedVersion: String = "",
+        remoteVersion: String = "",
+        errorMessage: String = ""
+    ): com.facebook.react.bridge.WritableMap {
         val result = Arguments.createMap()
         result.putBoolean("isAvailable", false)
-        result.putString("versionName", "")
+        result.putString("versionName", remoteVersion)
+        result.putString("installedVersion", installedVersion)
         result.putString("releaseNotes", "")
         result.putString("downloadUrl", "")
+        if (errorMessage.isNotEmpty()) {
+            result.putString("errorMessage", errorMessage)
+        }
         return result
     }
 

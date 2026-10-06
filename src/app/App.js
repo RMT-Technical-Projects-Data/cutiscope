@@ -555,8 +555,11 @@ const App = () => {
   useEffect(() => {
     const checkUpdates = async () => {
       try {
+        console.log('[UpdateCheck] Starting update check...');
         const result = await NativeModules.AppUpdateModule.checkForUpdate();
+        console.log('[UpdateCheck] Native response:', result);
         if (result && result.isAvailable) {
+          console.log(`[UpdateCheck] New version available: v${result.versionName} (Installed: v${result.installedVersion || 'unknown'}). Showing modal.`);
           setUpdateInfo({
             versionName: result.versionName || "New Version",
             releaseNotes: result.releaseNotes || "Performance improvements and bug fixes.",
@@ -564,9 +567,11 @@ const App = () => {
             forceUpdate: false
           });
           setIsUpdateModalVisible(true);
+        } else {
+          console.log(`[UpdateCheck] No update required or check skipped. Installed: ${result?.installedVersion}, Remote: ${result?.versionName}, Error: ${result?.errorMessage || 'None'}`);
         }
       } catch (e) {
-        console.error("Update check failed:", e);
+        console.error("[UpdateCheck] Update check exception:", e);
       }
     };
 
