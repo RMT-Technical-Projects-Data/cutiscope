@@ -2,21 +2,27 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export function normalizeSSID(ssid) {
   if (!ssid) return '';
-  const value = String(ssid).trim();
-  if (value.startsWith('"') && value.endsWith('"')) {
-    return value.substring(1, value.length - 1);
+  let value = String(ssid);
+  if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
+    value = value.substring(1, value.length - 1);
   }
   return value;
 }
 
 export function ssidsMatch(a, b) {
-  return normalizeSSID(a) === normalizeSSID(b);
+  const normA = normalizeSSID(a);
+  const normB = normalizeSSID(b);
+  if (normA === normB) return true;
+  if (!normA || !normB) return false;
+  return normA.trim() === normB.trim();
 }
 
 export function getPasswordForSSID(passwords, ssid) {
+  if (!passwords || !ssid) return undefined;
   const normalized = normalizeSSID(ssid);
   if (!normalized) return undefined;
   if (passwords[normalized] != null) return passwords[normalized];
+  if (passwords[normalized.trim()] != null) return passwords[normalized.trim()];
   const matchedKey = Object.keys(passwords).find((key) => ssidsMatch(key, normalized));
   return matchedKey != null ? passwords[matchedKey] : undefined;
 }
@@ -73,7 +79,7 @@ export function mergeWifiScanResults(previousNetworks, scannedNetworks, scanNow 
     if (!currentBest || Math.abs(level) < Math.abs(currentBest.level || -100)) {
       latestScanMap.set(ssid, {
         ...network,
-        SSID: network.SSID?.trim?.() ? network.SSID.trim() : ssid,
+        SSID: ssid,
         BSSID: network.BSSID || `ssid_${ssid}_${scanNow}`,
         level,
         capabilities: network.capabilities || '',

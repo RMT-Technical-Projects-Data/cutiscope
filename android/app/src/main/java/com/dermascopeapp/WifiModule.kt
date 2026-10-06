@@ -16,12 +16,16 @@ class WifiModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaMo
     override fun getName(): String = "WifiModule"
 
     private fun normalizeSsid(ssid: String?): String {
-        if (ssid.isNullOrBlank()) return ""
-        var s = ssid.trim()
+        if (ssid == null) return ""
+        var s = ssid
         if (s.length >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
             s = s.substring(1, s.length - 1)
         }
         return s
+    }
+
+    private fun escapeShellArg(arg: String): String {
+        return "'" + arg.replace("'", "'\\''") + "'"
     }
 
     private fun forgetNetworkInternal(ssid: String) {
@@ -38,25 +42,23 @@ class WifiModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaMo
             val output = BufferedReader(InputStreamReader(listProcess.inputStream)).use { it.readText() }
             listProcess.waitFor()
 
-            var networkId: String? = null
             for (line in output.split("\n")) {
                 if (line.contains(normalized)) {
                     val parts = line.trim().split(Regex("\\s+"))
                     if (parts.isNotEmpty()) {
-                        networkId = parts[0]
-                        break
+                        val networkId = parts[0]
+                        if (networkId.toIntOrNull() != null) {
+                            val forgetProcess = Runtime.getRuntime().exec("su")
+                            DataOutputStream(forgetProcess.outputStream).use { os ->
+                                os.writeBytes("cmd wifi forget-network $networkId\n")
+                                os.writeBytes("exit\n")
+                                os.flush()
+                            }
+                            forgetProcess.waitFor()
+                        }
                     }
                 }
             }
-            if (networkId.isNullOrBlank()) return
-
-            val forgetProcess = Runtime.getRuntime().exec("su")
-            DataOutputStream(forgetProcess.outputStream).use { os ->
-                os.writeBytes("cmd wifi forget-network $networkId\n")
-                os.writeBytes("exit\n")
-                os.flush()
-            }
-            forgetProcess.waitFor()
         } catch (_: Exception) {
         }
     }
@@ -65,14 +67,15 @@ class WifiModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaMo
     fun connectToWifi(ssid: String, password: String?, securityType: String?, promise: Promise) {
         Thread {
             try {
+                val cleanSsid = normalizeSsid(ssid)
                 val process = Runtime.getRuntime().exec("su")
                 DataOutputStream(process.outputStream).use { os ->
                     val auth = if (password.isNullOrEmpty()) "open" else "wpa2"
-                    val quotedSsid = "\"$ssid\""
+                    val quotedSsid = escapeShellArg(cleanSsid)
                     if (password.isNullOrEmpty()) {
                         os.writeBytes("cmd wifi connect-network $quotedSsid $auth\n")
                     } else {
-                        val quotedPass = "\"$password\""
+                        val quotedPass = escapeShellArg(password)
                         os.writeBytes("cmd wifi connect-network $quotedSsid $auth $quotedPass\n")
                     }
                     os.writeBytes("exit\n")

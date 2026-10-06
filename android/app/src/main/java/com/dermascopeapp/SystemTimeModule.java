@@ -170,6 +170,11 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
         }
     }
 
+    private String escapeShellArg(String arg) {
+        if (arg == null) return "''";
+        return "'" + arg.replace("'", "'\\''") + "'";
+    }
+
     @ReactMethod
     public void connectToWifi(String ssid, String password, String securityType,
             com.facebook.react.bridge.Promise promise) {
@@ -177,27 +182,18 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
             Process process = Runtime.getRuntime().exec("su");
             DataOutputStream os = new DataOutputStream(process.getOutputStream());
 
-            // Format: cmd wifi connect-network <ssid> <security_type> <password>
-            // securityType should be "open", "wpa2", or "wpa3" (we can map "Secured" to
-            // "wpa2" as default)
-
             String cmdAuth = "open";
             if (password != null && !password.isEmpty()) {
-                cmdAuth = "wpa2"; // Defaulting to WPA2 for secured networks
+                cmdAuth = "wpa2";
             }
 
-            // Wrap SSID in quotes if it has spaces, but usually cmd wifi handles raw args
-            // if carefully passed.
-            // However, shell argument parsing is tricky. Best to quote.
-            String safeSsid = "\"" + ssid + "\"";
-            String safePassword = "\"" + password + "\"";
+            String cleanSsid = normalizeSsid(ssid);
+            String safeSsid = escapeShellArg(cleanSsid);
+            String safePassword = escapeShellArg(password != null ? password : "");
 
             if (cmdAuth.equals("open")) {
                 os.writeBytes("cmd wifi connect-network " + safeSsid + " open\n");
             } else {
-                // Do not forget the network before connecting — that wipes saved credentials
-                // and forces the user to re-enter the password. Use forgetNetwork() only
-                // when the user explicitly chooses "Forget".
                 os.writeBytes("cmd wifi connect-network " + safeSsid + " " + cmdAuth + " " + safePassword + "\n");
             }
 
@@ -245,7 +241,7 @@ public class SystemTimeModule extends ReactContextBaseJavaModule {
         if (ssid == null) {
             return "";
         }
-        String value = ssid.trim();
+        String value = ssid;
         if (value.startsWith("\"") && value.endsWith("\"") && value.length() >= 2) {
             return value.substring(1, value.length() - 1);
         }

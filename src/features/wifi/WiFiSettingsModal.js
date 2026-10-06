@@ -25,6 +25,7 @@ import CustomKeyboard from '../../shared/ui/CustomKeyboard';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 import WifiManager from 'react-native-wifi-reborn';
+import NetInfo from '@react-native-community/netinfo';
 import WifiNative from '../../shared/native/WifiNative';
 import { Camera, useCameraDevice, useCameraPermission, useCodeScanner } from 'react-native-vision-camera';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -632,25 +633,45 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
       // Shorter initial wait for responsive feeling
       await new Promise(resolve => setTimeout(resolve, 1500));
 
-      const maxAttempts = 15;
+      const targetSSID = normalizeSSID(networkSSID);
+      const maxAttempts = 25;
       for (let i = 0; i < maxAttempts; i++) {
+        let currentSSID = null;
         try {
-          const currentSSID = await WifiManager.getCurrentWifiSSID();
-          const cleanSSID = (currentSSID || '').replace(/^"|"$/g, '');
-          const targetSSID = networkSSID.replace(/^"|"$/g, '');
+          currentSSID = await WifiManager.getCurrentWifiSSID();
+        } catch (err) {
+          // Normal when connecting or not yet associated
+        }
 
-          if (cleanSSID === targetSSID) {
-            // SSID matches, now check for IP to confirm authentication/DHCP
+        const cleanSSID = normalizeSSID(currentSSID);
+
+        if (cleanSSID && ssidsMatch(cleanSSID, targetSSID)) {
+          // SSID matches, now check for IP to confirm authentication/DHCP
+          try {
             const ip = await WifiManager.getIP();
             if (ip && ip !== '0.0.0.0' && ip !== '0:0:0:0:0:0:0:0') {
               console.log('Successfully connected with valid IP in Modal:', ip);
               return true;
             }
-          }
-        } catch (err) {
-          console.warn(`Connection verify loop attempt ${i + 1} failed in Modal:`, err);
+          } catch (ipErr) {}
         }
-        // Poll every 1 second for a faster response
+
+        // Fallback check with NetInfo for devices where WifiManager SSID lags
+        try {
+          const netState = await NetInfo.fetch();
+          if (netState.isConnected && netState.type === 'wifi') {
+            const netSSID = normalizeSSID(netState.details?.ssid);
+            const ip = await WifiManager.getIP().catch(() => null);
+            if (ip && ip !== '0.0.0.0' && ip !== '0:0:0:0:0:0:0:0') {
+              if (!netSSID || netSSID === '<unknown ssid>' || ssidsMatch(netSSID, targetSSID)) {
+                console.log('Successfully connected via NetInfo in Modal');
+                return true;
+              }
+            }
+          }
+        } catch (netErr) {}
+
+        // Poll every 1 second
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
       return false;
@@ -859,12 +880,7 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
         shouldForceScanRef.current = true;
         scheduleNextScan({ resetAdaptive: true });
       } else {
-        // Specifically check if security was required to provide a better error message
-        if (securityType === 'Secured') {
-          throw new Error('AUTHENTICATION_FAILED: Incorrect password or authentication error.');
-        } else {
-          throw new Error('Connection timed out. Please check signal strength.');
-        }
+        throw new Error('Connection timed out. Please check signal strength or try again.');
       }
     } catch (error) {
       if (!isActiveConnectAttempt(attemptId)) return;
@@ -873,14 +889,13 @@ const WifiSettingsModal = ({ visible, onClose, inline = false }) => {
       // Failed auth must not keep this SSID under Connected Network.
       setCurrentNetwork((prev) => (ssidsMatch(prev?.SSID, network.SSID) ? null : prev));
 
-      let errorMessage = 'Failed to connect. Please check your password or signal strength.';
+      let errorMessage = error.message || 'Failed to connect. Please check signal strength or try again.';
       const msg = (error.message || '').toLowerCase();
       const isWrongPassword =
-        msg.includes('password') ||
-        msg.includes('incorrect') ||
-        msg.includes('authentication') ||
-        msg.includes('auth') ||
-        msg.includes('verify');
+        msg.includes('incorrect password') ||
+        msg.includes('wrong password') ||
+        msg.includes('bad password') ||
+        msg.includes('authentication_failed');
 
       if (isWrongPassword) {
         errorMessage = 'Password is wrong. Please re-enter.';
